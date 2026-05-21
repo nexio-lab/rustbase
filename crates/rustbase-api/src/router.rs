@@ -1452,6 +1452,212 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn template_rule_scopes_user_to_own_rows() {
+        let (state, _dir, master_tok, user_tok) =
+            state_with_collection_and_user().await;
+
+        // Add an `owner` text field to 'notes' so the rule has something to bind to.
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "DELETE",
+                "/api/realms/acme/apps/mobile/collections/notes",
+                Some(&master_tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/apps/mobile/collections",
+                Some(&master_tok),
+                Some(&serde_json::json!({
+                    "schema": {
+                        "id": "notes",
+                        "kind": "base",
+                        "fields": [
+                            {"name":"title","kind":"text","required":true},
+                            {"name":"owner","kind":"text","required":true}
+                        ]
+                    }
+                })),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        // Seed: one record owned by our user, one owned by someone else.
+        let user_id: String = {
+            let row: (String,) =
+                sqlx::query_as("SELECT id FROM users WHERE email = ?")
+                    .bind("u@acme.com")
+                    .fetch_one(
+                        &state
+                            .realms
+                            .pool_for(&rustbase_core::RealmId::from("acme"))
+                            .await
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+            row.0
+        };
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "POST",
+            "/api/realms/acme/apps/mobile/collections/notes/records",
+            Some(&master_tok),
+            Some(&serde_json::json!({"title": "mine", "owner": user_id})),
+        ))
+        .await
+        .unwrap();
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "POST",
+            "/api/realms/acme/apps/mobile/collections/notes/records",
+            Some(&master_tok),
+            Some(&serde_json::json!({"title": "theirs", "owner": "other-user-id"})),
+        ))
+        .await
+        .unwrap();
+
+        // Template rule: each user sees only their own rows.
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "PUT",
+                "/api/realms/acme/apps/mobile/collections/notes/access_rules/list",
+                Some(&master_tok),
+                Some(&serde_json::json!({"filter": "owner = {{request.auth.id}}"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // The user should now see ONE row (their own).
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/realms/acme/apps/mobile/collections/notes/records",
+                Some(&user_tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let j = json_body(resp).await;
+        assert_eq!(j["total_items"], 1);
+        assert_eq!(j["items"][0]["fields"]["title"], "mine");
+    }
+
+    #[tokio::test]
+    async fn template_rule_scoped_get_returns_404_for_unowned() {
+        let (state, _dir, master_tok, user_tok) =
+            state_with_collection_and_user().await;
+
+        // Replace notes with an owner field.
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "DELETE",
+            "/api/realms/acme/apps/mobile/collections/notes",
+            Some(&master_tok),
+            None,
+        ))
+        .await
+        .unwrap();
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "POST",
+            "/api/realms/acme/apps/mobile/collections",
+            Some(&master_tok),
+            Some(&serde_json::json!({
+                "schema": {
+                    "id":"notes","kind":"base","fields":[
+                        {"name":"title","kind":"text","required":true},
+                        {"name":"owner","kind":"text","required":true}
+                    ]
+                }
+            })),
+        ))
+        .await
+        .unwrap();
+
+        // Make a record owned by someone else.
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/apps/mobile/collections/notes/records",
+                Some(&master_tok),
+                Some(&serde_json::json!({"title":"x","owner":"other"})),
+            ))
+            .await
+            .unwrap();
+        let id = json_body(resp).await["id"].as_str().unwrap().to_string();
+
+        // Open both view + list with the same per-row rule.
+        for action in ["view", "list"] {
+            let app = build_router(state.clone());
+            app.oneshot(req_with_auth(
+                "PUT",
+                &format!(
+                    "/api/realms/acme/apps/mobile/collections/notes/access_rules/{action}"
+                ),
+                Some(&master_tok),
+                Some(&serde_json::json!({"filter":"owner = {{request.auth.id}}"})),
+            ))
+            .await
+            .unwrap();
+        }
+
+        // GET that record as the user → 404 (not their row).
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                &format!("/api/realms/acme/apps/mobile/collections/notes/records/{id}"),
+                Some(&user_tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn template_with_unknown_placeholder_is_400() {
+        let (state, _dir, master_tok, user_tok) =
+            state_with_collection_and_user().await;
+
+        // Open list with a bogus placeholder.
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "PUT",
+            "/api/realms/acme/apps/mobile/collections/notes/access_rules/list",
+            Some(&master_tok),
+            Some(&serde_json::json!({"filter": "title = {{request.unknown}}"})),
+        ))
+        .await
+        .unwrap();
+
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/realms/acme/apps/mobile/collections/notes/records",
+                Some(&user_tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
     async fn user_refresh_rotates_token() {
         let (state, _dir, _, _) = state_with_collection_and_user().await;
         // login to capture refresh

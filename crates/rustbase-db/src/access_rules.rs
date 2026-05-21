@@ -7,10 +7,10 @@
 //! - **`filter = NULL`** → admin-only (explicit lock).
 //! - **`filter = ""`** or **`filter = "true"`** → any authenticated user
 //!   of the realm.
-//! - **Other filter expressions** → reserved for the next branch
-//!   (substitution like `@request.auth.id`). Right now the records
-//!   handler treats them as "deny" so misconfigured rules don't open
-//!   up data by accident.
+//! - **Other filter expressions** → evaluated per request after the
+//!   template substitution layer in `rustbase_core::rule_template`
+//!   resolves `{{request.auth.id}}` etc. The resulting filter is ANDed
+//!   into the records query.
 
 use crate::error::Result;
 use serde::{Deserialize, Serialize};
@@ -110,18 +110,36 @@ pub async fn list_rules(pool: &SqlitePool, collection: &str) -> Result<Vec<Acces
         .collect())
 }
 
-/// `true` iff the rule (`None` = no row, `Some(None)` = NULL filter,
-/// `Some(Some(s))` = filter string) permits an authenticated end user.
-/// Until the substitution-aware evaluator lands, only the explicitly
-/// open forms — empty string and the literal `true` — grant access.
-pub fn rule_allows_user(rule: &Option<Option<String>>) -> bool {
+/// Three-way decision for what a stored rule permits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuleDecision {
+    /// Admin-only (no row, or filter = NULL).
+    Deny,
+    /// Any authenticated user of the realm (filter = "" or "true").
+    Allow,
+    /// Evaluate the filter template against the request context.
+    Evaluate(String),
+}
+
+pub fn classify_rule(rule: &Option<Option<String>>) -> RuleDecision {
     match rule {
+        None => RuleDecision::Deny,
+        Some(None) => RuleDecision::Deny,
         Some(Some(s)) => {
-            let s = s.trim();
-            s.is_empty() || s.eq_ignore_ascii_case("true")
+            let trimmed = s.trim();
+            if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("true") {
+                RuleDecision::Allow
+            } else {
+                RuleDecision::Evaluate(s.clone())
+            }
         }
-        _ => false,
     }
+}
+
+/// Backwards-compatible helper. Returns `true` only for the open-rule
+/// forms; template rules require the per-request evaluator.
+pub fn rule_allows_user(rule: &Option<Option<String>>) -> bool {
+    matches!(classify_rule(rule), RuleDecision::Allow)
 }
 
 #[cfg(test)]
