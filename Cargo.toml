@@ -1,0 +1,84 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/rustbase-core",
+    "crates/rustbase-db",
+    "crates/rustbase-auth",
+    "crates/rustbase-realtime",
+    "crates/rustbase-storage",
+    "crates/rustbase-runtime",
+    "crates/rustbase-api",
+    "crates/rustbase-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+authors = ["RustBase Contributors"]
+repository = "https://github.com/rustbase/rustbase"
+
+[workspace.dependencies]
+# async runtime
+tokio = { version = "1", features = ["full"] }
+
+# http
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+
+# database
+sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio", "macros", "chrono", "uuid"] }
+
+# storage
+object_store = "0.11"
+
+# auth
+jsonwebtoken = "9"
+argon2 = "0.5"
+
+# serde
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# parsing
+nom = "8"
+
+# concurrency
+dashmap = "6"
+
+# observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# config
+config = "0.14"
+
+# validation
+validator = { version = "0.19", features = ["derive"] }
+
+# errors
+thiserror = "2"
+anyhow = "1"
+
+# utilities
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+
+# workspace-internal
+rustbase-core = { path = "crates/rustbase-core" }
+rustbase-db = { path = "crates/rustbase-db" }
+rustbase-auth = { path = "crates/rustbase-auth" }
+rustbase-realtime = { path = "crates/rustbase-realtime" }
+rustbase-storage = { path = "crates/rustbase-storage" }
+rustbase-runtime = { path = "crates/rustbase-runtime" }
+rustbase-api = { path = "crates/rustbase-api" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"

@@ -1,0 +1,20 @@
+# RustBase server configuration.
+# Copy to rustbase.toml in the working directory.
+# Any value can be overridden by an RUSTBASE_* environment variable.
+
+# HTTP listener address.
+listen = "0.0.0.0:8080"
+
+# Path to the data directory. Created if missing.
+data_dir = "./data"
+
+# LRU caps for per-realm and per-app SQLite pools.
+realm_pool_cap = 32
+app_pool_cap = 64
+
+# Optional SQLite → S3 replication via Litestream. Off by default.
+[litestream]
+enabled = false
+# bucket = "s3://my-rustbase-backups"
+# prefix = "prod"
+# replicate_interval_sec = 10
