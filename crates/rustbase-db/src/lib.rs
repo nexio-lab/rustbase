@@ -10,6 +10,7 @@
 //! when a parent tightens a policy bound.
 
 pub mod admins;
+pub mod apps;
 pub mod error;
 pub mod filter_sql;
 pub mod migrations;
@@ -20,6 +21,7 @@ pub mod secrets;
 pub mod tokens;
 
 pub use admins::{AppAdmin, MasterAdmin, RealmAdmin};
+pub use apps::App;
 pub use realms::Realm;
 pub use tokens::{RefreshToken, SubjectKind};
 pub use error::{DbError, Result};
