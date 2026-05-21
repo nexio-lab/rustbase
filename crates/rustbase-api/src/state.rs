@@ -1,5 +1,6 @@
 use rustbase_auth::{RevocationSet, SigningKey};
 use rustbase_db::{AppPoolManager, RealmPoolManager, SystemPool};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -13,6 +14,9 @@ pub struct AppState {
     /// HS256 signing key for master-admin tokens. Persisted in
     /// `system.db._secrets` so it survives restarts.
     pub master_key: Arc<SigningKey>,
+    /// Root of the on-disk data tree. Used by handlers that need to
+    /// resolve a realm or app folder for delete / storage operations.
+    pub data_dir: Arc<PathBuf>,
     /// Cached "has at least one master admin." Flipped from `false` to
     /// `true` exactly once when the setup wizard completes; on subsequent
     /// boots, populated from the DB count.

@@ -1,6 +1,6 @@
 //! Realm rows in `system.db`.
 
-use crate::error::Result;
+use crate::error::{DbError, Result};
 use chrono::{DateTime, Utc};
 use rustbase_core::MASTER_REALM_ID;
 use serde::{Deserialize, Serialize};
@@ -50,6 +50,53 @@ pub async fn list_realms(pool: &SqlitePool) -> Result<Vec<Realm>> {
     Ok(rows)
 }
 
+/// Insert a non-master realm row. Master rows are inserted only by
+/// `ensure_master_realm` at boot.
+pub async fn create_realm(pool: &SqlitePool, id: &str, name: &str) -> Result<Realm> {
+    let now = Utc::now();
+    sqlx::query(
+        "INSERT INTO realms (id, name, is_master, created_at) VALUES (?, ?, 0, ?)",
+    )
+    .bind(id)
+    .bind(name)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(Realm {
+        id: id.to_string(),
+        name: name.to_string(),
+        is_master: false,
+        created_at: now,
+    })
+}
+
+/// Rename any realm (including master). Returns RowNotFound if the
+/// realm doesn't exist.
+pub async fn rename_realm(pool: &SqlitePool, id: &str, new_name: &str) -> Result<()> {
+    let res = sqlx::query("UPDATE realms SET name = ? WHERE id = ?")
+        .bind(new_name)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(DbError::Sqlx(sqlx::Error::RowNotFound));
+    }
+    Ok(())
+}
+
+/// Delete a non-master realm. The `is_master = 0` predicate is defense
+/// in depth — handlers should refuse master deletion first.
+pub async fn delete_realm(pool: &SqlitePool, id: &str) -> Result<()> {
+    let res = sqlx::query("DELETE FROM realms WHERE id = ? AND is_master = 0")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(DbError::Sqlx(sqlx::Error::RowNotFound));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -58,7 +105,7 @@ mod tests {
 
     async fn fresh_pool() -> SqlitePool {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(&pool, SYSTEM_MIGRATIONS).await.unwrap();
+        apply_migrations(pool.clone(), SYSTEM_MIGRATIONS).await.unwrap();
         pool
     }
 

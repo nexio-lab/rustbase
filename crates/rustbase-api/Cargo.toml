@@ -26,6 +26,7 @@ tracing.workspace = true
 validator.workspace = true
 chrono.workspace = true
 rand_core.workspace = true
+sqlx.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

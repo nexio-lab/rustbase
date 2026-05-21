@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
     tokio::fs::create_dir_all(&cfg.data_dir).await?;
 
     let system = SystemPool::open(&cfg.data_dir).await?;
-    let applied = apply_migrations(system.pool(), SYSTEM_MIGRATIONS).await?;
+    let applied = apply_migrations(system.pool().clone(), SYSTEM_MIGRATIONS).await?;
     if applied > 0 {
         tracing::info!(applied, "system migrations applied");
     }
@@ -76,6 +76,7 @@ async fn main() -> Result<()> {
         apps: Arc::new(AppPoolManager::new(cfg.data_dir.clone(), cfg.app_pool_cap)),
         revocations: RevocationSet::default(),
         master_key,
+        data_dir: Arc::new(cfg.data_dir.clone()),
         initialized: Arc::new(AtomicBool::new(already_initialized)),
     };
 

@@ -8,6 +8,7 @@ pub mod auth;
 pub mod error;
 pub mod health;
 pub mod middleware;
+pub mod realms;
 pub mod router;
 pub mod setup;
 pub mod state;
