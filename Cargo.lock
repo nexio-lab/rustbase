@@ -1848,6 +1848,7 @@ dependencies = [
  "object_store",
  "rustbase-core",
  "serde",
+ "tempfile",
  "thiserror",
  "tokio",
  "tracing",
