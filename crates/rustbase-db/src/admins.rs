@@ -201,13 +201,13 @@ mod tests {
 
     async fn system_pool() -> SqlitePool {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(&pool, SYSTEM_MIGRATIONS).await.unwrap();
+        apply_migrations(pool.clone(), SYSTEM_MIGRATIONS).await.unwrap();
         pool
     }
 
     async fn realm_pool() -> SqlitePool {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(&pool, REALM_MIGRATIONS).await.unwrap();
+        apply_migrations(pool.clone(), REALM_MIGRATIONS).await.unwrap();
         pool
     }
 

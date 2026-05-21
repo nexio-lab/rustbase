@@ -161,6 +161,19 @@ impl AppPoolManager {
         self.cache.lock().pop(&key);
     }
 
+    /// Drop every cached pool whose key starts with `realm`. Used when a
+    /// realm is being cascade-deleted.
+    pub fn evict_realm(&self, realm: &RealmId) {
+        let mut cache = self.cache.lock();
+        let keys: Vec<_> = cache
+            .iter()
+            .filter_map(|(k, _)| if &k.0 == realm { Some(k.clone()) } else { None })
+            .collect();
+        for k in keys {
+            cache.pop(&k);
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.cache.lock().len()
     }

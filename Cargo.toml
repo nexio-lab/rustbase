@@ -24,7 +24,7 @@ repository = "https://github.com/rustbase/rustbase"
 tokio = { version = "1", features = ["full"] }
 
 # http
-axum = "0.8"
+axum = { version = "0.8", features = ["macros"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "cors"] }
 

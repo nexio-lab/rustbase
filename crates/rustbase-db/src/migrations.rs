@@ -49,13 +49,21 @@ CREATE TABLE IF NOT EXISTS _migrations (
 /// Apply every migration in `migrations` whose `id` is not yet recorded
 /// in the pool's `_migrations` table, in the order supplied. Each
 /// migration runs in its own transaction.
-pub async fn apply_migrations(pool: &SqlitePool, migrations: &[Migration]) -> Result<usize> {
+///
+/// `pool` is taken by clone (SqlitePool is `Arc`-backed) so the
+/// returned future has no captured borrow, sidestepping a known sqlx
+/// HRTB inference quirk that otherwise prevents this future from being
+/// `Send` when composed inside an axum handler.
+pub async fn apply_migrations<'a>(
+    pool: SqlitePool,
+    migrations: &'a [Migration],
+) -> Result<usize> {
     sqlx::raw_sql(ENSURE_MIGRATIONS_TABLE)
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     let already: HashSet<String> = sqlx::query_scalar::<_, String>("SELECT id FROM _migrations")
-        .fetch_all(pool)
+        .fetch_all(&pool)
         .await?
         .into_iter()
         .collect();
@@ -65,30 +73,54 @@ pub async fn apply_migrations(pool: &SqlitePool, migrations: &[Migration]) -> Re
         if already.contains(m.id) {
             continue;
         }
-        let start = std::time::Instant::now();
-        let mut tx = pool.begin().await?;
-
-        sqlx::raw_sql(m.sql)
-            .execute(&mut *tx)
-            .await
-            .map_err(|source| DbError::Migration {
-                migration: m.id.to_string(),
-                source,
-            })?;
-
-        let elapsed = i64::try_from(start.elapsed().as_millis()).unwrap_or(i64::MAX);
-        sqlx::query("INSERT INTO _migrations (id, applied_at, duration_ms) VALUES (?, ?, ?)")
-            .bind(m.id)
-            .bind(Utc::now().to_rfc3339())
-            .bind(elapsed)
-            .execute(&mut *tx)
-            .await?;
-
-        tx.commit().await?;
+        let elapsed = apply_one(pool.clone(), m.clone()).await?;
         tracing::info!(migration = m.id, elapsed_ms = elapsed, "applied migration");
         applied += 1;
     }
     Ok(applied)
+}
+
+/// Apply one migration atomically.
+///
+/// Atomicity for the migration SQL is supplied by wrapping the script
+/// in `BEGIN; ... COMMIT;` and executing it as one `raw_sql` call on
+/// the pool — SQLite parses this as a single explicit transaction. If
+/// any statement fails, the BEGIN's transaction is implicitly rolled
+/// back when the connection is returned to the pool. The
+/// `_migrations` row is then inserted in a second statement; if that
+/// fails (e.g., transient I/O), the migration stays pending and
+/// retries on the next boot — DDL must therefore remain idempotent
+/// under retry (use `IF NOT EXISTS` for any future schema).
+///
+/// This shape sidesteps a known sqlx HRTB inference quirk that breaks
+/// `Send` recognition for futures that hold a `&mut Transaction`
+/// across an `.await`, which otherwise prevents this code from
+/// composing into an axum handler.
+async fn apply_one(pool: SqlitePool, m: Migration) -> Result<i64> {
+    let start = std::time::Instant::now();
+
+    let wrapped = format!("BEGIN;\n{}\nCOMMIT;", m.sql);
+    if let Err(source) = sqlx::raw_sql(&wrapped).execute(&pool).await {
+        // Best-effort rollback so any partially-applied DDL inside the
+        // open transaction is reverted before the next caller observes
+        // the connection. ROLLBACK with no active transaction is a
+        // benign error and is ignored.
+        let _ = sqlx::raw_sql("ROLLBACK").execute(&pool).await;
+        return Err(DbError::Migration {
+            migration: m.id.to_string(),
+            source,
+        });
+    }
+
+    let elapsed = i64::try_from(start.elapsed().as_millis()).unwrap_or(i64::MAX);
+    sqlx::query("INSERT INTO _migrations (id, applied_at, duration_ms) VALUES (?, ?, ?)")
+        .bind(m.id)
+        .bind(Utc::now().to_rfc3339())
+        .bind(elapsed)
+        .execute(&pool)
+        .await?;
+
+    Ok(elapsed)
 }
 
 // -----------------------------------------------------------------------------
@@ -283,8 +315,8 @@ mod tests {
     #[tokio::test]
     async fn applies_system_migrations_once_and_is_idempotent() {
         let pool = open_memory_pool().await.unwrap();
-        let n1 = apply_migrations(&pool, SYSTEM_MIGRATIONS).await.unwrap();
-        let n2 = apply_migrations(&pool, SYSTEM_MIGRATIONS).await.unwrap();
+        let n1 = apply_migrations(pool.clone(), SYSTEM_MIGRATIONS).await.unwrap();
+        let n2 = apply_migrations(pool.clone(), SYSTEM_MIGRATIONS).await.unwrap();
         assert_eq!(n1, SYSTEM_MIGRATIONS.len());
         assert_eq!(n2, 0);
 
@@ -299,7 +331,7 @@ mod tests {
     #[tokio::test]
     async fn applies_realm_migrations() {
         let pool = open_memory_pool().await.unwrap();
-        let n = apply_migrations(&pool, REALM_MIGRATIONS).await.unwrap();
+        let n = apply_migrations(pool.clone(), REALM_MIGRATIONS).await.unwrap();
         assert_eq!(n, REALM_MIGRATIONS.len());
 
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
@@ -312,7 +344,7 @@ mod tests {
     #[tokio::test]
     async fn applies_app_migrations() {
         let pool = open_memory_pool().await.unwrap();
-        let n = apply_migrations(&pool, APP_MIGRATIONS).await.unwrap();
+        let n = apply_migrations(pool.clone(), APP_MIGRATIONS).await.unwrap();
         assert_eq!(n, APP_MIGRATIONS.len());
 
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _collections")
@@ -330,7 +362,7 @@ mod tests {
             MigrationScope::System,
             "CREATE TABLE good (x INTEGER); CREATE TABLE bad (this will not parse;",
         )];
-        let err = apply_migrations(&pool, bad).await.unwrap_err();
+        let err = apply_migrations(pool.clone(), bad).await.unwrap_err();
         assert!(matches!(err, DbError::Migration { .. }));
 
         // neither the good table nor a _migrations row should be present
@@ -351,7 +383,7 @@ mod tests {
     #[tokio::test]
     async fn records_duration_in_migrations_table() {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(&pool, SYSTEM_MIGRATIONS).await.unwrap();
+        apply_migrations(pool.clone(), SYSTEM_MIGRATIONS).await.unwrap();
         let row: (String, i64) =
             sqlx::query_as("SELECT id, duration_ms FROM _migrations LIMIT 1")
                 .fetch_one(&pool)
