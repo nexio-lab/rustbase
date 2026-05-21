@@ -96,43 +96,67 @@ pub async fn apply_migrations(pool: &SqlitePool, migrations: &[Migration]) -> Re
 // timestamp IDs; existing entries are never edited.
 // -----------------------------------------------------------------------------
 
-pub const SYSTEM_MIGRATIONS: &[Migration] = &[Migration::new(
-    "20260520_000001_initial_system",
-    MigrationScope::System,
-    r#"
-    CREATE TABLE realms (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        is_master INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL
-    );
-    CREATE UNIQUE INDEX realms_one_master ON realms(is_master) WHERE is_master = 1;
+pub const SYSTEM_MIGRATIONS: &[Migration] = &[
+    Migration::new(
+        "20260520_000001_initial_system",
+        MigrationScope::System,
+        r#"
+        CREATE TABLE realms (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            is_master INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX realms_one_master ON realms(is_master) WHERE is_master = 1;
 
-    CREATE TABLE master_admins (
-        id TEXT PRIMARY KEY,
-        email TEXT NOT NULL UNIQUE,
-        password_hash TEXT NOT NULL,
-        name TEXT,
-        created_at TEXT NOT NULL
-    );
+        CREATE TABLE master_admins (
+            id TEXT PRIMARY KEY,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            name TEXT,
+            created_at TEXT NOT NULL
+        );
 
-    CREATE TABLE policies (
-        field TEXT PRIMARY KEY,
-        policy_json TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-    );
+        CREATE TABLE policies (
+            field TEXT PRIMARY KEY,
+            policy_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
 
-    CREATE TABLE audit_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        ts TEXT NOT NULL,
-        actor TEXT,
-        action TEXT NOT NULL,
-        target TEXT,
-        details_json TEXT
-    );
-    CREATE INDEX audit_log_ts ON audit_log(ts);
-    "#,
-)];
+        CREATE TABLE audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            actor TEXT,
+            action TEXT NOT NULL,
+            target TEXT,
+            details_json TEXT
+        );
+        CREATE INDEX audit_log_ts ON audit_log(ts);
+        "#,
+    ),
+    Migration::new(
+        "20260521_000001_master_auth_storage",
+        MigrationScope::System,
+        r#"
+        CREATE TABLE _secrets (
+            name TEXT PRIMARY KEY,
+            value BLOB NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE _refresh_tokens (
+            token TEXT PRIMARY KEY,
+            subject_kind TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            issued_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            revoked INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX master_refresh_tokens_subject
+            ON _refresh_tokens(subject_kind, subject_id);
+        "#,
+    ),
+];
 
 pub const REALM_MIGRATIONS: &[Migration] = &[Migration::new(
     "20260520_000001_initial_realm",

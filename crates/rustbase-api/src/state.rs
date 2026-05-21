@@ -1,4 +1,4 @@
-use rustbase_auth::RevocationSet;
+use rustbase_auth::{RevocationSet, SigningKey};
 use rustbase_db::{AppPoolManager, RealmPoolManager, SystemPool};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,6 +10,9 @@ pub struct AppState {
     pub realms: Arc<RealmPoolManager>,
     pub apps: Arc<AppPoolManager>,
     pub revocations: RevocationSet,
+    /// HS256 signing key for master-admin tokens. Persisted in
+    /// `system.db._secrets` so it survives restarts.
+    pub master_key: Arc<SigningKey>,
     /// Cached "has at least one master admin." Flipped from `false` to
     /// `true` exactly once when the setup wizard completes; on subsequent
     /// boots, populated from the DB count.

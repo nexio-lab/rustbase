@@ -1,9 +1,10 @@
 use anyhow::Result;
 use rustbase_api::{AppState, build_router};
-use rustbase_auth::RevocationSet;
+use rustbase_auth::{RevocationSet, SigningKey};
 use rustbase_db::{
     AppPoolManager, RealmPoolManager, SYSTEM_MIGRATIONS, SystemPool, admins::count_master_admins,
     apply_migrations, realms::ensure_master_realm,
+    secrets::{MASTER_SIGNING_KEY, get_or_init_secret},
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -62,11 +63,19 @@ async fn main() -> Result<()> {
         tracing::warn!("no master admin found — only /healthz and POST /_/setup are reachable until setup completes");
     }
 
+    // Load (or generate-and-persist) the master JWT signing key. Persistence
+    // means tokens survive restarts.
+    let fresh = SigningKey::generate();
+    let key_bytes =
+        get_or_init_secret(system.pool(), MASTER_SIGNING_KEY, fresh.as_bytes()).await?;
+    let master_key = Arc::new(SigningKey::from_secret(&key_bytes));
+
     let state = AppState {
         system: Arc::new(system),
         realms: Arc::new(RealmPoolManager::new(cfg.data_dir.clone(), cfg.realm_pool_cap)),
         apps: Arc::new(AppPoolManager::new(cfg.data_dir.clone(), cfg.app_pool_cap)),
         revocations: RevocationSet::default(),
+        master_key,
         initialized: Arc::new(AtomicBool::new(already_initialized)),
     };
 

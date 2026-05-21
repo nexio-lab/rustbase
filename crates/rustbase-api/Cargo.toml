@@ -25,6 +25,7 @@ thiserror.workspace = true
 tracing.workspace = true
 validator.workspace = true
 chrono.workspace = true
+rand_core.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
