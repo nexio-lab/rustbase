@@ -15,8 +15,9 @@
 //! hands it a stored `Schema` whose names already passed those checks.
 
 use crate::error::{DbError, Result};
+use crate::filter_sql::filter_to_sql;
 use chrono::{DateTime, Utc};
-use rustbase_core::{FieldType, Record, RecordId, Schema};
+use rustbase_core::{FieldType, FilterNode, Record, RecordId, Schema};
 use serde_json::Value as Json;
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool, sqlite::SqliteRow};
 use std::collections::BTreeMap;
@@ -96,23 +97,44 @@ pub async fn list_records(
     pool: &SqlitePool,
     schema: &Schema,
     page: ListPage,
+    filter: Option<&FilterNode>,
 ) -> Result<ListedRecords> {
     let per_page = page.per_page.clamp(1, 200);
     let page_num = page.page.max(1);
     let offset = ((page_num - 1) as i64) * (per_page as i64);
 
-    let count_sql = format!("SELECT COUNT(*) FROM {}", quote_ident(schema.id.as_str()));
-    let total_items: i64 = sqlx::query_scalar(&count_sql).fetch_one(pool).await?;
+    let (where_clause, bindings): (String, Vec<Json>) = match filter {
+        Some(f) => {
+            let frag = filter_to_sql(f)?;
+            (format!(" WHERE {}", frag.sql), frag.bindings)
+        }
+        None => (String::new(), vec![]),
+    };
 
-    let sql = format!(
-        "SELECT * FROM {} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        quote_ident(schema.id.as_str())
+    // --- count ---
+    let count_sql = format!(
+        "SELECT COUNT(*) FROM {}{}",
+        quote_ident(schema.id.as_str()),
+        where_clause
     );
-    let rows: Vec<SqliteRow> = sqlx::query(&sql)
-        .bind(per_page as i64)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
+    let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
+    for v in &bindings {
+        count_q = bind_filter_value_scalar(count_q, v);
+    }
+    let total_items: i64 = count_q.fetch_one(pool).await?;
+
+    // --- page ---
+    let list_sql = format!(
+        "SELECT * FROM {}{} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        quote_ident(schema.id.as_str()),
+        where_clause
+    );
+    let mut list_q = sqlx::query(&list_sql);
+    for v in &bindings {
+        list_q = bind_filter_value(list_q, v);
+    }
+    list_q = list_q.bind(per_page as i64).bind(offset);
+    let rows: Vec<SqliteRow> = list_q.fetch_all(pool).await?;
     let items: Vec<Record> = rows
         .iter()
         .map(|r| row_to_record(r, schema))
@@ -124,6 +146,48 @@ pub async fn list_records(
         per_page,
         total_items: total_items.max(0) as u64,
     })
+}
+
+fn bind_filter_value<'a>(
+    q: sqlx::query::Query<'a, Sqlite, sqlx::sqlite::SqliteArguments<'a>>,
+    v: &Json,
+) -> sqlx::query::Query<'a, Sqlite, sqlx::sqlite::SqliteArguments<'a>> {
+    match v {
+        Json::String(s) => q.bind(s.clone()),
+        Json::Bool(b) => q.bind(*b),
+        Json::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                q.bind(i)
+            } else if let Some(f) = n.as_f64() {
+                q.bind(f)
+            } else {
+                q.bind(Option::<i64>::None)
+            }
+        }
+        Json::Null => q.bind(Option::<String>::None),
+        other => q.bind(other.to_string()),
+    }
+}
+
+fn bind_filter_value_scalar<'a>(
+    q: sqlx::query::QueryScalar<'a, Sqlite, i64, sqlx::sqlite::SqliteArguments<'a>>,
+    v: &Json,
+) -> sqlx::query::QueryScalar<'a, Sqlite, i64, sqlx::sqlite::SqliteArguments<'a>> {
+    match v {
+        Json::String(s) => q.bind(s.clone()),
+        Json::Bool(b) => q.bind(*b),
+        Json::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                q.bind(i)
+            } else if let Some(f) = n.as_f64() {
+                q.bind(f)
+            } else {
+                q.bind(Option::<i64>::None)
+            }
+        }
+        Json::Null => q.bind(Option::<String>::None),
+        other => q.bind(other.to_string()),
+    }
 }
 
 pub async fn update_record(
@@ -353,6 +417,7 @@ mod tests {
                 page: 1,
                 per_page: 2,
             },
+            None,
         )
         .await
         .unwrap();
@@ -399,6 +464,69 @@ mod tests {
             .await
             .unwrap()
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn list_with_filter_matches_only_matching_rows() {
+        let (pool, schema) = pool_with_users().await;
+        for (name, age, pinned) in [
+            ("Ada", 36, true),
+            ("Babbage", 80, false),
+            ("Lovelace", 36, true),
+        ] {
+            let mut f = BTreeMap::new();
+            f.insert("name".into(), json!(name));
+            f.insert("age".into(), json!(age));
+            f.insert("verified".into(), json!(pinned));
+            create_record(&pool, &schema, f).await.unwrap();
+        }
+
+        let filter = rustbase_core::parse_filter("age = 36 && verified = true").unwrap();
+        let listed = list_records(
+            &pool,
+            &schema,
+            ListPage::default(),
+            Some(&filter),
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed.total_items, 2);
+        assert_eq!(listed.items.len(), 2);
+        // both returned names are "Ada" or "Lovelace"
+        for r in &listed.items {
+            let name = r.fields.get("name").and_then(|v| v.as_str()).unwrap();
+            assert!(name == "Ada" || name == "Lovelace");
+        }
+    }
+
+    #[tokio::test]
+    async fn list_with_like_filter_matches_substring() {
+        let (pool, schema) = pool_with_users().await;
+        for n in ["Ada Lovelace", "Charles Babbage", "Grace Hopper"] {
+            let mut f = BTreeMap::new();
+            f.insert("name".into(), json!(n));
+            create_record(&pool, &schema, f).await.unwrap();
+        }
+        let filter = rustbase_core::parse_filter(r#"name ~ "ace""#).unwrap();
+        let listed = list_records(&pool, &schema, ListPage::default(), Some(&filter))
+            .await
+            .unwrap();
+        // "Lovelace" and "Grace" both contain "ace"
+        assert_eq!(listed.total_items, 2);
+    }
+
+    #[tokio::test]
+    async fn list_filter_with_no_matches_returns_empty() {
+        let (pool, schema) = pool_with_users().await;
+        let mut f = BTreeMap::new();
+        f.insert("name".into(), json!("solo"));
+        create_record(&pool, &schema, f).await.unwrap();
+        let filter = rustbase_core::parse_filter(r#"name = "nope""#).unwrap();
+        let listed = list_records(&pool, &schema, ListPage::default(), Some(&filter))
+            .await
+            .unwrap();
+        assert_eq!(listed.total_items, 0);
+        assert!(listed.items.is_empty());
     }
 
     #[tokio::test]

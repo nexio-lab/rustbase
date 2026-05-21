@@ -1169,6 +1169,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_records_with_filter_returns_only_matching() {
+        let (state, _dir, tok) = state_with_app_and_collection().await;
+
+        // Add 3 notes — only 2 have pinned=true.
+        for (title, pinned) in [("a", true), ("b", false), ("c", true)] {
+            let app = build_router(state.clone());
+            app.oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/apps/mobile/collections/notes/records",
+                Some(&tok),
+                Some(&serde_json::json!({"title": title, "pinned": pinned})),
+            ))
+            .await
+            .unwrap();
+        }
+
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/realms/acme/apps/mobile/collections/notes/records?filter=pinned%20%3D%20true",
+                Some(&tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let j = json_body(resp).await;
+        assert_eq!(j["total_items"], 2);
+        assert_eq!(j["items"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_records_with_unknown_filter_column_is_400() {
+        let (state, _dir, tok) = state_with_app_and_collection().await;
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/realms/acme/apps/mobile/collections/notes/records?filter=nope%20%3D%20%22x%22",
+                Some(&tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let j = json_body(resp).await;
+        let msg = j["message"].as_str().unwrap();
+        assert!(msg.contains("nope"), "got message: {msg}");
+    }
+
+    #[tokio::test]
+    async fn list_records_with_malformed_filter_is_400() {
+        let (state, _dir, tok) = state_with_app_and_collection().await;
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/realms/acme/apps/mobile/collections/notes/records?filter=this+is+not+valid",
+                Some(&tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
     async fn cross_realm_admin_cannot_read_records() {
         let (state, _dir, _) = state_with_app_and_collection().await;
         // create realm 'widgetco' + its own admin, and try to list acme/mobile/notes/records
