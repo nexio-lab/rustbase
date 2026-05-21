@@ -1,0 +1,339 @@
+//! Scoped migration runner.
+//!
+//! A `Migration` is owned by exactly one `MigrationScope` (system / realm
+//! / app) and carries multi-statement SQL. The runner records applied
+//! migrations in a per-pool `_migrations` table, skipping any already
+//! present, and runs each new migration inside a transaction. If the SQL
+//! fails the transaction is rolled back and the migration is reported as
+//! pending on next boot.
+
+use crate::error::{DbError, Result};
+use chrono::Utc;
+use sqlx::SqlitePool;
+use std::collections::HashSet;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MigrationScope {
+    System,
+    Realm,
+    App,
+}
+
+#[derive(Debug, Clone)]
+pub struct Migration {
+    pub id: &'static str,
+    pub scope: MigrationScope,
+    pub sql: &'static str,
+}
+
+impl Migration {
+    pub const fn new(
+        id: &'static str,
+        scope: MigrationScope,
+        sql: &'static str,
+    ) -> Self {
+        Self { id, scope, sql }
+    }
+}
+
+/// Bookkeeping table that the runner installs the first time it runs
+/// against a pool. Held as a `const` so the source is greppable.
+const ENSURE_MIGRATIONS_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS _migrations (
+    id TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL,
+    duration_ms INTEGER NOT NULL
+);
+"#;
+
+/// Apply every migration in `migrations` whose `id` is not yet recorded
+/// in the pool's `_migrations` table, in the order supplied. Each
+/// migration runs in its own transaction.
+pub async fn apply_migrations(pool: &SqlitePool, migrations: &[Migration]) -> Result<usize> {
+    sqlx::raw_sql(ENSURE_MIGRATIONS_TABLE)
+        .execute(pool)
+        .await?;
+
+    let already: HashSet<String> = sqlx::query_scalar::<_, String>("SELECT id FROM _migrations")
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .collect();
+
+    let mut applied = 0usize;
+    for m in migrations {
+        if already.contains(m.id) {
+            continue;
+        }
+        let start = std::time::Instant::now();
+        let mut tx = pool.begin().await?;
+
+        sqlx::raw_sql(m.sql)
+            .execute(&mut *tx)
+            .await
+            .map_err(|source| DbError::Migration {
+                migration: m.id.to_string(),
+                source,
+            })?;
+
+        let elapsed = i64::try_from(start.elapsed().as_millis()).unwrap_or(i64::MAX);
+        sqlx::query("INSERT INTO _migrations (id, applied_at, duration_ms) VALUES (?, ?, ?)")
+            .bind(m.id)
+            .bind(Utc::now().to_rfc3339())
+            .bind(elapsed)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+        tracing::info!(migration = m.id, elapsed_ms = elapsed, "applied migration");
+        applied += 1;
+    }
+    Ok(applied)
+}
+
+// -----------------------------------------------------------------------------
+// Initial schemas. Future schema changes get new migration entries with newer
+// timestamp IDs; existing entries are never edited.
+// -----------------------------------------------------------------------------
+
+pub const SYSTEM_MIGRATIONS: &[Migration] = &[Migration::new(
+    "20260520_000001_initial_system",
+    MigrationScope::System,
+    r#"
+    CREATE TABLE realms (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        is_master INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX realms_one_master ON realms(is_master) WHERE is_master = 1;
+
+    CREATE TABLE master_admins (
+        id TEXT PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        name TEXT,
+        created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE policies (
+        field TEXT PRIMARY KEY,
+        policy_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL,
+        actor TEXT,
+        action TEXT NOT NULL,
+        target TEXT,
+        details_json TEXT
+    );
+    CREATE INDEX audit_log_ts ON audit_log(ts);
+    "#,
+)];
+
+pub const REALM_MIGRATIONS: &[Migration] = &[Migration::new(
+    "20260520_000001_initial_realm",
+    MigrationScope::Realm,
+    r#"
+    CREATE TABLE apps (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE realm_admins (
+        id TEXT PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        name TEXT,
+        created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE app_admins (
+        id TEXT PRIMARY KEY,
+        app_id TEXT NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+        email TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        name TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE(app_id, email)
+    );
+
+    CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        password_hash TEXT,
+        verified INTEGER NOT NULL DEFAULT 0,
+        last_login TEXT,
+        created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE oauth_providers (
+        provider TEXT PRIMARY KEY,
+        client_id TEXT NOT NULL,
+        client_secret_enc TEXT NOT NULL,
+        config_json TEXT
+    );
+
+    CREATE TABLE user_oauth_links (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL,
+        provider_user_id TEXT NOT NULL,
+        PRIMARY KEY (user_id, provider)
+    );
+
+    CREATE TABLE _refresh_tokens (
+        token TEXT PRIMARY KEY,
+        subject_kind TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        issued_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        revoked INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX refresh_tokens_subject ON _refresh_tokens(subject_kind, subject_id);
+
+    CREATE TABLE policies (
+        field TEXT PRIMARY KEY,
+        policy_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL,
+        actor TEXT,
+        action TEXT NOT NULL,
+        target TEXT,
+        details_json TEXT
+    );
+    CREATE INDEX audit_log_ts ON audit_log(ts);
+    "#,
+)];
+
+pub const APP_MIGRATIONS: &[Migration] = &[Migration::new(
+    "20260520_000001_initial_app",
+    MigrationScope::App,
+    r#"
+    CREATE TABLE _collections (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        kind TEXT NOT NULL,
+        schema_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE _access_rules (
+        collection_id TEXT NOT NULL REFERENCES _collections(id) ON DELETE CASCADE,
+        action TEXT NOT NULL,
+        filter TEXT,
+        PRIMARY KEY (collection_id, action)
+    );
+
+    CREATE TABLE policies (
+        field TEXT PRIMARY KEY,
+        policy_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL,
+        actor TEXT,
+        action TEXT NOT NULL,
+        target TEXT,
+        details_json TEXT
+    );
+    CREATE INDEX audit_log_ts ON audit_log(ts);
+    "#,
+)];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pool::open_memory_pool;
+
+    #[tokio::test]
+    async fn applies_system_migrations_once_and_is_idempotent() {
+        let pool = open_memory_pool().await.unwrap();
+        let n1 = apply_migrations(&pool, SYSTEM_MIGRATIONS).await.unwrap();
+        let n2 = apply_migrations(&pool, SYSTEM_MIGRATIONS).await.unwrap();
+        assert_eq!(n1, SYSTEM_MIGRATIONS.len());
+        assert_eq!(n2, 0);
+
+        // verify a table from the system schema actually exists
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM realms")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn applies_realm_migrations() {
+        let pool = open_memory_pool().await.unwrap();
+        let n = apply_migrations(&pool, REALM_MIGRATIONS).await.unwrap();
+        assert_eq!(n, REALM_MIGRATIONS.len());
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn applies_app_migrations() {
+        let pool = open_memory_pool().await.unwrap();
+        let n = apply_migrations(&pool, APP_MIGRATIONS).await.unwrap();
+        assert_eq!(n, APP_MIGRATIONS.len());
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _collections")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn failing_migration_is_rolled_back() {
+        let pool = open_memory_pool().await.unwrap();
+        let bad = &[Migration::new(
+            "20260520_000001_broken",
+            MigrationScope::System,
+            "CREATE TABLE good (x INTEGER); CREATE TABLE bad (this will not parse;",
+        )];
+        let err = apply_migrations(&pool, bad).await.unwrap_err();
+        assert!(matches!(err, DbError::Migration { .. }));
+
+        // neither the good table nor a _migrations row should be present
+        let row: Option<i64> =
+            sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE name = 'good'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(row, Some(0));
+
+        let applied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _migrations")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(applied, 0);
+    }
+
+    #[tokio::test]
+    async fn records_duration_in_migrations_table() {
+        let pool = open_memory_pool().await.unwrap();
+        apply_migrations(&pool, SYSTEM_MIGRATIONS).await.unwrap();
+        let row: (String, i64) =
+            sqlx::query_as("SELECT id, duration_ms FROM _migrations LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(row.0, SYSTEM_MIGRATIONS[0].id);
+        assert!(row.1 >= 0);
+    }
+}

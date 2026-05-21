@@ -5,5 +5,20 @@
 //! (`data/realms/<id>/apps/<id>/data.db`) with LRU eviction.
 //!
 //! Translates `rustbase_core::FilterNode` into parameterized SQL `WHERE`
-//! clauses (no string interpolation of user input), runs scoped migrations,
-//! and drives the auto-clamp engine when a parent tightens a policy bound.
+//! fragments (no string interpolation of user input), runs scoped
+//! migrations, and (in a later feature) will drive the auto-clamp engine
+//! when a parent tightens a policy bound.
+
+pub mod error;
+pub mod filter_sql;
+pub mod migrations;
+pub mod paths;
+pub mod pool;
+
+pub use error::{DbError, Result};
+pub use filter_sql::{SqlFragment, filter_to_sql};
+pub use migrations::{
+    APP_MIGRATIONS, Migration, MigrationScope, REALM_MIGRATIONS, SYSTEM_MIGRATIONS,
+    apply_migrations,
+};
+pub use pool::{AppPoolManager, RealmPoolManager, SystemPool, open_memory_pool, open_pool};
