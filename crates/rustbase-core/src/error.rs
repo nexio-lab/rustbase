@@ -27,6 +27,9 @@ pub enum CoreError {
     #[error("forbidden")]
     Forbidden,
 
+    #[error("conflict: {0}")]
+    Conflict(String),
+
     #[error("internal error: {0}")]
     Internal(String),
 }

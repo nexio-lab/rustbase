@@ -2,10 +2,12 @@ use anyhow::Result;
 use rustbase_api::{AppState, build_router};
 use rustbase_auth::RevocationSet;
 use rustbase_db::{
-    AppPoolManager, RealmPoolManager, SYSTEM_MIGRATIONS, SystemPool, apply_migrations,
+    AppPoolManager, RealmPoolManager, SYSTEM_MIGRATIONS, SystemPool, admins::count_master_admins,
+    apply_migrations, realms::ensure_master_realm,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Debug)]
@@ -54,12 +56,18 @@ async fn main() -> Result<()> {
     if applied > 0 {
         tracing::info!(applied, "system migrations applied");
     }
+    ensure_master_realm(system.pool()).await?;
+    let already_initialized = count_master_admins(system.pool()).await? > 0;
+    if !already_initialized {
+        tracing::warn!("no master admin found — only /healthz and POST /_/setup are reachable until setup completes");
+    }
 
     let state = AppState {
         system: Arc::new(system),
         realms: Arc::new(RealmPoolManager::new(cfg.data_dir.clone(), cfg.realm_pool_cap)),
         apps: Arc::new(AppPoolManager::new(cfg.data_dir.clone(), cfg.app_pool_cap)),
         revocations: RevocationSet::default(),
+        initialized: Arc::new(AtomicBool::new(already_initialized)),
     };
 
     let app = build_router(state);

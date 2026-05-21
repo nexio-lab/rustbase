@@ -43,6 +43,7 @@ impl IntoResponse for ApiError {
                 CoreError::AppNotFound { .. } => (StatusCode::NOT_FOUND, "app_not_found"),
                 CoreError::Validation(_) => (StatusCode::BAD_REQUEST, "validation"),
                 CoreError::PolicyViolation { .. } => (StatusCode::CONFLICT, "policy_violation"),
+                CoreError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
                 CoreError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
                 CoreError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
                 CoreError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
