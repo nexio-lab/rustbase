@@ -17,6 +17,7 @@ use crate::middleware::setup_gate;
 use crate::policies;
 use crate::realm_admins;
 use crate::realms;
+use crate::realtime;
 use crate::records;
 use crate::setup::setup;
 use crate::state::AppState;
@@ -88,6 +89,11 @@ pub fn build_router(state: AppState) -> Router {
             "/api/realms/{realm}/apps/{app}/files/{id}/meta",
             get(files::meta),
         )
+        // realtime SSE
+        .route(
+            "/api/realms/{realm}/apps/{app}/collections/{coll}/events",
+            get(realtime::record_events),
+        )
         // policy endpoints
         .route("/api/system/policies", get(policies::system_list))
         .route(
@@ -138,6 +144,7 @@ mod tests {
         AppPoolManager, RealmPoolManager, SYSTEM_MIGRATIONS, SystemPool, apply_migrations,
         realms::ensure_master_realm,
     };
+    use rustbase_realtime::RealtimeBroker;
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
     use tempfile::tempdir;
@@ -155,6 +162,7 @@ mod tests {
             apps: Arc::new(AppPoolManager::new(data_dir.clone(), 4)),
             revocations: RevocationSet::default(),
             master_key: Arc::new(SigningKey::generate()),
+            broker: RealtimeBroker::default(),
             data_dir: Arc::new(data_dir),
             initialized: Arc::new(AtomicBool::new(false)),
         };

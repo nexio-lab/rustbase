@@ -1729,6 +1729,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "chrono",
+ "futures",
  "rand_core",
  "rustbase-auth",
  "rustbase-core",
@@ -1742,6 +1743,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-stream",
  "tower",
  "tower-http",
  "tracing",
@@ -1803,6 +1805,7 @@ dependencies = [
 name = "rustbase-realtime"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "dashmap",
  "rustbase-core",
  "serde",
@@ -1833,6 +1836,7 @@ dependencies = [
  "rustbase-api",
  "rustbase-auth",
  "rustbase-db",
+ "rustbase-realtime",
  "serde",
  "tempfile",
  "tokio",
@@ -2504,6 +2508,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32da49809aab5c3bc678af03902d4ccddea2a87d028d86392a4b1560c6906c70"
 dependencies = [
  "futures-core",
+ "pin-project-lite",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "tokio-util"
+version = "0.7.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ae9cec805b01e8fc3fd2fe289f89149a9b66dd16786abd8b19cfa7b48cb0098"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "futures-sink",
  "pin-project-lite",
  "tokio",
 ]

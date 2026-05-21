@@ -1,5 +1,6 @@
 use rustbase_auth::{RevocationSet, SigningKey};
 use rustbase_db::{AppPoolManager, RealmPoolManager, SystemPool};
+use rustbase_realtime::RealtimeBroker;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,6 +15,8 @@ pub struct AppState {
     /// HS256 signing key for master-admin tokens. Persisted in
     /// `system.db._secrets` so it survives restarts.
     pub master_key: Arc<SigningKey>,
+    /// In-process pub/sub broker for record CRUD events.
+    pub broker: RealtimeBroker,
     /// Root of the on-disk data tree. Used by handlers that need to
     /// resolve a realm or app folder for delete / storage operations.
     pub data_dir: Arc<PathBuf>,
