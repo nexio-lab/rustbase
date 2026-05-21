@@ -1,0 +1,22 @@
+[package]
+name = "rustbase-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "RustBase server binary."
+
+[[bin]]
+name = "rustbase"
+path = "src/main.rs"
+
+[dependencies]
+rustbase-api.workspace = true
+tokio.workspace = true
+config.workspace = true
+serde.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
