@@ -14,7 +14,10 @@ path = "src/main.rs"
 
 [dependencies]
 rustbase-api.workspace = true
+rustbase-auth.workspace = true
+rustbase-db.workspace = true
 tokio.workspace = true
+axum.workspace = true
 config.workspace = true
 serde.workspace = true
 tracing.workspace = true
