@@ -1,0 +1,28 @@
+# Rust
+/target
+**/target/
+*.pdb
+
+# Data directory (runtime state)
+/data
+*.db
+*.db-wal
+*.db-shm
+
+# Local config & secrets
+/.env
+/.env.*
+!/.env.example
+rustbase.toml
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Dashboard build artifacts (when developing locally)
+/dashboard/dist/
+/dashboard/node_modules/
