@@ -4,6 +4,7 @@
 //! SSE and WebSocket endpoints for realtime subscriptions. Errors map to
 //! HTTP status codes via an `IntoResponse` implementation for `ApiError`.
 
+pub mod access_rules;
 pub mod apps;
 pub mod auth;
 pub mod collections;

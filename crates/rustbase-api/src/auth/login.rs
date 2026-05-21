@@ -7,6 +7,7 @@ use rustbase_core::{CoreError, RealmId};
 use rustbase_db::{
     admins::{find_master_admin_by_email, find_realm_admin_by_email},
     tokens::{SubjectKind, insert_refresh_token},
+    users::{find_user_by_email, record_last_login},
 };
 use serde::{Deserialize, Serialize};
 use validator::Validate;
@@ -35,6 +36,20 @@ pub struct LoginResponse {
     pub access_token: String,
     pub refresh_token: String,
     pub admin: AdminPublic,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UserPublic {
+    pub id: String,
+    pub email: String,
+    pub verified: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UserLoginResponse {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub user: UserPublic,
 }
 
 pub async fn master_admin_login(
@@ -132,6 +147,62 @@ pub async fn realm_admin_login(
             id: admin.id,
             email: admin.email,
             name: admin.name,
+        },
+    }))
+}
+
+pub async fn user_login(
+    State(state): State<AppState>,
+    Path(realm): Path<String>,
+    Json(req): Json<LoginRequest>,
+) -> Result<Json<UserLoginResponse>, ApiError> {
+    req.validate()
+        .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
+
+    let realm_id = RealmId::from(realm.clone());
+    let pool = state.realms.pool_for(&realm_id).await?;
+
+    let user = find_user_by_email(&pool, &req.email)
+        .await?
+        .ok_or(ApiError::Core(CoreError::Unauthorized))?;
+
+    let hash = user
+        .password_hash
+        .as_deref()
+        .ok_or(ApiError::Core(CoreError::Unauthorized))?;
+    if !verify_password(&req.password, hash)? {
+        return Err(ApiError::Core(CoreError::Unauthorized));
+    }
+
+    record_last_login(&pool, &user.id).await?;
+
+    let claims = build_claims(
+        user.id.clone(),
+        TokenRole::User,
+        Some(realm.clone()),
+        None,
+        default_access_ttl(),
+    );
+    let access_token = encode_token(&claims, &state.master_key)?;
+
+    let refresh = insert_refresh_token(
+        &pool,
+        &new_refresh_token(),
+        SubjectKind::User,
+        &user.id,
+        default_refresh_ttl(),
+    )
+    .await?;
+
+    tracing::info!(realm = %realm, user_id = %user.id, "user login");
+
+    Ok(Json(UserLoginResponse {
+        access_token,
+        refresh_token: refresh.token,
+        user: UserPublic {
+            id: user.id,
+            email: user.email,
+            verified: user.verified,
         },
     }))
 }

@@ -4,9 +4,11 @@ use axum::{
 };
 use tower_http::trace::TraceLayer;
 
+use crate::access_rules;
 use crate::apps;
 use crate::auth::{
     master_admin_login, master_admin_refresh, realm_admin_login, realm_admin_refresh,
+    user_login, user_refresh, user_register,
 };
 use crate::collections;
 use crate::health::healthz;
@@ -35,6 +37,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/realms/{realm}/admins", post(realm_admins::create))
         .route("/api/realms/{realm}/auth/admin/login", post(realm_admin_login))
         .route("/api/realms/{realm}/auth/refresh", post(realm_admin_refresh))
+        .route("/api/realms/{realm}/auth/users/register", post(user_register))
+        .route("/api/realms/{realm}/auth/users/login", post(user_login))
+        .route("/api/realms/{realm}/auth/users/refresh", post(user_refresh))
         .route(
             "/api/realms/{realm}/apps",
             get(apps::list).post(apps::create),
@@ -60,6 +65,14 @@ pub fn build_router(state: AppState) -> Router {
             get(records::get)
                 .patch(records::update)
                 .delete(records::delete),
+        )
+        .route(
+            "/api/realms/{realm}/apps/{app}/collections/{coll}/access_rules",
+            get(access_rules::list),
+        )
+        .route(
+            "/api/realms/{realm}/apps/{app}/collections/{coll}/access_rules/{action}",
+            axum::routing::put(access_rules::put).delete(access_rules::delete),
         )
         // policy endpoints
         .route("/api/system/policies", get(policies::system_list))
@@ -1247,6 +1260,241 @@ mod tests {
         let j = json_body(resp).await;
         let msg = j["message"].as_str().unwrap();
         assert!(msg.contains("nope"), "got message: {msg}");
+    }
+
+    // ------------- end-user auth + access rules -------------
+
+    /// Bootstrap to: realm 'acme' + open app 'mobile' + collection
+    /// 'notes' + one registered user 'u@acme'. Returns (state, dir,
+    /// master_token, user_access_token).
+    async fn state_with_collection_and_user() -> (
+        AppState,
+        tempfile::TempDir,
+        String,
+        String,
+    ) {
+        let (state, dir, tok) = state_with_app_and_collection().await;
+        let row: (String,) = sqlx::query_as("SELECT id FROM master_admins LIMIT 1")
+            .fetch_one(state.system.pool())
+            .await
+            .unwrap();
+        let master_tok = master_token(&state, &row.0);
+
+        // register a user
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/auth/users/register",
+                None,
+                Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        // login -> token
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/auth/users/login",
+                None,
+                Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let j = json_body(resp).await;
+        let user_tok = j["access_token"].as_str().unwrap().to_string();
+
+        // keep the seed realm-admin token for the (admin) bootstrap caller
+        let _ = tok;
+        (state, dir, master_tok, user_tok)
+    }
+
+    #[tokio::test]
+    async fn user_register_duplicate_email_returns_409() {
+        let (state, _dir, _, _) = state_with_collection_and_user().await;
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/auth/users/register",
+                None,
+                Some(&serde_json::json!({"email":"u@acme.com","password":"otherpass"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn user_login_wrong_password_returns_401() {
+        let (state, _dir, _, _) = state_with_collection_and_user().await;
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/auth/users/login",
+                None,
+                Some(&serde_json::json!({"email":"u@acme.com","password":"wrong"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn user_blocked_from_records_without_a_rule() {
+        let (state, _dir, _, user_tok) = state_with_collection_and_user().await;
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/realms/acme/apps/mobile/collections/notes/records",
+                Some(&user_tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn open_list_rule_lets_user_read() {
+        let (state, _dir, master_tok, user_tok) =
+            state_with_collection_and_user().await;
+        // master opens 'list' rule
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "PUT",
+                "/api/realms/acme/apps/mobile/collections/notes/access_rules/list",
+                Some(&master_tok),
+                Some(&serde_json::json!({"filter": ""})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // user can now read
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/realms/acme/apps/mobile/collections/notes/records",
+                Some(&user_tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn user_in_one_realm_cannot_read_another_realms_records() {
+        let (state, _dir, master_tok, user_tok) =
+            state_with_collection_and_user().await;
+        // master creates widgetco with an OPEN notes collection
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "POST",
+            "/api/realms",
+            Some(&master_tok),
+            Some(&serde_json::json!({"id":"widgetco","name":"W"})),
+        ))
+        .await
+        .unwrap();
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "POST",
+            "/api/realms/widgetco/apps",
+            Some(&master_tok),
+            Some(&serde_json::json!({"id":"web","name":"W"})),
+        ))
+        .await
+        .unwrap();
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "POST",
+            "/api/realms/widgetco/apps/web/collections",
+            Some(&master_tok),
+            Some(&serde_json::json!({
+                "schema":{"id":"items","kind":"base",
+                          "fields":[{"name":"name","kind":"text","required":true}]}
+            })),
+        ))
+        .await
+        .unwrap();
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "PUT",
+            "/api/realms/widgetco/apps/web/collections/items/access_rules/list",
+            Some(&master_tok),
+            Some(&serde_json::json!({"filter": ""})),
+        ))
+        .await
+        .unwrap();
+
+        // acme's user tries widgetco — must be 403 even with an open rule
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/realms/widgetco/apps/web/collections/items/records",
+                Some(&user_tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn user_refresh_rotates_token() {
+        let (state, _dir, _, _) = state_with_collection_and_user().await;
+        // login to capture refresh
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/auth/users/login",
+                None,
+                Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
+            ))
+            .await
+            .unwrap();
+        let j = json_body(resp).await;
+        let first = j["refresh_token"].as_str().unwrap().to_string();
+
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/auth/users/refresh",
+                None,
+                Some(&serde_json::json!({"refresh_token": first})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let j = json_body(resp).await;
+        let second = j["refresh_token"].as_str().unwrap().to_string();
+        assert_ne!(first, second);
+
+        // reuse fails
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/auth/users/refresh",
+                None,
+                Some(&serde_json::json!({"refresh_token": first})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     // ------------- policy engine tests -------------
