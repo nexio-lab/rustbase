@@ -4,9 +4,13 @@ use axum::{
 };
 use tower_http::trace::TraceLayer;
 
-use crate::auth::{master_admin_login, master_admin_refresh};
+use crate::apps;
+use crate::auth::{
+    master_admin_login, master_admin_refresh, realm_admin_login, realm_admin_refresh,
+};
 use crate::health::healthz;
 use crate::middleware::setup_gate;
+use crate::realm_admins;
 use crate::realms;
 use crate::setup::setup;
 use crate::state::AppState;
@@ -24,6 +28,17 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/realms/{id}",
             get(realms::get).patch(realms::update).delete(realms::delete),
+        )
+        .route("/api/realms/{realm}/admins", post(realm_admins::create))
+        .route("/api/realms/{realm}/auth/admin/login", post(realm_admin_login))
+        .route("/api/realms/{realm}/auth/refresh", post(realm_admin_refresh))
+        .route(
+            "/api/realms/{realm}/apps",
+            get(apps::list).post(apps::create),
+        )
+        .route(
+            "/api/realms/{realm}/apps/{app}",
+            get(apps::get).patch(apps::update).delete(apps::delete),
         )
         // /api/realms/<realm>/apps/<app>/... will mount under here once
         // collections / records handlers land.
@@ -600,5 +615,341 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    // ------------- realm-admin auth + app CRUD tests -------------
+
+    /// Bootstrap state through to "realm 'acme' exists, has one realm
+    /// admin (ops@acme/secretpw)". Returns the realm-admin's id.
+    async fn state_with_realm_and_admin() -> (AppState, tempfile::TempDir, String, String) {
+        let (state, dir, master_id) = initialized_state_with_admin("hunter22").await;
+        let master_tok = master_token(&state, &master_id);
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms",
+                Some(&master_tok),
+                Some(&serde_json::json!({"id":"acme","name":"Acme"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/admins",
+                Some(&master_tok),
+                Some(&serde_json::json!({
+                    "email":"ops@acme.com","password":"secretpw","name":"Ops"
+                })),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let admin = json_body(resp).await;
+        let admin_id = admin["id"].as_str().unwrap().to_string();
+        (state, dir, master_id, admin_id)
+    }
+
+    fn realm_token(state: &AppState, realm: &str, admin_id: &str) -> String {
+        let claims = rustbase_auth::build_claims(
+            admin_id,
+            rustbase_auth::TokenRole::RealmAdmin,
+            Some(realm.into()),
+            None,
+            chrono::Duration::minutes(15),
+        );
+        rustbase_auth::encode_token(&claims, &state.master_key).unwrap()
+    }
+
+    #[tokio::test]
+    async fn realm_admin_creation_requires_master() {
+        let (state, _dir, _, realm_admin_id) = state_with_realm_and_admin().await;
+        let realm_tok = realm_token(&state, "acme", &realm_admin_id);
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/admins",
+                Some(&realm_tok),
+                Some(&serde_json::json!({"email":"x@y.z","password":"longenough"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn realm_admin_login_returns_realm_scoped_token() {
+        let (state, _dir, _, _) = state_with_realm_and_admin().await;
+        let app = build_router(state);
+        let resp = post_json(
+            app,
+            "/api/realms/acme/auth/admin/login",
+            &serde_json::json!({"email":"ops@acme.com","password":"secretpw"}),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let j = json_body(resp).await;
+        assert!(j["access_token"].as_str().unwrap().starts_with("ey"));
+        assert!(j["refresh_token"].as_str().unwrap().starts_with("rfsh_"));
+        assert_eq!(j["admin"]["email"], "ops@acme.com");
+    }
+
+    #[tokio::test]
+    async fn realm_admin_login_wrong_password_is_401() {
+        let (state, _dir, _, _) = state_with_realm_and_admin().await;
+        let app = build_router(state);
+        let resp = post_json(
+            app,
+            "/api/realms/acme/auth/admin/login",
+            &serde_json::json!({"email":"ops@acme.com","password":"wrong"}),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn realm_admin_refresh_rotates() {
+        let (state, _dir, _, _) = state_with_realm_and_admin().await;
+        let app = build_router(state.clone());
+        let resp = post_json(
+            app,
+            "/api/realms/acme/auth/admin/login",
+            &serde_json::json!({"email":"ops@acme.com","password":"secretpw"}),
+        )
+        .await;
+        let j = json_body(resp).await;
+        let first = j["refresh_token"].as_str().unwrap().to_string();
+
+        let app = build_router(state.clone());
+        let resp = post_json(
+            app,
+            "/api/realms/acme/auth/refresh",
+            &serde_json::json!({"refresh_token": first}),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let j = json_body(resp).await;
+        let second = j["refresh_token"].as_str().unwrap().to_string();
+        assert_ne!(first, second);
+
+        let app = build_router(state);
+        let resp = post_json(
+            app,
+            "/api/realms/acme/auth/refresh",
+            &serde_json::json!({"refresh_token": first}),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn realm_admin_creates_and_lists_apps_in_own_realm() {
+        let (state, _dir, _, realm_admin_id) = state_with_realm_and_admin().await;
+        let realm_tok = realm_token(&state, "acme", &realm_admin_id);
+
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/apps",
+                Some(&realm_tok),
+                Some(&serde_json::json!({"id":"mobile","name":"Mobile"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let j = json_body(resp).await;
+        assert_eq!(j["id"], "mobile");
+
+        // data.db is initialized — listing collections (the meta table)
+        // should be empty without erroring.
+        let app_pool = state
+            .apps
+            .pool_for(
+                &rustbase_core::RealmId::from("acme"),
+                &rustbase_core::AppId::from("mobile"),
+            )
+            .await
+            .unwrap();
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _collections")
+            .fetch_one(&app_pool)
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
+
+        // list returns the app
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/realms/acme/apps",
+                Some(&realm_tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        let j = json_body(resp).await;
+        assert_eq!(j.as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn realm_admin_cannot_act_on_other_realm() {
+        // Create realm 'acme' with admin 'ops@acme', and a second realm
+        // 'widgetco'. The acme admin must not be able to list widgetco's
+        // apps.
+        let (state, _dir, master_id, realm_admin_id) = state_with_realm_and_admin().await;
+        let master_tok = master_token(&state, &master_id);
+
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "POST",
+            "/api/realms",
+            Some(&master_tok),
+            Some(&serde_json::json!({"id":"widgetco","name":"WidgetCo"})),
+        ))
+        .await
+        .unwrap();
+
+        let acme_tok = realm_token(&state, "acme", &realm_admin_id);
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/realms/widgetco/apps",
+                Some(&acme_tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn create_app_with_uppercase_id_is_400() {
+        let (state, _dir, master_id, _) = state_with_realm_and_admin().await;
+        let master_tok = master_token(&state, &master_id);
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/apps",
+                Some(&master_tok),
+                Some(&serde_json::json!({"id":"Mobile","name":"x"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn create_duplicate_app_returns_409() {
+        let (state, _dir, master_id, _) = state_with_realm_and_admin().await;
+        let master_tok = master_token(&state, &master_id);
+        let body = serde_json::json!({"id":"mobile","name":"M"});
+
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "POST",
+            "/api/realms/acme/apps",
+            Some(&master_tok),
+            Some(&body),
+        ))
+        .await
+        .unwrap();
+
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/apps",
+                Some(&master_tok),
+                Some(&body),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn create_app_in_unknown_realm_is_404() {
+        let (state, _dir, master_id, _) = state_with_realm_and_admin().await;
+        let master_tok = master_token(&state, &master_id);
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/no-such-realm/apps",
+                Some(&master_tok),
+                Some(&serde_json::json!({"id":"mobile","name":"Mobile"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn delete_app_removes_row_and_folder() {
+        let (state, dir, master_id, _) = state_with_realm_and_admin().await;
+        let master_tok = master_token(&state, &master_id);
+
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "POST",
+            "/api/realms/acme/apps",
+            Some(&master_tok),
+            Some(&serde_json::json!({"id":"mobile","name":"M"})),
+        ))
+        .await
+        .unwrap();
+        let app_folder = dir.path().join("realms/acme/apps/mobile");
+        assert!(app_folder.exists());
+
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "DELETE",
+                "/api/realms/acme/apps/mobile",
+                Some(&master_tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        assert!(!app_folder.exists());
+    }
+
+    #[tokio::test]
+    async fn rename_app_updates_name() {
+        let (state, _dir, _, realm_admin_id) = state_with_realm_and_admin().await;
+        let tok = realm_token(&state, "acme", &realm_admin_id);
+
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "POST",
+            "/api/realms/acme/apps",
+            Some(&tok),
+            Some(&serde_json::json!({"id":"mobile","name":"Original"})),
+        ))
+        .await
+        .unwrap();
+
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "PATCH",
+                "/api/realms/acme/apps/mobile",
+                Some(&tok),
+                Some(&serde_json::json!({"name":"Renamed"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let j = json_body(resp).await;
+        assert_eq!(j["name"], "Renamed");
     }
 }

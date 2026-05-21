@@ -6,8 +6,8 @@
 //! - `PATCH  /api/realms/:id`    — rename
 //! - `DELETE /api/realms/:id`    — cascade-delete (refuses master)
 //!
-//! All five require a valid `MasterAdminAuth` token. Creation also
-//! initializes the realm's `realm.db` by opening the pool and running
+//! All five require a master-admin token. Creation also initializes
+//! the realm's `realm.db` by opening the pool and running
 //! `REALM_MIGRATIONS`. Deletion evicts the realm + every app pool under
 //! it, deletes the row, and removes the realm's folder.
 
@@ -24,7 +24,7 @@ use rustbase_db::{
 use serde::Deserialize;
 use validator::Validate;
 
-use crate::auth::MasterAdminAuth;
+use crate::auth::AdminAuth;
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -42,17 +42,19 @@ pub struct UpdateRealmRequest {
 }
 
 pub async fn list(
-    _auth: MasterAdminAuth,
+    auth: AdminAuth,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<Realm>>, ApiError> {
+    auth.require_master()?;
     Ok(Json(list_realms(state.system.pool()).await?))
 }
 
 pub async fn create(
-    _auth: MasterAdminAuth,
+    auth: AdminAuth,
     State(state): State<AppState>,
     Json(req): Json<CreateRealmRequest>,
 ) -> Result<(StatusCode, Json<Realm>), ApiError> {
+    auth.require_master()?;
     validate_realm_id(&req.id)?;
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
@@ -80,10 +82,11 @@ pub async fn create(
 }
 
 pub async fn get(
-    _auth: MasterAdminAuth,
+    auth: AdminAuth,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Realm>, ApiError> {
+    auth.require_master()?;
     let realm = find_realm(state.system.pool(), &id)
         .await?
         .ok_or(ApiError::Core(CoreError::RealmNotFound(id)))?;
@@ -91,11 +94,12 @@ pub async fn get(
 }
 
 pub async fn update(
-    _auth: MasterAdminAuth,
+    auth: AdminAuth,
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateRealmRequest>,
 ) -> Result<Json<Realm>, ApiError> {
+    auth.require_master()?;
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
 
@@ -115,10 +119,11 @@ pub async fn update(
 }
 
 pub async fn delete(
-    _auth: MasterAdminAuth,
+    auth: AdminAuth,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
+    auth.require_master()?;
     if id == MASTER_REALM_ID {
         return Err(ApiError::Core(CoreError::Forbidden));
     }
