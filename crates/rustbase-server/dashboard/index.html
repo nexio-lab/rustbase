@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RustBase</title>
+  <style>
+    :root { color-scheme: light dark; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      display: grid; place-items: center;
+      background: Canvas; color: CanvasText;
+    }
+    main { max-width: 480px; padding: 2rem; text-align: center; }
+    h1 { font-weight: 600; letter-spacing: -0.01em; margin: 0 0 .5rem; }
+    p { color: GrayText; margin: 0; }
+    code { background: Field; padding: .15em .35em; border-radius: 3px; }
+    .row { margin-top: 1.5rem; display: flex; gap: 1rem; justify-content: center; }
+    .row a { color: LinkText; text-decoration: none; }
+    .row a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>RustBase</h1>
+    <p>The dashboard ships as a separate prebuilt artifact. Until that lands, this placeholder is what's embedded into the binary.</p>
+    <div class="row">
+      <a href="/healthz">/healthz</a>
+      <a href="https://github.com/rustbase/rustbase">source</a>
+    </div>
+    <p style="margin-top:2rem">
+      Dev override: set <code>RUSTBASE_DASHBOARD_PATH</code> to a built dashboard directory.
+    </p>
+  </main>
+</body>
+</html>

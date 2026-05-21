@@ -1,4 +1,5 @@
 use anyhow::Result;
+use axum::{Router, routing::get};
 use rustbase_api::{AppState, build_router};
 use rustbase_auth::{RevocationSet, SigningKey};
 use rustbase_db::{
@@ -12,6 +13,7 @@ use std::sync::atomic::AtomicBool;
 use tracing_subscriber::EnvFilter;
 
 mod config;
+mod dashboard;
 mod litestream;
 
 #[tokio::main]
@@ -70,7 +72,10 @@ async fn main() -> Result<()> {
         initialized: Arc::new(AtomicBool::new(already_initialized)),
     };
 
-    let app = build_router(state);
+    let dashboard_routes: Router<()> = Router::new()
+        .route("/_/", get(dashboard::index))
+        .route("/_/{*path}", get(dashboard::asset));
+    let app = build_router(state).merge(dashboard_routes);
     let listener = tokio::net::TcpListener::bind(&cfg.listen).await?;
     tracing::info!(listen = %cfg.listen, "rustbase: ready");
     axum::serve(listener, app).await?;

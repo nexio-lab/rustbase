@@ -16,8 +16,13 @@ use serde_json::json;
 use crate::state::AppState;
 
 /// Routes that remain available before setup completes.
-fn is_allowed_before_setup(path: &str) -> bool {
-    matches!(path, "/healthz" | "/_/setup")
+fn is_allowed_before_setup(method: &axum::http::Method, path: &str) -> bool {
+    if path == "/healthz" || path == "/_/setup" {
+        return true;
+    }
+    // Dashboard reads are always safe — the setup wizard itself lives
+    // inside the dashboard.
+    method == axum::http::Method::GET && (path == "/_/" || path.starts_with("/_/"))
 }
 
 pub async fn setup_gate(
@@ -25,7 +30,9 @@ pub async fn setup_gate(
     req: Request,
     next: Next,
 ) -> Response {
-    if state.is_initialized() || is_allowed_before_setup(req.uri().path()) {
+    if state.is_initialized()
+        || is_allowed_before_setup(req.method(), req.uri().path())
+    {
         return next.run(req).await;
     }
     (

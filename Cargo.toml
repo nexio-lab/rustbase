@@ -51,6 +51,10 @@ dashmap = "6"
 lru = "0.12"
 parking_lot = "0.12"
 
+# dashboard embedding
+include_dir = "0.7"
+mime_guess = "2"
+
 # observability
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
