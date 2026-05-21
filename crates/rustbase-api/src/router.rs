@@ -4,6 +4,7 @@ use axum::{
 };
 use tower_http::trace::TraceLayer;
 
+use crate::auth::{master_admin_login, master_admin_refresh};
 use crate::health::healthz;
 use crate::middleware::setup_gate;
 use crate::setup::setup;
@@ -16,8 +17,10 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/_/setup", post(setup))
+        .route("/_/auth/admin/login", post(master_admin_login))
+        .route("/_/auth/refresh", post(master_admin_refresh))
         // /api/realms/<realm>/apps/<app>/... will mount under here once
-        // collections / records / auth handlers land.
+        // collections / records handlers land.
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             setup_gate,
@@ -33,7 +36,7 @@ mod tests {
         body::{Body, to_bytes},
         http::{Request, StatusCode},
     };
-    use rustbase_auth::RevocationSet;
+    use rustbase_auth::{RevocationSet, SigningKey};
     use rustbase_db::{
         AppPoolManager, RealmPoolManager, SYSTEM_MIGRATIONS, SystemPool, apply_migrations,
         realms::ensure_master_realm,
@@ -53,6 +56,7 @@ mod tests {
             realms: Arc::new(RealmPoolManager::new(dir.path().to_path_buf(), 4)),
             apps: Arc::new(AppPoolManager::new(dir.path().to_path_buf(), 4)),
             revocations: RevocationSet::default(),
+            master_key: Arc::new(SigningKey::generate()),
             initialized: Arc::new(AtomicBool::new(false)),
         };
         (state, dir)
@@ -175,5 +179,125 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::CONFLICT);
         let j = json_body(resp).await;
         assert_eq!(j["code"], "conflict");
+    }
+
+    // ------------- auth flow tests -------------
+
+    async fn initialized_state_with_admin(
+        password: &str,
+    ) -> (AppState, tempfile::TempDir, String) {
+        let (state, dir) = fresh_state().await;
+        let hash = rustbase_auth::hash_password(password).unwrap();
+        let admin = rustbase_db::admins::insert_master_admin(
+            state.system.pool(),
+            "ada@example.com",
+            &hash,
+            Some("Ada"),
+        )
+        .await
+        .unwrap();
+        state.mark_initialized();
+        (state, dir, admin.id)
+    }
+
+    async fn post_json(
+        app: Router,
+        uri: &str,
+        body: &serde_json::Value,
+    ) -> axum::response::Response {
+        let req = Request::builder()
+            .uri(uri)
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(body).unwrap()))
+            .unwrap();
+        app.oneshot(req).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn login_with_valid_credentials_returns_tokens() {
+        let (state, _dir, admin_id) = initialized_state_with_admin("hunter22").await;
+        let app = build_router(state);
+        let body = serde_json::json!({"email":"ada@example.com","password":"hunter22"});
+        let resp = post_json(app, "/_/auth/admin/login", &body).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let j = json_body(resp).await;
+        assert!(j["access_token"].as_str().unwrap().starts_with("ey"));
+        assert!(j["refresh_token"].as_str().unwrap().starts_with("rfsh_"));
+        assert_eq!(j["admin"]["id"], admin_id);
+        assert_eq!(j["admin"]["email"], "ada@example.com");
+        assert_eq!(j["admin"]["name"], "Ada");
+        assert!(j["admin"].get("password_hash").is_none());
+    }
+
+    #[tokio::test]
+    async fn login_with_wrong_password_returns_401() {
+        let (state, _dir, _) = initialized_state_with_admin("hunter22").await;
+        let app = build_router(state);
+        let body = serde_json::json!({"email":"ada@example.com","password":"wrong"});
+        let resp = post_json(app, "/_/auth/admin/login", &body).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn login_with_unknown_email_returns_401() {
+        let (state, _dir, _) = initialized_state_with_admin("hunter22").await;
+        let app = build_router(state);
+        let body = serde_json::json!({"email":"nobody@example.com","password":"hunter22"});
+        let resp = post_json(app, "/_/auth/admin/login", &body).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn refresh_rotates_token() {
+        let (state, _dir, _) = initialized_state_with_admin("hunter22").await;
+
+        // log in to get a refresh token
+        let app = build_router(state.clone());
+        let resp = post_json(
+            app,
+            "/_/auth/admin/login",
+            &serde_json::json!({"email":"ada@example.com","password":"hunter22"}),
+        )
+        .await;
+        let j = json_body(resp).await;
+        let first_refresh = j["refresh_token"].as_str().unwrap().to_string();
+
+        // exchange it
+        let app = build_router(state.clone());
+        let resp = post_json(
+            app,
+            "/_/auth/refresh",
+            &serde_json::json!({"refresh_token": first_refresh}),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let j = json_body(resp).await;
+        let second_refresh = j["refresh_token"].as_str().unwrap().to_string();
+        assert_ne!(first_refresh, second_refresh);
+        assert!(j["access_token"].as_str().unwrap().starts_with("ey"));
+
+        // re-using the original refresh now fails
+        let app = build_router(state);
+        let resp = post_json(
+            app,
+            "/_/auth/refresh",
+            &serde_json::json!({"refresh_token": first_refresh}),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn refresh_with_unknown_token_returns_401() {
+        let (state, _dir, _) = initialized_state_with_admin("hunter22").await;
+        let app = build_router(state);
+        let resp = post_json(
+            app,
+            "/_/auth/refresh",
+            &serde_json::json!({"refresh_token":"rfsh_does_not_exist"}),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 }

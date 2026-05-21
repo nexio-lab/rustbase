@@ -1717,6 +1717,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "chrono",
+ "rand_core",
  "rustbase-auth",
  "rustbase-core",
  "rustbase-db",
