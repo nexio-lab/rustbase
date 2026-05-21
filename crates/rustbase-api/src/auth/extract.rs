@@ -16,6 +16,28 @@ use rustbase_core::CoreError;
 use crate::error::ApiError;
 use crate::state::AppState;
 
+/// Decode `Authorization: Bearer …` into raw claims, no role filtering.
+/// Returns `None` if the header is missing; only signature / expiry /
+/// revocation errors are surfaced.
+fn extract_claims(parts: &Parts, state: &AppState) -> Result<Option<Claims>, ApiError> {
+    let Some(header) = parts.headers.get("authorization").and_then(|h| h.to_str().ok())
+    else {
+        return Ok(None);
+    };
+    let Some(token) = header.strip_prefix("Bearer ") else {
+        return Ok(None);
+    };
+    let claims = decode_token(token, &state.master_key)?;
+    let key = match &claims.realm {
+        Some(r) => SubjectKey::scoped(r, &claims.sub),
+        None => SubjectKey::master(&claims.sub),
+    };
+    if state.revocations.is_revoked(&key, claims.iat) {
+        return Err(ApiError::Core(CoreError::Unauthorized));
+    }
+    Ok(Some(claims))
+}
+
 #[derive(Debug, Clone)]
 pub struct AdminAuth {
     pub admin_id: String,
@@ -81,32 +103,58 @@ impl FromRequestParts<AppState> for AdminAuth {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
-        let header = parts
-            .headers
-            .get("authorization")
-            .and_then(|h| h.to_str().ok())
+        let claims = extract_claims(parts, state)?
             .ok_or(ApiError::Core(CoreError::Unauthorized))?;
-
-        let token = header
-            .strip_prefix("Bearer ")
-            .ok_or(ApiError::Core(CoreError::Unauthorized))?;
-
-        let claims = decode_token(token, &state.master_key)?;
-
         if matches!(claims.role, TokenRole::User) {
             return Err(ApiError::Core(CoreError::Forbidden));
         }
-
-        let subject_key = match &claims.realm {
-            Some(r) => SubjectKey::scoped(r, &claims.sub),
-            None => SubjectKey::master(&claims.sub),
-        };
-        if state.revocations.is_revoked(&subject_key, claims.iat) {
-            return Err(ApiError::Core(CoreError::Unauthorized));
-        }
-
         Ok(AdminAuth {
             admin_id: claims.sub.clone(),
+            claims,
+        })
+    }
+}
+
+/// Permissive extractor: accepts any token (admin or user). Used by
+/// endpoints whose authorization depends on the role + access rules,
+/// not on a hard role match at the extractor layer.
+#[derive(Debug, Clone)]
+pub struct PrincipalAuth {
+    pub subject_id: String,
+    pub claims: Claims,
+}
+
+impl PrincipalAuth {
+    pub fn is_admin_for_app(&self, realm: &str, app: &str) -> bool {
+        match self.claims.role {
+            TokenRole::MasterAdmin => true,
+            TokenRole::RealmAdmin => self.claims.realm.as_deref() == Some(realm),
+            TokenRole::AppAdmin => {
+                self.claims.realm.as_deref() == Some(realm)
+                    && self.claims.app.as_deref() == Some(app)
+            }
+            TokenRole::User => false,
+        }
+    }
+
+    /// Realm the (user) principal is bound to, or `None` if this is an
+    /// admin principal.
+    pub fn user_realm(&self) -> Option<&str> {
+        match self.claims.role {
+            TokenRole::User => self.claims.realm.as_deref(),
+            _ => None,
+        }
+    }
+}
+
+impl FromRequestParts<AppState> for PrincipalAuth {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
+        let claims = extract_claims(parts, state)?
+            .ok_or(ApiError::Core(CoreError::Unauthorized))?;
+        Ok(PrincipalAuth {
+            subject_id: claims.sub.clone(),
             claims,
         })
     }

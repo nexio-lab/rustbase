@@ -6,12 +6,14 @@
 //! - `PATCH  /api/realms/:realm/apps/:app/collections/:coll/records/:id`     partial update
 //! - `DELETE /api/realms/:realm/apps/:app/collections/:coll/records/:id`     delete
 //!
-//! All five require app-level access (master, realm admin for :realm,
-//! or app admin for :realm/:app).
-//!
-//! Per-collection access rules and filter queries on `list` are
-//! coming on later branches; the SQL translator they'll use is already
-//! in `rustbase-db::filter_sql`.
+//! Authorization is per verb:
+//!   - Admin tokens (master / realm-admin / app-admin matching the
+//!     path) always pass.
+//!   - End-user tokens are scoped to one realm. They pass only when
+//!     the collection's access rule for the verb is set to an "open"
+//!     filter (empty string or `true`). Other rule strings are
+//!     reserved for the substitution-aware evaluator landing on a
+//!     later branch; until then they deny by default.
 
 use axum::{
     Json,
@@ -21,6 +23,7 @@ use axum::{
 use rustbase_core::{AppId, CoreError, FilterNode, RealmId, Record, Schema, parse_filter};
 use rustbase_db::{
     DbError, ListPage, ListedRecords,
+    access_rules::{AccessAction, get_rule, rule_allows_user},
     apps::find_app,
     collections::find_collection,
     realms::find_realm,
@@ -30,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as Json_;
 use std::collections::BTreeMap;
 
-use crate::auth::AdminAuth;
+use crate::auth::PrincipalAuth;
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -87,13 +90,13 @@ pub struct UpdateRecordRequest {
 }
 
 pub async fn list(
-    auth: AdminAuth,
+    auth: PrincipalAuth,
     State(state): State<AppState>,
     Path((realm, app, coll)): Path<(String, String, String)>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<ListResponse>, ApiError> {
-    auth.require_app_access(&realm, &app)?;
     let (app_pool, schema) = open_app_and_schema(&state, &realm, &app, &coll).await?;
+    authorize_record_action(&auth, &app_pool, &realm, &app, &coll, AccessAction::List).await?;
 
     let filter = match &q.filter {
         Some(s) if !s.trim().is_empty() => {
@@ -160,24 +163,24 @@ fn check_field(name: &str, known: &std::collections::HashSet<&str>) -> Result<()
 }
 
 pub async fn create(
-    auth: AdminAuth,
+    auth: PrincipalAuth,
     State(state): State<AppState>,
     Path((realm, app, coll)): Path<(String, String, String)>,
     Json(req): Json<CreateRecordRequest>,
 ) -> Result<(StatusCode, Json<Record>), ApiError> {
-    auth.require_app_access(&realm, &app)?;
     let (app_pool, schema) = open_app_and_schema(&state, &realm, &app, &coll).await?;
+    authorize_record_action(&auth, &app_pool, &realm, &app, &coll, AccessAction::Create).await?;
     let rec = create_record(&app_pool, &schema, req.fields).await?;
     Ok((StatusCode::CREATED, Json(rec)))
 }
 
 pub async fn get(
-    auth: AdminAuth,
+    auth: PrincipalAuth,
     State(state): State<AppState>,
     Path((realm, app, coll, id)): Path<(String, String, String, String)>,
 ) -> Result<Json<Record>, ApiError> {
-    auth.require_app_access(&realm, &app)?;
     let (app_pool, schema) = open_app_and_schema(&state, &realm, &app, &coll).await?;
+    authorize_record_action(&auth, &app_pool, &realm, &app, &coll, AccessAction::View).await?;
     let rec = find_record(&app_pool, &schema, &id)
         .await?
         .ok_or(ApiError::Core(CoreError::NotFound {
@@ -188,13 +191,13 @@ pub async fn get(
 }
 
 pub async fn update(
-    auth: AdminAuth,
+    auth: PrincipalAuth,
     State(state): State<AppState>,
     Path((realm, app, coll, id)): Path<(String, String, String, String)>,
     Json(req): Json<UpdateRecordRequest>,
 ) -> Result<Json<Record>, ApiError> {
-    auth.require_app_access(&realm, &app)?;
     let (app_pool, schema) = open_app_and_schema(&state, &realm, &app, &coll).await?;
+    authorize_record_action(&auth, &app_pool, &realm, &app, &coll, AccessAction::Update).await?;
     let rec = update_record(&app_pool, &schema, &id, req.fields)
         .await
         .map_err(|e| match e {
@@ -208,12 +211,12 @@ pub async fn update(
 }
 
 pub async fn delete(
-    auth: AdminAuth,
+    auth: PrincipalAuth,
     State(state): State<AppState>,
     Path((realm, app, coll, id)): Path<(String, String, String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    auth.require_app_access(&realm, &app)?;
     let (app_pool, schema) = open_app_and_schema(&state, &realm, &app, &coll).await?;
+    authorize_record_action(&auth, &app_pool, &realm, &app, &coll, AccessAction::Delete).await?;
     delete_record(&app_pool, &schema, &id)
         .await
         .map_err(|e| match e {
@@ -224,6 +227,31 @@ pub async fn delete(
             other => ApiError::from(other),
         })?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Admin tokens that match the path always pass. User tokens pass
+/// only when the collection's rule for `action` is currently set to
+/// an "open" filter. Anything else → 403.
+async fn authorize_record_action(
+    auth: &PrincipalAuth,
+    app_pool: &sqlx::SqlitePool,
+    realm: &str,
+    app: &str,
+    coll: &str,
+    action: AccessAction,
+) -> Result<(), ApiError> {
+    if auth.is_admin_for_app(realm, app) {
+        return Ok(());
+    }
+    if auth.user_realm() != Some(realm) {
+        return Err(ApiError::Core(CoreError::Forbidden));
+    }
+    let rule = get_rule(app_pool, coll, action).await?;
+    if rule_allows_user(&rule) {
+        Ok(())
+    } else {
+        Err(ApiError::Core(CoreError::Forbidden))
+    }
 }
 
 async fn open_app_and_schema(

@@ -9,6 +9,7 @@
 //! migrations, and (in a later feature) will drive the auto-clamp engine
 //! when a parent tightens a policy bound.
 
+pub mod access_rules;
 pub mod admins;
 pub mod apps;
 pub mod audit;
@@ -24,6 +25,7 @@ pub mod realms;
 pub mod records;
 pub mod secrets;
 pub mod tokens;
+pub mod users;
 
 pub use admins::{AppAdmin, MasterAdmin, RealmAdmin};
 pub use apps::App;

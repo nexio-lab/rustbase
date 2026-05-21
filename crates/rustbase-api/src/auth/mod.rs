@@ -9,10 +9,12 @@
 pub mod extract;
 pub mod login;
 pub mod refresh;
+pub mod register;
 
-pub use extract::AdminAuth;
-pub use login::{master_admin_login, realm_admin_login};
-pub use refresh::{master_admin_refresh, realm_admin_refresh};
+pub use extract::{AdminAuth, PrincipalAuth};
+pub use login::{master_admin_login, realm_admin_login, user_login};
+pub use refresh::{master_admin_refresh, realm_admin_refresh, user_refresh};
+pub use register::user_register;
 
 use rand_core::{OsRng, RngCore};
 
