@@ -10,6 +10,7 @@ pub mod collections;
 pub mod error;
 pub mod health;
 pub mod middleware;
+pub mod policies;
 pub mod realm_admins;
 pub mod realms;
 pub mod records;

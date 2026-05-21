@@ -11,6 +11,7 @@ use crate::auth::{
 use crate::collections;
 use crate::health::healthz;
 use crate::middleware::setup_gate;
+use crate::policies;
 use crate::realm_admins;
 use crate::realms;
 use crate::records;
@@ -59,6 +60,34 @@ pub fn build_router(state: AppState) -> Router {
             get(records::get)
                 .patch(records::update)
                 .delete(records::delete),
+        )
+        // policy endpoints
+        .route("/api/system/policies", get(policies::system_list))
+        .route(
+            "/api/system/policies/{field}",
+            get(policies::system_get)
+                .put(policies::system_put)
+                .delete(policies::system_delete),
+        )
+        .route(
+            "/api/realms/{realm}/policies",
+            get(policies::realm_list),
+        )
+        .route(
+            "/api/realms/{realm}/policies/{field}",
+            get(policies::realm_get)
+                .put(policies::realm_put)
+                .delete(policies::realm_delete),
+        )
+        .route(
+            "/api/realms/{realm}/apps/{app}/policies",
+            get(policies::app_list),
+        )
+        .route(
+            "/api/realms/{realm}/apps/{app}/policies/{field}",
+            get(policies::app_get)
+                .put(policies::app_put)
+                .delete(policies::app_delete),
         )
         // /api/realms/<realm>/apps/<app>/... will mount under here once
         // collections / records handlers land.
@@ -1218,6 +1247,131 @@ mod tests {
         let j = json_body(resp).await;
         let msg = j["message"].as_str().unwrap();
         assert!(msg.contains("nope"), "got message: {msg}");
+    }
+
+    // ------------- policy engine tests -------------
+
+    #[tokio::test]
+    async fn master_can_set_policy_and_realm_clamps_below_master_bound() {
+        let (state, _dir, master_id, realm_admin_id) = state_with_realm_and_admin().await;
+        let m_tok = master_token(&state, &master_id);
+        let r_tok = realm_token(&state, "acme", &realm_admin_id);
+
+        // master sets range [4, 64]
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "PUT",
+                "/api/system/policies/password.length",
+                Some(&m_tok),
+                Some(&serde_json::json!({"kind":"range","min":4,"max":64})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // realm sets [8, 32] — inside master, OK
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "PUT",
+                "/api/realms/acme/policies/password.length",
+                Some(&r_tok),
+                Some(&serde_json::json!({"kind":"range","min":8,"max":32})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // realm tries [2, 100] — violates master → 409
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "PUT",
+                "/api/realms/acme/policies/password.length",
+                Some(&r_tok),
+                Some(&serde_json::json!({"kind":"range","min":2,"max":100})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn master_tighten_cascades_into_realm_value() {
+        let (state, _dir, master_id, realm_admin_id) = state_with_realm_and_admin().await;
+        let m_tok = master_token(&state, &master_id);
+        let r_tok = realm_token(&state, "acme", &realm_admin_id);
+
+        // master [4, 64], realm [8, 32]
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "PUT",
+            "/api/system/policies/password.length",
+            Some(&m_tok),
+            Some(&serde_json::json!({"kind":"range","min":4,"max":64})),
+        ))
+        .await
+        .unwrap();
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "PUT",
+            "/api/realms/acme/policies/password.length",
+            Some(&r_tok),
+            Some(&serde_json::json!({"kind":"range","min":8,"max":32})),
+        ))
+        .await
+        .unwrap();
+
+        // master tightens to [10, 20]; cascade flag should report it
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "PUT",
+                "/api/system/policies/password.length",
+                Some(&m_tok),
+                Some(&serde_json::json!({"kind":"range","min":10,"max":20})),
+            ))
+            .await
+            .unwrap();
+        let j = json_body(resp).await;
+        assert_eq!(j["cascaded"].as_array().unwrap().len(), 1);
+        let outcome = &j["cascaded"][0];
+        assert_eq!(outcome["realm"], "acme");
+        assert_eq!(outcome["after"]["min"], 10);
+        assert_eq!(outcome["after"]["max"], 20);
+
+        // realm value reflects the clamp
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/realms/acme/policies/password.length",
+                Some(&r_tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        let j = json_body(resp).await;
+        assert_eq!(j["min"], 10);
+        assert_eq!(j["max"], 20);
+    }
+
+    #[tokio::test]
+    async fn realm_admin_cannot_set_master_policy() {
+        let (state, _dir, _, realm_admin_id) = state_with_realm_and_admin().await;
+        let r_tok = realm_token(&state, "acme", &realm_admin_id);
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "PUT",
+                "/api/system/policies/password.length",
+                Some(&r_tok),
+                Some(&serde_json::json!({"kind":"range","min":4,"max":64})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

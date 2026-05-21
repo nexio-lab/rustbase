@@ -11,11 +11,14 @@
 
 pub mod admins;
 pub mod apps;
+pub mod audit;
 pub mod collections;
 pub mod error;
 pub mod filter_sql;
 pub mod migrations;
 pub mod paths;
+pub mod policies;
+pub mod policy_engine;
 pub mod pool;
 pub mod realms;
 pub mod records;
