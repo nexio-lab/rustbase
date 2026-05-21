@@ -1741,6 +1741,7 @@ dependencies = [
  "chrono",
  "dashmap",
  "jsonwebtoken",
+ "rand_core",
  "rustbase-core",
  "serde",
  "serde_json",

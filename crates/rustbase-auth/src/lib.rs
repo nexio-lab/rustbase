@@ -1,6 +1,18 @@
 //! Authentication for RustBase.
 //!
-//! Owns the master / realm / app admin model, end-user authentication, JWT
-//! token issuance and verification, argon2 password hashing, OAuth2 flows,
-//! and TOTP / email OTP. Revocation is tracked in an in-memory set that
-//! auto-expires on the access-token TTL.
+//! Argon2id password hashing, HS256 JWT issuance / verification, and an
+//! in-memory revocation set keyed by `SubjectKey`. Admin record storage
+//! lives in `rustbase-db` (it needs sqlx); this crate provides only the
+//! IO-free auth primitives.
+//!
+//! OAuth2 flows and OTP come in later feature branches.
+
+pub mod error;
+pub mod password;
+pub mod revocation;
+pub mod token;
+
+pub use error::{AuthError, Result};
+pub use password::{hash_password, verify_password};
+pub use revocation::{RevocationSet, SubjectKey};
+pub use token::{Claims, SigningKey, TokenRole, build_claims, decode_token, encode_token};
