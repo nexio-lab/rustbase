@@ -1716,6 +1716,7 @@ name = "rustbase-api"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "chrono",
  "rustbase-auth",
  "rustbase-core",
  "rustbase-db",

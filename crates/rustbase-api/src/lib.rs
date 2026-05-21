@@ -6,7 +6,9 @@
 
 pub mod error;
 pub mod health;
+pub mod middleware;
 pub mod router;
+pub mod setup;
 pub mod state;
 
 pub use error::ApiError;

@@ -15,8 +15,10 @@ pub mod filter_sql;
 pub mod migrations;
 pub mod paths;
 pub mod pool;
+pub mod realms;
 
 pub use admins::{AppAdmin, MasterAdmin, RealmAdmin};
+pub use realms::Realm;
 pub use error::{DbError, Result};
 pub use filter_sql::{SqlFragment, filter_to_sql};
 pub use migrations::{
