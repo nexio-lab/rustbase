@@ -1834,6 +1834,7 @@ dependencies = [
  "rustbase-auth",
  "rustbase-db",
  "serde",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

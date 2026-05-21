@@ -6,38 +6,12 @@ use rustbase_db::{
     apply_migrations, realms::ensure_master_realm,
     secrets::{MASTER_SIGNING_KEY, get_or_init_secret},
 };
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use tracing_subscriber::EnvFilter;
 
-#[derive(Debug)]
-struct ServerConfig {
-    listen: String,
-    data_dir: PathBuf,
-    realm_pool_cap: usize,
-    app_pool_cap: usize,
-}
-
-impl ServerConfig {
-    fn from_env() -> Self {
-        Self {
-            listen: std::env::var("RUSTBASE_LISTEN").unwrap_or_else(|_| "0.0.0.0:8080".into()),
-            data_dir: std::env::var("RUSTBASE_DATA_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| PathBuf::from("./data")),
-            realm_pool_cap: parse_env_usize("RUSTBASE_REALM_POOL_CAP", 32),
-            app_pool_cap: parse_env_usize("RUSTBASE_APP_POOL_CAP", 64),
-        }
-    }
-}
-
-fn parse_env_usize(name: &str, default: usize) -> usize {
-    std::env::var(name)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
-}
+mod config;
+mod litestream;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -47,7 +21,7 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let cfg = ServerConfig::from_env();
+    let cfg = config::load()?;
     tracing::info!(?cfg, "rustbase: starting");
 
     tokio::fs::create_dir_all(&cfg.data_dir).await?;
@@ -63,12 +37,26 @@ async fn main() -> Result<()> {
         tracing::warn!("no master admin found — only /healthz and POST /_/setup are reachable until setup completes");
     }
 
-    // Load (or generate-and-persist) the master JWT signing key. Persistence
-    // means tokens survive restarts.
     let fresh = SigningKey::generate();
     let key_bytes =
         get_or_init_secret(system.pool(), MASTER_SIGNING_KEY, fresh.as_bytes()).await?;
     let master_key = Arc::new(SigningKey::from_secret(&key_bytes));
+
+    // Optional: generate litestream.yml at boot when replication is enabled.
+    if cfg.litestream.enabled {
+        match litestream::write_yaml(&cfg.data_dir, &cfg.litestream).await {
+            Ok(path) => {
+                tracing::info!(
+                    path = %path.display(),
+                    "litestream.yml generated — run `litestream replicate -config {}` to start replication",
+                    path.display()
+                );
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "failed to generate litestream.yml");
+            }
+        }
+    }
 
     let state = AppState {
         system: Arc::new(system),
