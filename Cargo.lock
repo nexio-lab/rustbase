@@ -1724,6 +1724,7 @@ dependencies = [
  "rustbase-storage",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
  "tower",
@@ -1812,8 +1813,11 @@ name = "rustbase-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "config",
  "rustbase-api",
+ "rustbase-auth",
+ "rustbase-db",
  "serde",
  "tokio",
  "tracing",
