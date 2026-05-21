@@ -16,6 +16,7 @@ path = "src/main.rs"
 rustbase-api.workspace = true
 rustbase-auth.workspace = true
 rustbase-db.workspace = true
+rustbase-realtime.workspace = true
 tokio.workspace = true
 axum.workspace = true
 config.workspace = true

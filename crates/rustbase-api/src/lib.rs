@@ -15,6 +15,7 @@ pub mod middleware;
 pub mod policies;
 pub mod realm_admins;
 pub mod realms;
+pub mod realtime;
 pub mod records;
 pub mod router;
 pub mod setup;

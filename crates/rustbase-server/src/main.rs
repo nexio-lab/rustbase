@@ -6,6 +6,7 @@ use rustbase_db::{
     apply_migrations, realms::ensure_master_realm,
     secrets::{MASTER_SIGNING_KEY, get_or_init_secret},
 };
+use rustbase_realtime::RealtimeBroker;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use tracing_subscriber::EnvFilter;
@@ -64,6 +65,7 @@ async fn main() -> Result<()> {
         apps: Arc::new(AppPoolManager::new(cfg.data_dir.clone(), cfg.app_pool_cap)),
         revocations: RevocationSet::default(),
         master_key,
+        broker: RealtimeBroker::default(),
         data_dir: Arc::new(cfg.data_dir.clone()),
         initialized: Arc::new(AtomicBool::new(already_initialized)),
     };

@@ -32,6 +32,7 @@ use rustbase_db::{
     realms::find_realm,
     records::{create_record, delete_record, find_record, list_records, update_record},
 };
+use rustbase_realtime::{RealtimeEvent, SubscriptionKey};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json_;
 use std::collections::BTreeMap;
@@ -194,6 +195,10 @@ pub async fn create(
         return Err(ApiError::Core(CoreError::Forbidden));
     }
     let rec = create_record(&app_pool, &schema, req.fields).await?;
+    state.broker.publish(
+        &SubscriptionKey::new(&realm, &app, &coll),
+        RealtimeEvent::RecordCreated { record: rec.clone() },
+    );
     Ok((StatusCode::CREATED, Json(rec)))
 }
 
@@ -280,6 +285,10 @@ pub async fn update(
             }),
             other => ApiError::from(other),
         })?;
+    state.broker.publish(
+        &SubscriptionKey::new(&realm, &app, &coll),
+        RealtimeEvent::RecordUpdated { record: rec.clone() },
+    );
     Ok(Json(rec))
 }
 
@@ -321,6 +330,10 @@ pub async fn delete(
             }),
             other => ApiError::from(other),
         })?;
+    state.broker.publish(
+        &SubscriptionKey::new(&realm, &app, &coll),
+        RealtimeEvent::RecordDeleted { id: id.clone() },
+    );
     Ok(StatusCode::NO_CONTENT)
 }
 
