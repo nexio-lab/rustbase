@@ -49,6 +49,32 @@ impl AdminAuth {
             TokenRole::User => Err(ApiError::Core(CoreError::Forbidden)),
         }
     }
+
+    /// Reject the request unless the principal can act on `(realm, app)`.
+    /// Master admins always pass; realm admins pass when the realm
+    /// matches; app admins must match both realm and app.
+    pub fn require_app_access(&self, realm: &str, app: &str) -> Result<(), ApiError> {
+        match self.claims.role {
+            TokenRole::MasterAdmin => Ok(()),
+            TokenRole::RealmAdmin => {
+                if self.claims.realm.as_deref() == Some(realm) {
+                    Ok(())
+                } else {
+                    Err(ApiError::Core(CoreError::Forbidden))
+                }
+            }
+            TokenRole::AppAdmin => {
+                if self.claims.realm.as_deref() == Some(realm)
+                    && self.claims.app.as_deref() == Some(app)
+                {
+                    Ok(())
+                } else {
+                    Err(ApiError::Core(CoreError::Forbidden))
+                }
+            }
+            TokenRole::User => Err(ApiError::Core(CoreError::Forbidden)),
+        }
+    }
 }
 
 impl FromRequestParts<AppState> for AdminAuth {

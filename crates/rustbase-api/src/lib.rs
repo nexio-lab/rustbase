@@ -6,11 +6,13 @@
 
 pub mod apps;
 pub mod auth;
+pub mod collections;
 pub mod error;
 pub mod health;
 pub mod middleware;
 pub mod realm_admins;
 pub mod realms;
+pub mod records;
 pub mod router;
 pub mod setup;
 pub mod state;

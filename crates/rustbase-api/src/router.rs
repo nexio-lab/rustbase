@@ -8,10 +8,12 @@ use crate::apps;
 use crate::auth::{
     master_admin_login, master_admin_refresh, realm_admin_login, realm_admin_refresh,
 };
+use crate::collections;
 use crate::health::healthz;
 use crate::middleware::setup_gate;
 use crate::realm_admins;
 use crate::realms;
+use crate::records;
 use crate::setup::setup;
 use crate::state::AppState;
 
@@ -39,6 +41,24 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/realms/{realm}/apps/{app}",
             get(apps::get).patch(apps::update).delete(apps::delete),
+        )
+        .route(
+            "/api/realms/{realm}/apps/{app}/collections",
+            get(collections::list).post(collections::create),
+        )
+        .route(
+            "/api/realms/{realm}/apps/{app}/collections/{name}",
+            get(collections::get).delete(collections::delete),
+        )
+        .route(
+            "/api/realms/{realm}/apps/{app}/collections/{coll}/records",
+            get(records::list).post(records::create),
+        )
+        .route(
+            "/api/realms/{realm}/apps/{app}/collections/{coll}/records/{id}",
+            get(records::get)
+                .patch(records::update)
+                .delete(records::delete),
         )
         // /api/realms/<realm>/apps/<app>/... will mount under here once
         // collections / records handlers land.
@@ -951,5 +971,263 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let j = json_body(resp).await;
         assert_eq!(j["name"], "Renamed");
+    }
+
+    // ------------- collections + records end-to-end -------------
+
+    /// Bootstrap to: realm 'acme', realm-admin token, app 'mobile',
+    /// collection 'notes' with fields {title:text, pinned:bool,
+    /// metadata:json}. Returns (state, dir, realm_token).
+    async fn state_with_app_and_collection() -> (AppState, tempfile::TempDir, String) {
+        let (state, dir, _, realm_admin_id) = state_with_realm_and_admin().await;
+        let tok = realm_token(&state, "acme", &realm_admin_id);
+
+        // create app
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "POST",
+            "/api/realms/acme/apps",
+            Some(&tok),
+            Some(&serde_json::json!({"id":"mobile","name":"M"})),
+        ))
+        .await
+        .unwrap();
+
+        // create collection
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/apps/mobile/collections",
+                Some(&tok),
+                Some(&serde_json::json!({
+                    "schema": {
+                        "id": "notes",
+                        "kind": "base",
+                        "fields": [
+                            {"name": "title", "kind": "text", "required": true},
+                            {"name": "pinned", "kind": "bool"},
+                            {"name": "metadata", "kind": "json"}
+                        ]
+                    }
+                })),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        (state, dir, tok)
+    }
+
+    #[tokio::test]
+    async fn collection_reserved_id_is_rejected() {
+        let (state, _dir, tok) = state_with_app_and_collection().await;
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/apps/mobile/collections",
+                Some(&tok),
+                Some(&serde_json::json!({
+                    "schema": {"id": "policies", "kind": "base", "fields": []}
+                })),
+            ))
+            .await
+            .unwrap();
+        // collections::create_collection returns InvalidIdentifier →
+        // CoreError::Validation → 400
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn record_full_lifecycle() {
+        let (state, _dir, tok) = state_with_app_and_collection().await;
+
+        // CREATE
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/apps/mobile/collections/notes/records",
+                Some(&tok),
+                Some(&serde_json::json!({
+                    "title": "Hello",
+                    "pinned": true,
+                    "metadata": {"tags": ["greeting"], "version": 1}
+                })),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let created = json_body(resp).await;
+        let id = created["id"].as_str().unwrap().to_string();
+        assert_eq!(created["fields"]["title"], "Hello");
+        assert_eq!(created["fields"]["pinned"], true);
+        assert_eq!(created["fields"]["metadata"]["version"], 1);
+
+        // GET
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                &format!("/api/realms/acme/apps/mobile/collections/notes/records/{id}"),
+                Some(&tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let got = json_body(resp).await;
+        assert_eq!(got["fields"]["title"], "Hello");
+
+        // PATCH — only "title" supplied; "pinned" stays true
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "PATCH",
+                &format!("/api/realms/acme/apps/mobile/collections/notes/records/{id}"),
+                Some(&tok),
+                Some(&serde_json::json!({"title": "Goodbye"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let patched = json_body(resp).await;
+        assert_eq!(patched["fields"]["title"], "Goodbye");
+        assert_eq!(patched["fields"]["pinned"], true);
+
+        // LIST (pagination response shape)
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/realms/acme/apps/mobile/collections/notes/records?per_page=10",
+                Some(&tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        let listed = json_body(resp).await;
+        assert_eq!(listed["total_items"], 1);
+        assert_eq!(listed["page"], 1);
+        assert_eq!(listed["per_page"], 10);
+        assert_eq!(listed["items"].as_array().unwrap().len(), 1);
+
+        // DELETE
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "DELETE",
+                &format!("/api/realms/acme/apps/mobile/collections/notes/records/{id}"),
+                Some(&tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+        // GET-after-delete → 404
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                &format!("/api/realms/acme/apps/mobile/collections/notes/records/{id}"),
+                Some(&tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn delete_collection_drops_table() {
+        let (state, _dir, tok) = state_with_app_and_collection().await;
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "DELETE",
+                "/api/realms/acme/apps/mobile/collections/notes",
+                Some(&tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+        // creating a record now fails because the collection (and table) are gone
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/apps/mobile/collections/notes/records",
+                Some(&tok),
+                Some(&serde_json::json!({"title": "x"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn cross_realm_admin_cannot_read_records() {
+        let (state, _dir, _) = state_with_app_and_collection().await;
+        // create realm 'widgetco' + its own admin, and try to list acme/mobile/notes/records
+        let master_admin_id = rustbase_db::admins::count_master_admins(state.system.pool())
+            .await
+            .map(|_| {
+                // we can't get the id back from count; just decode the master admin from email
+                // — simpler: pull one row
+            });
+        let _ = master_admin_id;
+
+        // simpler: derive the master id from the inserted row
+        let row: (String,) =
+            sqlx::query_as("SELECT id FROM master_admins LIMIT 1")
+                .fetch_one(state.system.pool())
+                .await
+                .unwrap();
+        let master_tok = master_token(&state, &row.0);
+
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "POST",
+            "/api/realms",
+            Some(&master_tok),
+            Some(&serde_json::json!({"id":"widgetco","name":"WidgetCo"})),
+        ))
+        .await
+        .unwrap();
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "POST",
+            "/api/realms/widgetco/admins",
+            Some(&master_tok),
+            Some(&serde_json::json!({"email":"w@w","password":"longenough"})),
+        ))
+        .await
+        .unwrap();
+
+        // widgetco admin token (we know the id from the create response? we didn't capture
+        // it — just use master_token + role swap)
+        let claims = rustbase_auth::build_claims(
+            "fake-admin",
+            rustbase_auth::TokenRole::RealmAdmin,
+            Some("widgetco".into()),
+            None,
+            chrono::Duration::minutes(15),
+        );
+        let w_tok = rustbase_auth::encode_token(&claims, &state.master_key).unwrap();
+
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/realms/acme/apps/mobile/collections/notes/records",
+                Some(&w_tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 }
