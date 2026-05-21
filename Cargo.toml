@@ -47,6 +47,8 @@ nom = "8"
 
 # concurrency
 dashmap = "6"
+lru = "0.12"
+parking_lot = "0.12"
 
 # observability
 tracing = "0.1"
