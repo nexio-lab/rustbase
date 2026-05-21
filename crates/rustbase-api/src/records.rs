@@ -18,7 +18,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
 };
-use rustbase_core::{AppId, CoreError, RealmId, Record};
+use rustbase_core::{AppId, CoreError, FilterNode, RealmId, Record, Schema, parse_filter};
 use rustbase_db::{
     DbError, ListPage, ListedRecords,
     apps::find_app,
@@ -40,6 +40,8 @@ pub struct ListQuery {
     pub page: u32,
     #[serde(default = "default_per_page")]
     pub per_page: u32,
+    #[serde(default)]
+    pub filter: Option<String>,
 }
 
 fn default_page() -> u32 {
@@ -92,6 +94,16 @@ pub async fn list(
 ) -> Result<Json<ListResponse>, ApiError> {
     auth.require_app_access(&realm, &app)?;
     let (app_pool, schema) = open_app_and_schema(&state, &realm, &app, &coll).await?;
+
+    let filter = match &q.filter {
+        Some(s) if !s.trim().is_empty() => {
+            let node = parse_filter(s).map_err(ApiError::from)?;
+            validate_filter_columns(&node, &schema)?;
+            Some(node)
+        }
+        _ => None,
+    };
+
     let listed = list_records(
         &app_pool,
         &schema,
@@ -99,9 +111,52 @@ pub async fn list(
             page: q.page,
             per_page: q.per_page,
         },
+        filter.as_ref(),
     )
     .await?;
     Ok(Json(listed.into()))
+}
+
+/// Walk the filter AST, asserting every referenced column is either a
+/// declared schema field or one of the implicit `id`/`created_at`/
+/// `updated_at`. Catches typos up front so callers see a precise 400
+/// instead of a SQLite "no such column" surfaced as a 500.
+fn validate_filter_columns(node: &FilterNode, schema: &Schema) -> Result<(), ApiError> {
+    let mut known: std::collections::HashSet<&str> =
+        ["id", "created_at", "updated_at"].into_iter().collect();
+    for f in &schema.fields {
+        known.insert(&f.name);
+    }
+    walk(node, &known)
+}
+
+fn walk(node: &FilterNode, known: &std::collections::HashSet<&str>) -> Result<(), ApiError> {
+    match node {
+        FilterNode::And(l, r) | FilterNode::Or(l, r) => {
+            walk(l, known)?;
+            walk(r, known)?;
+        }
+        FilterNode::Not(inner) => walk(inner, known)?,
+        FilterNode::Eq(f, _)
+        | FilterNode::Ne(f, _)
+        | FilterNode::Gt(f, _)
+        | FilterNode::Gte(f, _)
+        | FilterNode::Lt(f, _)
+        | FilterNode::Lte(f, _)
+        | FilterNode::Like(f, _) => check_field(f, known)?,
+        FilterNode::In(f, _) => check_field(f, known)?,
+    }
+    Ok(())
+}
+
+fn check_field(name: &str, known: &std::collections::HashSet<&str>) -> Result<(), ApiError> {
+    if known.contains(name) {
+        Ok(())
+    } else {
+        Err(ApiError::Core(CoreError::Validation(format!(
+            "unknown field in filter: {name}"
+        ))))
+    }
 }
 
 pub async fn create(
