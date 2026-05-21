@@ -84,9 +84,11 @@ pub fn load() -> Result<ServerConfig> {
         .set_default("litestream.replicate_interval_sec", default_replicate_interval() as i64)?
         // file
         .add_source(File::with_name("rustbase").required(false))
-        // env (nested via `__`)
+        // env: prefix=RUSTBASE, "_" splits prefix from key, "__" splits
+        // nested keys (`RUSTBASE_LITESTREAM__BUCKET` → litestream.bucket).
         .add_source(
             Environment::with_prefix("RUSTBASE")
+                .prefix_separator("_")
                 .separator("__")
                 .try_parsing(true),
         );

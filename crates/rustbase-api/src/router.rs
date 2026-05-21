@@ -11,6 +11,7 @@ use crate::auth::{
     user_login, user_refresh, user_register,
 };
 use crate::collections;
+use crate::files;
 use crate::health::healthz;
 use crate::middleware::setup_gate;
 use crate::policies;
@@ -73,6 +74,19 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/realms/{realm}/apps/{app}/collections/{coll}/access_rules/{action}",
             axum::routing::put(access_rules::put).delete(access_rules::delete),
+        )
+        // file endpoints
+        .route(
+            "/api/realms/{realm}/apps/{app}/files",
+            get(files::list).post(files::upload),
+        )
+        .route(
+            "/api/realms/{realm}/apps/{app}/files/{id}",
+            get(files::download).delete(files::delete),
+        )
+        .route(
+            "/api/realms/{realm}/apps/{app}/files/{id}/meta",
+            get(files::meta),
         )
         // policy endpoints
         .route("/api/system/policies", get(policies::system_list))
@@ -1260,6 +1274,117 @@ mod tests {
         let j = json_body(resp).await;
         let msg = j["message"].as_str().unwrap();
         assert!(msg.contains("nope"), "got message: {msg}");
+    }
+
+    // ------------- file storage -------------
+
+    #[tokio::test]
+    async fn file_upload_then_download_round_trip() {
+        let (state, _dir, _, realm_admin_id) = state_with_realm_and_admin().await;
+        let tok = realm_token(&state, "acme", &realm_admin_id);
+
+        // create app
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "POST",
+            "/api/realms/acme/apps",
+            Some(&tok),
+            Some(&serde_json::json!({"id":"mobile","name":"M"})),
+        ))
+        .await
+        .unwrap();
+
+        // upload
+        let app = build_router(state.clone());
+        let req = Request::builder()
+            .uri("/api/realms/acme/apps/mobile/files")
+            .method("POST")
+            .header("authorization", format!("Bearer {tok}"))
+            .header("content-type", "image/png")
+            .header("x-filename", "kitten.png")
+            .body(Body::from(b"\x89PNG\x0d\x0a\x1a\x0afakebytes".to_vec()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let j = json_body(resp).await;
+        let id = j["id"].as_str().unwrap().to_string();
+        assert_eq!(j["filename"], "kitten.png");
+        assert_eq!(j["mime"], "image/png");
+        assert_eq!(j["size"], 17);
+
+        // download
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                &format!("/api/realms/acme/apps/mobile/files/{id}"),
+                Some(&tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .map(|v| v.to_str().unwrap().to_string());
+        assert_eq!(ct.as_deref(), Some("image/png"));
+        let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(&bytes[..], b"\x89PNG\x0d\x0a\x1a\x0afakebytes");
+
+        // list
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/realms/acme/apps/mobile/files",
+                Some(&tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        let j = json_body(resp).await;
+        assert_eq!(j.as_array().unwrap().len(), 1);
+
+        // delete
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "DELETE",
+                &format!("/api/realms/acme/apps/mobile/files/{id}"),
+                Some(&tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn file_upload_without_filename_header_is_400() {
+        let (state, _dir, _, realm_admin_id) = state_with_realm_and_admin().await;
+        let tok = realm_token(&state, "acme", &realm_admin_id);
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "POST",
+            "/api/realms/acme/apps",
+            Some(&tok),
+            Some(&serde_json::json!({"id":"mobile","name":"M"})),
+        ))
+        .await
+        .unwrap();
+
+        let app = build_router(state);
+        let req = Request::builder()
+            .uri("/api/realms/acme/apps/mobile/files")
+            .method("POST")
+            .header("authorization", format!("Bearer {tok}"))
+            .body(Body::from(b"x".to_vec()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     // ------------- end-user auth + access rules -------------

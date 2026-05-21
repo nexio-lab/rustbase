@@ -269,43 +269,59 @@ pub const REALM_MIGRATIONS: &[Migration] = &[Migration::new(
     "#,
 )];
 
-pub const APP_MIGRATIONS: &[Migration] = &[Migration::new(
-    "20260520_000001_initial_app",
-    MigrationScope::App,
-    r#"
-    CREATE TABLE _collections (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
-        kind TEXT NOT NULL,
-        schema_json TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-    );
+pub const APP_MIGRATIONS: &[Migration] = &[
+    Migration::new(
+        "20260520_000001_initial_app",
+        MigrationScope::App,
+        r#"
+        CREATE TABLE _collections (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            kind TEXT NOT NULL,
+            schema_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
 
-    CREATE TABLE _access_rules (
-        collection_id TEXT NOT NULL REFERENCES _collections(id) ON DELETE CASCADE,
-        action TEXT NOT NULL,
-        filter TEXT,
-        PRIMARY KEY (collection_id, action)
-    );
+        CREATE TABLE _access_rules (
+            collection_id TEXT NOT NULL REFERENCES _collections(id) ON DELETE CASCADE,
+            action TEXT NOT NULL,
+            filter TEXT,
+            PRIMARY KEY (collection_id, action)
+        );
 
-    CREATE TABLE policies (
-        field TEXT PRIMARY KEY,
-        policy_json TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-    );
+        CREATE TABLE policies (
+            field TEXT PRIMARY KEY,
+            policy_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
 
-    CREATE TABLE audit_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        ts TEXT NOT NULL,
-        actor TEXT,
-        action TEXT NOT NULL,
-        target TEXT,
-        details_json TEXT
-    );
-    CREATE INDEX audit_log_ts ON audit_log(ts);
-    "#,
-)];
+        CREATE TABLE audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            actor TEXT,
+            action TEXT NOT NULL,
+            target TEXT,
+            details_json TEXT
+        );
+        CREATE INDEX audit_log_ts ON audit_log(ts);
+        "#,
+    ),
+    Migration::new(
+        "20260521_000002_app_files",
+        MigrationScope::App,
+        r#"
+        CREATE TABLE _files (
+            id TEXT PRIMARY KEY,
+            filename TEXT NOT NULL,
+            mime TEXT,
+            size INTEGER NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX files_created_at ON _files(created_at);
+        "#,
+    ),
+];
 
 #[cfg(test)]
 mod tests {

@@ -9,6 +9,7 @@ pub mod apps;
 pub mod auth;
 pub mod collections;
 pub mod error;
+pub mod files;
 pub mod health;
 pub mod middleware;
 pub mod policies;
