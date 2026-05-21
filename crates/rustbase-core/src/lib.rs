@@ -13,6 +13,7 @@ pub mod filter;
 pub mod filter_parser;
 pub mod id;
 pub mod record;
+pub mod rule_template;
 pub mod schema;
 
 pub use config::{EnumSetPolicy, PolicySpec, RangePolicy, TogglePolicy};
@@ -22,4 +23,5 @@ pub use filter::FilterNode;
 pub use filter_parser::parse_filter;
 pub use id::{AdminId, AppId, CollectionId, MASTER_REALM_ID, RealmId, RecordId, UserId};
 pub use record::Record;
+pub use rule_template::{RuleContext, substitute as substitute_rule_template};
 pub use schema::{CollectionKind, Field, FieldType, Schema};

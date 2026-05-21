@@ -20,10 +20,13 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
 };
-use rustbase_core::{AppId, CoreError, FilterNode, RealmId, Record, Schema, parse_filter};
+use rustbase_core::{
+    AppId, CoreError, FilterNode, RealmId, Record, RuleContext, Schema, parse_filter,
+    rule_template,
+};
 use rustbase_db::{
     DbError, ListPage, ListedRecords,
-    access_rules::{AccessAction, get_rule, rule_allows_user},
+    access_rules::{AccessAction, RuleDecision, classify_rule, get_rule},
     apps::find_app,
     collections::find_collection,
     realms::find_realm,
@@ -96,15 +99,26 @@ pub async fn list(
     Query(q): Query<ListQuery>,
 ) -> Result<Json<ListResponse>, ApiError> {
     let (app_pool, schema) = open_app_and_schema(&state, &realm, &app, &coll).await?;
-    authorize_record_action(&auth, &app_pool, &realm, &app, &coll, AccessAction::List).await?;
+    let rule_filter = authorize_record_action(
+        &auth, &app_pool, &realm, &app, &coll, AccessAction::List, &schema,
+    )
+    .await?;
 
-    let filter = match &q.filter {
+    let user_filter = match &q.filter {
         Some(s) if !s.trim().is_empty() => {
             let node = parse_filter(s).map_err(ApiError::from)?;
             validate_filter_columns(&node, &schema)?;
             Some(node)
         }
         _ => None,
+    };
+
+    // AND the rule (if any) into the user-supplied filter so SQL does the
+    // row-level scoping.
+    let combined = match (rule_filter, user_filter) {
+        (Some(r), Some(u)) => Some(FilterNode::and(r, u)),
+        (Some(r), None) => Some(r),
+        (None, uf) => uf,
     };
 
     let listed = list_records(
@@ -114,7 +128,7 @@ pub async fn list(
             page: q.page,
             per_page: q.per_page,
         },
-        filter.as_ref(),
+        combined.as_ref(),
     )
     .await?;
     Ok(Json(listed.into()))
@@ -169,7 +183,16 @@ pub async fn create(
     Json(req): Json<CreateRecordRequest>,
 ) -> Result<(StatusCode, Json<Record>), ApiError> {
     let (app_pool, schema) = open_app_and_schema(&state, &realm, &app, &coll).await?;
-    authorize_record_action(&auth, &app_pool, &realm, &app, &coll, AccessAction::Create).await?;
+    let rule_filter = authorize_record_action(
+        &auth, &app_pool, &realm, &app, &coll, AccessAction::Create, &schema,
+    )
+    .await?;
+    // Template rules don't apply to creation: the record doesn't exist
+    // yet, so there's nothing to evaluate against. Refuse rather than
+    // silently treating the rule as open.
+    if rule_filter.is_some() {
+        return Err(ApiError::Core(CoreError::Forbidden));
+    }
     let rec = create_record(&app_pool, &schema, req.fields).await?;
     Ok((StatusCode::CREATED, Json(rec)))
 }
@@ -180,14 +203,37 @@ pub async fn get(
     Path((realm, app, coll, id)): Path<(String, String, String, String)>,
 ) -> Result<Json<Record>, ApiError> {
     let (app_pool, schema) = open_app_and_schema(&state, &realm, &app, &coll).await?;
-    authorize_record_action(&auth, &app_pool, &realm, &app, &coll, AccessAction::View).await?;
-    let rec = find_record(&app_pool, &schema, &id)
-        .await?
+    let rule_filter = authorize_record_action(
+        &auth, &app_pool, &realm, &app, &coll, AccessAction::View, &schema,
+    )
+    .await?;
+
+    // Combine `id = :id` with the rule filter (if any) and look up via
+    // list_records so the rule is enforced at the SQL layer.
+    let id_filter = FilterNode::Eq("id".into(), serde_json::Value::String(id.clone()));
+    let combined = match rule_filter {
+        Some(r) => FilterNode::and(id_filter, r),
+        None => id_filter,
+    };
+    let listed = list_records(
+        &app_pool,
+        &schema,
+        ListPage {
+            page: 1,
+            per_page: 1,
+        },
+        Some(&combined),
+    )
+    .await?;
+    listed
+        .items
+        .into_iter()
+        .next()
+        .map(Json)
         .ok_or(ApiError::Core(CoreError::NotFound {
             collection: coll,
             id,
-        }))?;
-    Ok(Json(rec))
+        }))
 }
 
 pub async fn update(
@@ -197,7 +243,34 @@ pub async fn update(
     Json(req): Json<UpdateRecordRequest>,
 ) -> Result<Json<Record>, ApiError> {
     let (app_pool, schema) = open_app_and_schema(&state, &realm, &app, &coll).await?;
-    authorize_record_action(&auth, &app_pool, &realm, &app, &coll, AccessAction::Update).await?;
+    let rule_filter = authorize_record_action(
+        &auth, &app_pool, &realm, &app, &coll, AccessAction::Update, &schema,
+    )
+    .await?;
+
+    // For template rules, gate the update by first checking the
+    // existing row matches the rule (id-scoped). Race condition is
+    // acceptable for v1 — a later branch can wrap this in a tx.
+    if let Some(rule) = rule_filter {
+        let id_filter = FilterNode::Eq("id".into(), serde_json::Value::String(id.clone()));
+        let combined = FilterNode::and(id_filter, rule);
+        let listed = list_records(
+            &app_pool,
+            &schema,
+            ListPage { page: 1, per_page: 1 },
+            Some(&combined),
+        )
+        .await?;
+        if listed.items.is_empty() {
+            // Either the row doesn't exist or the rule rejects it.
+            // Returning 404 avoids leaking which.
+            return Err(ApiError::Core(CoreError::NotFound {
+                collection: coll,
+                id,
+            }));
+        }
+    }
+
     let rec = update_record(&app_pool, &schema, &id, req.fields)
         .await
         .map_err(|e| match e {
@@ -216,7 +289,29 @@ pub async fn delete(
     Path((realm, app, coll, id)): Path<(String, String, String, String)>,
 ) -> Result<StatusCode, ApiError> {
     let (app_pool, schema) = open_app_and_schema(&state, &realm, &app, &coll).await?;
-    authorize_record_action(&auth, &app_pool, &realm, &app, &coll, AccessAction::Delete).await?;
+    let rule_filter = authorize_record_action(
+        &auth, &app_pool, &realm, &app, &coll, AccessAction::Delete, &schema,
+    )
+    .await?;
+
+    if let Some(rule) = rule_filter {
+        let id_filter = FilterNode::Eq("id".into(), serde_json::Value::String(id.clone()));
+        let combined = FilterNode::and(id_filter, rule);
+        let listed = list_records(
+            &app_pool,
+            &schema,
+            ListPage { page: 1, per_page: 1 },
+            Some(&combined),
+        )
+        .await?;
+        if listed.items.is_empty() {
+            return Err(ApiError::Core(CoreError::NotFound {
+                collection: coll,
+                id,
+            }));
+        }
+    }
+
     delete_record(&app_pool, &schema, &id)
         .await
         .map_err(|e| match e {
@@ -229,9 +324,16 @@ pub async fn delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Admin tokens that match the path always pass. User tokens pass
-/// only when the collection's rule for `action` is currently set to
-/// an "open" filter. Anything else → 403.
+/// Result of authorising a request against an access rule.
+///
+/// - `Ok(None)` — the principal is unconditionally allowed (admin or
+///   open rule). Records query needs no additional WHERE.
+/// - `Ok(Some(node))` — the principal is allowed *if* a template rule
+///   evaluates true; the caller must AND `node` into its records
+///   query so the SQL layer filters rows down to those the rule
+///   matches. Returned only when the rule is a template AND the
+///   principal is a user-of-realm.
+/// - `Err(Forbidden)` — denied outright.
 async fn authorize_record_action(
     auth: &PrincipalAuth,
     app_pool: &sqlx::SqlitePool,
@@ -239,18 +341,31 @@ async fn authorize_record_action(
     app: &str,
     coll: &str,
     action: AccessAction,
-) -> Result<(), ApiError> {
+    schema: &Schema,
+) -> Result<Option<FilterNode>, ApiError> {
     if auth.is_admin_for_app(realm, app) {
-        return Ok(());
+        return Ok(None);
     }
     if auth.user_realm() != Some(realm) {
         return Err(ApiError::Core(CoreError::Forbidden));
     }
+
     let rule = get_rule(app_pool, coll, action).await?;
-    if rule_allows_user(&rule) {
-        Ok(())
-    } else {
-        Err(ApiError::Core(CoreError::Forbidden))
+    match classify_rule(&rule) {
+        RuleDecision::Deny => Err(ApiError::Core(CoreError::Forbidden)),
+        RuleDecision::Allow => Ok(None),
+        RuleDecision::Evaluate(template) => {
+            let ctx = RuleContext {
+                user_id: Some(auth.subject_id.clone()),
+                user_email: None, // populated in a later branch when the user record is loaded
+                user_realm: auth.user_realm().map(str::to_string),
+            };
+            let resolved = rule_template::substitute(&template, &ctx)
+                .map_err(ApiError::Core)?;
+            let node = parse_filter(&resolved).map_err(ApiError::Core)?;
+            validate_filter_columns(&node, schema)?;
+            Ok(Some(node))
+        }
     }
 }
 
