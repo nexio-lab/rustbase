@@ -151,15 +151,15 @@ async fn load_all_hooks(state: &rustbase_api::AppState) -> Result<()> {
                 state.apps.clone(),
             )
             .into_sync();
+            let quoted = Arc::new(rustbase_api::mailer::QuotedMailer::new(
+                state.mailer.clone(),
+                realm_id.clone(),
+                app_id.clone(),
+                state.apps.clone(),
+            )) as Arc<dyn rustbase_core::Mailer>;
             match state
                 .hooks
-                .load_app(
-                    &realm.id,
-                    &app.id,
-                    &dir,
-                    Some(bridge),
-                    Some(state.mailer.clone()),
-                )
+                .load_app(&realm.id, &app.id, &dir, Some(bridge), Some(quoted))
                 .await
             {
                 Ok(n) if n > 0 => {
