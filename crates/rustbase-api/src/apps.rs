@@ -23,6 +23,7 @@ use rustbase_db::{
     realms::find_realm,
 };
 use serde::Deserialize;
+use std::sync::Arc;
 use validator::Validate;
 
 use crate::auth::AdminAuth;
@@ -90,15 +91,19 @@ pub async fn create(
         state.apps.clone(),
     )
     .into_sync();
+    // Wrap the server-wide mailer in a per-(realm, app) quota gate so a
+    // runaway $app.mailer.send loop can't flood the relay. System-issued
+    // mail (verify-email + password-reset endpoints) keeps using the
+    // bare state.mailer and is intentionally not quota'd.
+    let quoted = Arc::new(crate::mailer::QuotedMailer::new(
+        state.mailer.clone(),
+        RealmId::from(realm.clone()),
+        AppId::from(req.id.clone()),
+        state.apps.clone(),
+    )) as Arc<dyn rustbase_core::Mailer>;
     if let Err(e) = state
         .hooks
-        .load_app(
-            &realm,
-            &req.id,
-            &hooks_dir,
-            Some(bridge),
-            Some(state.mailer.clone()),
-        )
+        .load_app(&realm, &req.id, &hooks_dir, Some(bridge), Some(quoted))
         .await
     {
         tracing::warn!(realm = %realm, app = %req.id, error = %e, "loading hooks failed");
