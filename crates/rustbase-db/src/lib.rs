@@ -19,6 +19,7 @@ pub mod error;
 pub mod files;
 pub mod filter_sql;
 pub mod migrations;
+pub mod password_resets;
 pub mod paths;
 pub mod policies;
 pub mod policy_engine;

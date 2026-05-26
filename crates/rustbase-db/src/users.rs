@@ -86,6 +86,17 @@ pub async fn mark_verified(pool: &SqlitePool, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Replace the user's password hash. Callers supply the already-hashed
+/// PHC string; this module never touches plaintext.
+pub async fn set_password_hash(pool: &SqlitePool, id: &str, hash: &str) -> Result<()> {
+    sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+        .bind(hash)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
