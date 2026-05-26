@@ -19,6 +19,7 @@ pub mod email_verifications;
 pub mod error;
 pub mod files;
 pub mod filter_sql;
+pub mod mfa_challenges;
 pub mod migrations;
 pub mod oauth_links;
 pub mod oauth_providers;
@@ -32,6 +33,7 @@ pub mod realms;
 pub mod records;
 pub mod secrets;
 pub mod tokens;
+pub mod user_totp;
 pub mod users;
 
 pub use admins::{AppAdmin, MasterAdmin, RealmAdmin};
