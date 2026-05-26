@@ -88,7 +88,17 @@ pub async fn create(
         .join("hooks")
         .join(&realm)
         .join(&req.id);
-    if let Err(e) = state.hooks.load_app(&realm, &req.id, &hooks_dir).await {
+    let bridge = crate::hook_bridge::ApiBridge::new(
+        RealmId::from(realm.clone()),
+        AppId::from(req.id.clone()),
+        state.apps.clone(),
+    )
+    .into_sync();
+    if let Err(e) = state
+        .hooks
+        .load_app(&realm, &req.id, &hooks_dir, Some(bridge))
+        .await
+    {
         tracing::warn!(realm = %realm, app = %req.id, error = %e, "loading hooks failed");
     }
 
