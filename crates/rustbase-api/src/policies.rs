@@ -25,7 +25,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
 };
-use rustbase_core::{AppId, CoreError, PolicySpec, RealmId};
+use rustbase_core::{AppId, CoreError, PolicyLevel, PolicySpec, RealmId, validate_chain};
 use rustbase_db::{
     apps::find_app,
     audit, policies, policy_engine, realms::find_realm,
@@ -207,12 +207,15 @@ pub async fn realm_put(
     auth.require_realm_access(&realm)?;
     require_realm_exists(&state, &realm).await?;
 
-    // Validate against master bound, if any.
+    // Walk master → realm as a chain so the violation, if any, names
+    // the offending tier ("password.length (realm)") instead of just
+    // the field.
+    let mut chain = Vec::new();
     if let Some(master_spec) = policies::get_policy(state.system.pool(), &field).await? {
-        master_spec
-            .validate(&field, &spec)
-            .map_err(ApiError::Core)?;
+        chain.push(PolicyLevel::new("master", master_spec));
     }
+    chain.push(PolicyLevel::new("realm", spec.clone()));
+    validate_chain(&field, &chain).map_err(ApiError::Core)?;
 
     let realm_pool = state.realms.pool_for(&RealmId::from(realm.clone())).await?;
     policies::upsert_policy(&realm_pool, &field, &spec).await?;
@@ -326,13 +329,19 @@ pub async fn app_put(
             app: app.clone(),
         }))?;
 
-    // Validate against realm bound first (if set); the realm bound is
-    // already inside master's, so a single check suffices.
-    if let Some(realm_spec) = policies::get_policy(&realm_pool, &field).await? {
-        realm_spec.validate(&field, &spec).map_err(ApiError::Core)?;
-    } else if let Some(master_spec) = policies::get_policy(state.system.pool(), &field).await? {
-        master_spec.validate(&field, &spec).map_err(ApiError::Core)?;
+    // Build the full master → realm → app chain. A direct realm vs
+    // app check would normally suffice (the realm bound is itself
+    // inside master's), but walking everything is cheap and catches
+    // the rare case where the master/realm chain went stale.
+    let mut chain = Vec::new();
+    if let Some(s) = policies::get_policy(state.system.pool(), &field).await? {
+        chain.push(PolicyLevel::new("master", s));
     }
+    if let Some(s) = policies::get_policy(&realm_pool, &field).await? {
+        chain.push(PolicyLevel::new("realm", s));
+    }
+    chain.push(PolicyLevel::new("app", spec.clone()));
+    validate_chain(&field, &chain).map_err(ApiError::Core)?;
 
     let app_pool = state
         .apps
