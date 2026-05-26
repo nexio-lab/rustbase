@@ -281,6 +281,20 @@ Migration::new(
     );
     CREATE INDEX email_verifications_user ON _email_verifications(user_id);
     "#,
+),
+Migration::new(
+    "20260526_000002_password_resets",
+    MigrationScope::Realm,
+    r#"
+    CREATE TABLE _password_resets (
+        token TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        issued_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT
+    );
+    CREATE INDEX password_resets_user ON _password_resets(user_id);
+    "#,
 )];
 
 pub const APP_MIGRATIONS: &[Migration] = &[

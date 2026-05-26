@@ -8,6 +8,7 @@
 
 pub mod extract;
 pub mod login;
+pub mod password_reset;
 pub mod refresh;
 pub mod register;
 pub mod verify_email;
