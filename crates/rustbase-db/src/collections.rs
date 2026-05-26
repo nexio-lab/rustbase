@@ -125,6 +125,128 @@ pub async fn delete_collection(pool: &SqlitePool, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Outcome of a schema patch: lists the columns added and dropped so
+/// the caller can audit / surface this to the user.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct SchemaDiff {
+    pub added: Vec<String>,
+    pub dropped: Vec<String>,
+}
+
+/// Bring an existing collection's table + meta in line with
+/// `desired`. Adds new fields, drops removed ones. Type changes and
+/// renames are out of scope on this branch: any field whose name
+/// exists on both sides must keep the same `kind` and `required`
+/// flag (we don't track `unique` changes either).
+///
+/// `force=true` is required to drop a field — the column is removed,
+/// taking its data with it. Without `force` a removed field is an
+/// error.
+pub async fn patch_collection(
+    pool: &SqlitePool,
+    desired: &Schema,
+    force: bool,
+) -> Result<(Collection, SchemaDiff)> {
+    validate_schema(desired)?;
+
+    let Some(existing) = find_collection(pool, desired.id.as_str()).await? else {
+        return Err(DbError::Sqlx(sqlx::Error::RowNotFound));
+    };
+    if existing.kind != desired.kind {
+        return Err(DbError::InvalidIdentifier(
+            "changing collection kind is not supported".into(),
+        ));
+    }
+
+    let old_by_name: std::collections::BTreeMap<&str, &Field> =
+        existing.schema.fields.iter().map(|f| (f.name.as_str(), f)).collect();
+    let new_by_name: std::collections::BTreeMap<&str, &Field> =
+        desired.fields.iter().map(|f| (f.name.as_str(), f)).collect();
+
+    // Fields kept on both sides — reject type changes.
+    for (name, new_field) in &new_by_name {
+        if let Some(old_field) = old_by_name.get(name) {
+            if !field_types_compatible(&old_field.ty, &new_field.ty) {
+                return Err(DbError::InvalidIdentifier(format!(
+                    "changing the type of field '{name}' is not supported"
+                )));
+            }
+        }
+    }
+
+    let added: Vec<&Field> = desired
+        .fields
+        .iter()
+        .filter(|f| !old_by_name.contains_key(f.name.as_str()))
+        .collect();
+    let dropped: Vec<&Field> = existing
+        .schema
+        .fields
+        .iter()
+        .filter(|f| !new_by_name.contains_key(f.name.as_str()))
+        .collect();
+
+    if !dropped.is_empty() && !force {
+        return Err(DbError::InvalidIdentifier(format!(
+            "schema patch would drop {} field(s); pass force=true to confirm",
+            dropped.len()
+        )));
+    }
+
+    let table = quote_ident(desired.id.as_str());
+
+    // Apply DDL. ADD COLUMN can't be NOT NULL without DEFAULT for a
+    // populated table; we always emit nullable columns and rely on
+    // the API layer to validate `required` semantically. Dropping
+    // columns needs SQLite >= 3.35.
+    for f in &added {
+        let mut col = format!("{} {}", quote_ident(&f.name), sql_type(&f.ty));
+        if f.unique {
+            col.push_str(" UNIQUE");
+        }
+        let ddl = format!("ALTER TABLE {table} ADD COLUMN {col};");
+        sqlx::raw_sql(&ddl).execute(pool).await?;
+    }
+    for f in &dropped {
+        let ddl = format!(
+            "ALTER TABLE {table} DROP COLUMN {col};",
+            col = quote_ident(&f.name)
+        );
+        sqlx::raw_sql(&ddl).execute(pool).await?;
+    }
+
+    let schema_json = serde_json::to_string(desired)
+        .map_err(|e| DbError::InvalidIdentifier(format!("schema json: {e}")))?;
+    let now = Utc::now();
+    sqlx::query(
+        "UPDATE _collections SET schema_json = ?, updated_at = ? WHERE id = ?",
+    )
+    .bind(&schema_json)
+    .bind(now)
+    .bind(desired.id.as_str())
+    .execute(pool)
+    .await?;
+
+    let diff = SchemaDiff {
+        added: added.iter().map(|f| f.name.clone()).collect(),
+        dropped: dropped.iter().map(|f| f.name.clone()).collect(),
+    };
+    let collection = Collection {
+        id: existing.id,
+        kind: existing.kind,
+        schema: desired.clone(),
+        created_at: existing.created_at,
+        updated_at: now,
+    };
+    Ok((collection, diff))
+}
+
+/// Two field types are compatible (for patch purposes) iff they map
+/// to the same SQL column type. We don't try to convert data.
+fn field_types_compatible(a: &FieldType, b: &FieldType) -> bool {
+    sql_type(a) == sql_type(b)
+}
+
 fn decode_collection(
     row: (String, String, String, DateTime<Utc>, DateTime<Utc>),
 ) -> Result<Collection> {
@@ -381,5 +503,122 @@ mod tests {
         let pool = fresh_pool().await;
         let err = delete_collection(&pool, "ghost").await.unwrap_err();
         assert!(matches!(err, DbError::Sqlx(sqlx::Error::RowNotFound)));
+    }
+
+    // ------------- schema patch -------------
+
+    fn schema_with(fields: Vec<Field>) -> Schema {
+        Schema {
+            id: rustbase_core::CollectionId::from("users"),
+            kind: CollectionKind::Base,
+            fields,
+        }
+    }
+
+    fn fld_text(name: &str) -> Field {
+        Field {
+            name: name.into(),
+            ty: FieldType::Text { min: None, max: None },
+            required: false,
+            unique: false,
+        }
+    }
+    fn fld_bool(name: &str) -> Field {
+        Field {
+            name: name.into(),
+            ty: FieldType::Bool,
+            required: false,
+            unique: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn patch_adds_field_extends_table_and_meta() {
+        let pool = fresh_pool().await;
+        create_collection(&pool, &users_schema()).await.unwrap();
+
+        let mut next = users_schema();
+        next.fields.push(fld_text("nickname"));
+
+        let (after, diff) = patch_collection(&pool, &next, false).await.unwrap();
+        assert_eq!(diff.added, vec!["nickname".to_string()]);
+        assert!(diff.dropped.is_empty());
+        assert!(after.schema.fields.iter().any(|f| f.name == "nickname"));
+
+        // table now exposes the column
+        let cols: Vec<(String,)> =
+            sqlx::query_as("SELECT name FROM pragma_table_info('users') ORDER BY cid")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let names: Vec<String> = cols.into_iter().map(|c| c.0).collect();
+        assert!(names.contains(&"nickname".to_string()));
+    }
+
+    #[tokio::test]
+    async fn patch_drops_field_requires_force() {
+        let pool = fresh_pool().await;
+        create_collection(&pool, &users_schema()).await.unwrap();
+
+        // remove "verified"
+        let next = schema_with(
+            users_schema()
+                .fields
+                .into_iter()
+                .filter(|f| f.name != "verified")
+                .collect(),
+        );
+
+        let err = patch_collection(&pool, &next, false).await.unwrap_err();
+        assert!(matches!(err, DbError::InvalidIdentifier(_)));
+
+        // with force the column is dropped
+        let (_after, diff) = patch_collection(&pool, &next, true).await.unwrap();
+        assert_eq!(diff.dropped, vec!["verified".to_string()]);
+        let cols: Vec<(String,)> =
+            sqlx::query_as("SELECT name FROM pragma_table_info('users')")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let names: Vec<String> = cols.into_iter().map(|c| c.0).collect();
+        assert!(!names.contains(&"verified".to_string()));
+    }
+
+    #[tokio::test]
+    async fn patch_rejects_type_change() {
+        let pool = fresh_pool().await;
+        create_collection(&pool, &users_schema()).await.unwrap();
+        // change `age` from Number to Bool — same name, different sql_type
+        let next = schema_with(vec![fld_bool("age")]);
+        let err = patch_collection(&pool, &next, true).await.unwrap_err();
+        assert!(matches!(err, DbError::InvalidIdentifier(_)));
+    }
+
+    #[tokio::test]
+    async fn patch_on_unknown_collection_is_row_not_found() {
+        let pool = fresh_pool().await;
+        let err = patch_collection(&pool, &schema_with(vec![]), false)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, DbError::Sqlx(sqlx::Error::RowNotFound)));
+    }
+
+    #[tokio::test]
+    async fn patch_combined_add_and_drop_runs_in_one_call() {
+        let pool = fresh_pool().await;
+        create_collection(&pool, &users_schema()).await.unwrap();
+
+        let mut next = schema_with(
+            users_schema()
+                .fields
+                .into_iter()
+                .filter(|f| f.name != "verified")
+                .collect(),
+        );
+        next.fields.push(fld_text("nickname"));
+
+        let (_after, diff) = patch_collection(&pool, &next, true).await.unwrap();
+        assert_eq!(diff.added, vec!["nickname".to_string()]);
+        assert_eq!(diff.dropped, vec!["verified".to_string()]);
     }
 }

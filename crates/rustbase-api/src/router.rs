@@ -56,7 +56,9 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/realms/{realm}/apps/{app}/collections/{name}",
-            get(collections::get).delete(collections::delete),
+            get(collections::get)
+                .patch(collections::patch)
+                .delete(collections::delete),
         )
         .route(
             "/api/realms/{realm}/apps/{app}/collections/{coll}/records",
