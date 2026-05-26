@@ -662,6 +662,15 @@ impl AppHooks {
                     onUserBeforeLogin(fn)   { register('user_before_login',   '_user', fn); },
                     onUserAfterLogin(fn)    { register('user_after_login',    '_user', fn); },
                     onUserAfterRegister(fn) { register('user_after_register', '_user', fn); },
+                    // Per-app mailer-lifecycle hooks. Fire only on
+                    // $app.mailer.send invocations from THIS app
+                    // (the QuotedMailer / SmtpMailer system path for
+                    // verify-email / password-reset / OTP is not
+                    // intercepted — those are server-issued mail).
+                    // before_send can throw to veto the send;
+                    // after_send is an observer (errors stashed).
+                    onMailerBeforeSend(fn) { register('mailer_before_send', '_mail', fn); },
+                    onMailerAfterSend(fn)  { register('mailer_after_send',  '_mail', fn); },
                     log(msg) {
                         const s = String(msg);
                         globalThis.__rb_log.push(s);
@@ -753,6 +762,17 @@ impl AppHooks {
                      *     html: "<p>optional html body</p>",  // optional
                      *   });
                      *
+                     * Lifecycle:
+                     *   1. Every registered `onMailerBeforeSend(fn)` fires
+                     *      with the message. Any throw aborts the send;
+                     *      the throw propagates to this call's caller.
+                     *   2. Native transport (QuotedMailer → SmtpMailer
+                     *      etc) actually delivers.
+                     *   3. Every registered `onMailerAfterSend(fn)` fires.
+                     *      Throws from after-send are caught and stashed
+                     *      in `__rb_errors`; they don't roll back the
+                     *      already-completed delivery.
+                     *
                      * Throws if no mailer is bound (test contexts) or if
                      * the underlying transport rejects the message.
                      */
@@ -760,7 +780,19 @@ impl AppHooks {
                         if (!msg || typeof msg !== 'object') {
                             throw new Error('$app.mailer.send: message must be an object');
                         }
+                        const before = (globalThis.__rb_handlers || {})['_mail:mailer_before_send'] || [];
+                        for (const fn of before) {
+                            // Throw propagates → veto. We deliberately
+                            // do NOT swallow here; aborting the send is
+                            // the whole point of the before-send hook.
+                            fn(msg);
+                        }
                         call('__rb_mailer_send', [JSON.stringify(msg)]);
+                        const after = (globalThis.__rb_handlers || {})['_mail:mailer_after_send'] || [];
+                        for (const fn of after) {
+                            try { fn(msg); }
+                            catch (e) { globalThis.__rb_record_error(String(e)); }
+                        }
                     },
                 };
             })();
@@ -2056,6 +2088,119 @@ mod tests {
         assert!(mock.drain().is_empty(), "transport must not see the call");
         let logs = hooks.drain_logs().await.unwrap();
         assert!(logs[0].starts_with("caught:"), "got: {logs:?}");
+    }
+
+    // ------------- mailer-lifecycle hooks (per-app) -------------
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn mailer_before_send_fires_before_transport() {
+        let mock = MockMailer::new();
+        let hooks = hooks_with_mailer(mock.clone() as Arc<dyn Mailer>).await;
+        hooks
+            .eval(
+                r#"
+                $app.onMailerBeforeSend((m) => $app.log("pre:" + m.to));
+                $app.onMailerAfterSend((m)  => $app.log("post:" + m.to));
+                $app.mailer.send({
+                    from: "a@x", to: "b@y", subject: "s", text: "body",
+                });
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+
+        // Order matters: pre runs before transport, post runs after.
+        // (mock.drain captures sends in-order; we just verify the log.)
+        let logs = hooks.drain_logs().await.unwrap();
+        assert_eq!(logs, vec!["pre:b@y".to_string(), "post:b@y".to_string()]);
+        assert_eq!(mock.drain().len(), 1, "transport sees the send");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn mailer_before_send_throw_vetoes_send() {
+        let mock = MockMailer::new();
+        let hooks = hooks_with_mailer(mock.clone() as Arc<dyn Mailer>).await;
+        hooks
+            .eval(
+                r#"
+                $app.onMailerBeforeSend((m) => {
+                    if (m.to.endsWith("@blocked.test")) {
+                        throw new Error("recipient blocked");
+                    }
+                });
+                try {
+                    $app.mailer.send({from:"a", to:"alice@blocked.test", subject:"s", text:"t"});
+                    $app.log("unexpected: send returned");
+                } catch (e) {
+                    $app.log("vetoed: " + e.message);
+                }
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+
+        let logs = hooks.drain_logs().await.unwrap();
+        assert_eq!(logs, vec!["vetoed: recipient blocked".to_string()]);
+        assert!(
+            mock.drain().is_empty(),
+            "vetoed send must not reach transport"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn mailer_after_send_observer_errors_dont_propagate() {
+        // After-send is post-delivery; a throw shouldn't roll back
+        // the send. It lands in __rb_errors for observability.
+        let mock = MockMailer::new();
+        let hooks = hooks_with_mailer(mock.clone() as Arc<dyn Mailer>).await;
+        hooks
+            .eval(
+                r#"
+                $app.onMailerAfterSend(() => { throw new Error("audit logger died"); });
+                $app.mailer.send({from:"a", to:"b", subject:"s", text:"t"});
+                $app.log("send returned cleanly");
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+
+        let logs = hooks.drain_logs().await.unwrap();
+        assert_eq!(logs, vec!["send returned cleanly".to_string()]);
+        assert_eq!(mock.drain().len(), 1, "transport still got the send");
+        let errs = hooks.drain_errors().await.unwrap();
+        assert!(
+            errs.iter().any(|e| e.contains("audit logger died")),
+            "got: {errs:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn mailer_before_send_runs_in_order_first_throw_wins() {
+        let mock = MockMailer::new();
+        let hooks = hooks_with_mailer(mock.clone() as Arc<dyn Mailer>).await;
+        hooks
+            .eval(
+                r#"
+                $app.onMailerBeforeSend(() => $app.log("first"));
+                $app.onMailerBeforeSend(() => { throw new Error("second blocks"); });
+                $app.onMailerBeforeSend(() => $app.log("third (should not run)"));
+                try { $app.mailer.send({from:"a", to:"b", subject:"s", text:"t"}); }
+                catch (e) { $app.log("caught:" + e.message); }
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+
+        let logs = hooks.drain_logs().await.unwrap();
+        assert_eq!(
+            logs,
+            vec!["first".to_string(), "caught:second blocks".to_string()]
+        );
+        assert!(mock.drain().is_empty());
     }
 
     #[tokio::test]
