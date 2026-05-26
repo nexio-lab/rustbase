@@ -31,6 +31,12 @@ pub struct AppState {
     /// Outbound mail. In tests this is a `LogMailer` that captures
     /// messages in memory; in production it's an SMTP-backed impl.
     pub mailer: Arc<dyn Mailer>,
+    /// 32-byte KEK that encrypts at-rest secrets stored across the
+    /// system / realm / app DBs — currently the OAuth provider
+    /// `client_secret`. Persisted in `system.db._secrets.oauth_kek`
+    /// (generated once on first boot, then re-loaded). Stored as an
+    /// `Arc<[u8; 32]>` so handlers can clone the slice cheaply.
+    pub oauth_kek: Arc<[u8; 32]>,
 }
 
 impl AppState {

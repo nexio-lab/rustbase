@@ -49,6 +49,17 @@ async fn main() -> Result<()> {
     let key_bytes = get_or_init_secret(system.pool(), MASTER_SIGNING_KEY, fresh.as_bytes()).await?;
     let master_key = Arc::new(SigningKey::from_secret(&key_bytes));
 
+    // OAuth client_secret encryption key. Generated once at first boot
+    // and persisted; loaded as-is on subsequent boots so existing
+    // ciphertexts in oauth_providers stay decryptable.
+    let fresh_kek = rustbase_auth::fresh_kek();
+    let kek_bytes = get_or_init_secret(system.pool(), "oauth_kek", &fresh_kek).await?;
+    let oauth_kek: [u8; 32] = kek_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("oauth_kek persisted at wrong length"))?;
+    let oauth_kek = Arc::new(oauth_kek);
+
     // Optional: generate litestream.yml at boot when replication is enabled.
     if cfg.litestream.enabled {
         match litestream::write_yaml(&cfg.data_dir, &cfg.litestream).await {
@@ -103,6 +114,7 @@ async fn main() -> Result<()> {
         data_dir: Arc::new(cfg.data_dir.clone()),
         initialized: Arc::new(AtomicBool::new(already_initialized)),
         mailer,
+        oauth_kek,
     };
 
     // Load JS hooks for every (realm, app) that exists on disk.

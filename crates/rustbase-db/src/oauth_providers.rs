@@ -6,21 +6,27 @@
 //! JSON blob of "everything else" — auth URL, token URL, userinfo
 //! URL, scopes, and which JSON paths to read for the user id + email
 //! out of the userinfo response.
+//!
+//! **The client secret is opaque to this layer**: `secret_enc` is a
+//! `Vec<u8>` ciphertext. Encryption / decryption happens at the API
+//! boundary, where the KEK persisted in
+//! `system.db._secrets.oauth_kek` is in scope. Keeps the DB layer
+//! crypto-free and the trust boundary obvious.
 
-use crate::error::Result;
+use crate::error::{DbError, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
-/// Full provider config — what the API layer needs to drive an
-/// authorization-code flow against the upstream.
+/// Full provider record as the API layer hands it in/out — secret
+/// here is the *ciphertext*, not the plaintext. Decryption is the
+/// caller's responsibility.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OAuthProvider {
     /// Slug used in URLs and tokens (e.g. "google", "github").
     pub provider: String,
     pub client_id: String,
-    /// Stored as-is for the moment; real deployments should swap the
-    /// column to an encrypted variant before exposing the admin UI.
-    pub client_secret: String,
+    /// Encrypted client_secret bytes. Opaque to this module.
+    pub secret_enc: Vec<u8>,
     pub config: OAuthProviderConfig,
 }
 
@@ -59,7 +65,7 @@ fn default_email_field() -> String {
 
 pub async fn upsert_provider(pool: &SqlitePool, p: &OAuthProvider) -> Result<()> {
     let config_json = serde_json::to_string(&p.config)
-        .map_err(|e| crate::error::DbError::InvalidIdentifier(format!("config: {e}")))?;
+        .map_err(|e| DbError::InvalidIdentifier(format!("config: {e}")))?;
     sqlx::query(
         "INSERT INTO oauth_providers (provider, client_id, client_secret_enc, config_json) \
          VALUES (?, ?, ?, ?) \
@@ -70,7 +76,7 @@ pub async fn upsert_provider(pool: &SqlitePool, p: &OAuthProvider) -> Result<()>
     )
     .bind(&p.provider)
     .bind(&p.client_id)
-    .bind(&p.client_secret)
+    .bind(&p.secret_enc)
     .bind(&config_json)
     .execute(pool)
     .await?;
@@ -78,19 +84,64 @@ pub async fn upsert_provider(pool: &SqlitePool, p: &OAuthProvider) -> Result<()>
 }
 
 pub async fn find_provider(pool: &SqlitePool, provider: &str) -> Result<Option<OAuthProvider>> {
-    let row: Option<(String, String, String, Option<String>)> = sqlx::query_as(
+    let row: Option<(String, String, Vec<u8>, Option<String>)> = sqlx::query_as(
         "SELECT provider, client_id, client_secret_enc, config_json \
          FROM oauth_providers WHERE provider = ?",
     )
     .bind(provider)
     .fetch_optional(pool)
     .await?;
-    let Some((provider, client_id, client_secret, config_json)) = row else {
+    let Some((provider, client_id, secret_enc, config_json)) = row else {
         return Ok(None);
     };
-    let config: OAuthProviderConfig = match config_json {
+    let config = decode_config(config_json)?;
+    Ok(Some(OAuthProvider {
+        provider,
+        client_id,
+        secret_enc,
+        config,
+    }))
+}
+
+/// Public-facing provider summary — never carries the secret bytes.
+/// The admin-list endpoint returns these; the callback path uses
+/// `find_provider` instead because it needs the ciphertext to decrypt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OAuthProviderSummary {
+    pub provider: String,
+    pub client_id: String,
+    pub config: OAuthProviderConfig,
+}
+
+pub async fn list_providers(pool: &SqlitePool) -> Result<Vec<OAuthProviderSummary>> {
+    let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT provider, client_id, config_json FROM oauth_providers ORDER BY provider ASC",
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for (provider, client_id, config_json) in rows {
+        out.push(OAuthProviderSummary {
+            provider,
+            client_id,
+            config: decode_config(config_json)?,
+        });
+    }
+    Ok(out)
+}
+
+pub async fn delete_provider(pool: &SqlitePool, provider: &str) -> Result<u64> {
+    let res = sqlx::query("DELETE FROM oauth_providers WHERE provider = ?")
+        .bind(provider)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected())
+}
+
+fn decode_config(config_json: Option<String>) -> Result<OAuthProviderConfig> {
+    Ok(match config_json {
         Some(s) => serde_json::from_str(&s)
-            .map_err(|e| crate::error::DbError::InvalidIdentifier(format!("config: {e}")))?,
+            .map_err(|e| DbError::InvalidIdentifier(format!("config: {e}")))?,
         // Defensive: a row with NULL config_json shouldn't happen,
         // but if a partial admin write left one, fall back to the
         // bare minimum that won't NPE downstream.
@@ -102,13 +153,7 @@ pub async fn find_provider(pool: &SqlitePool, provider: &str) -> Result<Option<O
             userinfo_id_field: default_id_field(),
             userinfo_email_field: default_email_field(),
         },
-    };
-    Ok(Some(OAuthProvider {
-        provider,
-        client_id,
-        client_secret,
-        config,
-    }))
+    })
 }
 
 #[cfg(test)]
@@ -129,7 +174,9 @@ mod tests {
         OAuthProvider {
             provider: "google".into(),
             client_id: "abc.apps.googleusercontent.com".into(),
-            client_secret: "shh".into(),
+            // Tests use placeholder ciphertext — real callers would
+            // produce this via rustbase_auth::encrypt.
+            secret_enc: b"ciphertext-bytes".to_vec(),
             config: OAuthProviderConfig {
                 auth_url: "https://accounts.google.com/o/oauth2/v2/auth".into(),
                 token_url: "https://oauth2.googleapis.com/token".into(),
@@ -165,5 +212,28 @@ mod tests {
     async fn find_unknown_provider_returns_none() {
         let pool = fresh().await;
         assert!(find_provider(&pool, "github").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn list_returns_summaries_in_provider_order() {
+        let pool = fresh().await;
+        let mut a = sample();
+        a.provider = "github".into();
+        let mut b = sample();
+        b.provider = "google".into();
+        upsert_provider(&pool, &b).await.unwrap();
+        upsert_provider(&pool, &a).await.unwrap();
+        let list = list_providers(&pool).await.unwrap();
+        let names: Vec<_> = list.iter().map(|s| s.provider.as_str()).collect();
+        assert_eq!(names, vec!["github", "google"]);
+    }
+
+    #[tokio::test]
+    async fn delete_removes_the_row() {
+        let pool = fresh().await;
+        upsert_provider(&pool, &sample()).await.unwrap();
+        assert_eq!(delete_provider(&pool, "google").await.unwrap(), 1);
+        assert!(find_provider(&pool, "google").await.unwrap().is_none());
+        assert_eq!(delete_provider(&pool, "google").await.unwrap(), 0);
     }
 }

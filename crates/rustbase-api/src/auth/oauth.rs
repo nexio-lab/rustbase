@@ -152,8 +152,14 @@ pub async fn callback(
             id: provider.clone(),
         }))?;
 
+    // Decrypt the at-rest client_secret with the server-wide KEK.
+    let client_secret_bytes = rustbase_auth::decrypt(&cfg.secret_enc, app_state.oauth_kek.as_ref())
+        .map_err(|e| ApiError::Core(CoreError::Internal(format!("decrypt client_secret: {e}"))))?;
+    let client_secret = String::from_utf8(client_secret_bytes)
+        .map_err(|e| ApiError::Core(CoreError::Internal(format!("client_secret utf8: {e}"))))?;
+
     // Exchange the auth code for an access token at the provider.
-    let token = exchange_code(&cfg, &body.code, &redirect_uri).await?;
+    let token = exchange_code(&cfg, &client_secret, &body.code, &redirect_uri).await?;
     // Fetch the userinfo blob with the access token. Extract the
     // stable provider-side id and the verified email using the JSON
     // pointers stored in the provider config.
@@ -317,6 +323,7 @@ fn build_authorize_url(
 /// total transparency over what's on the wire.
 async fn exchange_code(
     cfg: &OAuthProvider,
+    client_secret: &str,
     code: &str,
     redirect_uri: &str,
 ) -> Result<String, ApiError> {
@@ -328,7 +335,7 @@ async fn exchange_code(
             ("code", code),
             ("redirect_uri", redirect_uri),
             ("client_id", cfg.client_id.as_str()),
-            ("client_secret", cfg.client_secret.as_str()),
+            ("client_secret", client_secret),
         ])
         .header("accept", "application/json")
         .send()

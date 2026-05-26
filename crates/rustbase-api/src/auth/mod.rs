@@ -10,6 +10,7 @@ pub mod email_otp;
 pub mod extract;
 pub mod login;
 pub mod oauth;
+pub mod oauth_admin;
 pub mod password_reset;
 pub mod refresh;
 pub mod register;

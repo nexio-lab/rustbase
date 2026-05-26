@@ -22,3 +22,4 @@ tracing.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 async-trait.workspace = true
+aes-gcm.workspace = true
