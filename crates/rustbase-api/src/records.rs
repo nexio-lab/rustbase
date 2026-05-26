@@ -33,7 +33,7 @@ use rustbase_db::{
     records::{create_record, delete_record, find_record, list_records, update_record},
 };
 use rustbase_realtime::{RealtimeEvent, SubscriptionKey};
-use rustbase_runtime::HookEvent;
+use rustbase_runtime::{HookAuth, HookEvent, HookRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json_;
 use std::collections::BTreeMap;
@@ -197,9 +197,10 @@ pub async fn create(
     }
 
     // before-hook: may mutate fields, throw to veto.
+    let request = hook_request(&auth, &realm, &app, &coll);
     let fields = state
         .hooks
-        .dispatch_before_create(&realm, &app, &coll, req.fields)
+        .dispatch_before_create(&realm, &app, &coll, &request, req.fields)
         .await?;
 
     let rec = create_record(&app_pool, &schema, fields).await?;
@@ -209,7 +210,14 @@ pub async fn create(
     );
     if let Err(e) = state
         .hooks
-        .dispatch(&realm, &app, &coll, HookEvent::AfterCreate, &rec)
+        .dispatch(
+            &realm,
+            &app,
+            &coll,
+            HookEvent::AfterCreate,
+            &request,
+            &rec,
+        )
         .await
     {
         tracing::error!(error = %e, "hook dispatch (after_create) failed");
@@ -291,9 +299,10 @@ pub async fn update(
     };
 
     // before-hook: may mutate the patch or throw to veto.
+    let request = hook_request(&auth, &realm, &app, &coll);
     let patch = state
         .hooks
-        .dispatch_before_update(&realm, &app, &coll, &existing, req.fields)
+        .dispatch_before_update(&realm, &app, &coll, &request, &existing, req.fields)
         .await?;
 
     let rec = update_record(&app_pool, &schema, &id, patch)
@@ -311,7 +320,14 @@ pub async fn update(
     );
     if let Err(e) = state
         .hooks
-        .dispatch(&realm, &app, &coll, HookEvent::AfterUpdate, &rec)
+        .dispatch(
+            &realm,
+            &app,
+            &coll,
+            HookEvent::AfterUpdate,
+            &request,
+            &rec,
+        )
         .await
     {
         tracing::error!(error = %e, "hook dispatch (after_update) failed");
@@ -351,9 +367,10 @@ pub async fn delete(
     };
 
     // before-hook: may throw to veto.
+    let request = hook_request(&auth, &realm, &app, &coll);
     state
         .hooks
-        .dispatch_before_delete(&realm, &app, &coll, &existing)
+        .dispatch_before_delete(&realm, &app, &coll, &request, &existing)
         .await?;
 
     delete_record(&app_pool, &schema, &id)
@@ -376,6 +393,7 @@ pub async fn delete(
             &app,
             &coll,
             HookEvent::AfterDelete,
+            &request,
             &serde_json::json!({ "id": id }),
         )
         .await
@@ -458,4 +476,31 @@ async fn open_app_and_schema(
         })
     })?;
     Ok((app_pool, collection.schema))
+}
+
+/// Build a HookRequest from the authenticated principal + path scope.
+/// `$app.request` inside JS hooks reflects this.
+fn hook_request(
+    auth: &PrincipalAuth,
+    realm: &str,
+    app: &str,
+    coll: &str,
+) -> HookRequest {
+    let role = match auth.claims.role {
+        rustbase_auth::TokenRole::MasterAdmin => "master_admin",
+        rustbase_auth::TokenRole::RealmAdmin => "realm_admin",
+        rustbase_auth::TokenRole::AppAdmin => "app_admin",
+        rustbase_auth::TokenRole::User => "user",
+    }
+    .to_string();
+    HookRequest {
+        auth: Some(HookAuth {
+            id: auth.subject_id.clone(),
+            role,
+            realm: auth.claims.realm.clone(),
+        }),
+        realm: realm.to_string(),
+        app: app.to_string(),
+        collection: coll.to_string(),
+    }
 }

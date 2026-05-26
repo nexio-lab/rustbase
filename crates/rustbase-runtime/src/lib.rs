@@ -52,6 +52,43 @@ impl From<rquickjs::Error> for RuntimeError {
     }
 }
 
+/// Per-dispatch request context exposed to hooks as `$app.request`.
+///
+/// Built fresh on every CRUD handler entry and threaded through to
+/// the JS runtime. While dispatch is running, `$app.request` reflects
+/// THIS request; once dispatch returns, it's nulled so a later
+/// internal call (e.g. from `$app.records.create` inside the same
+/// context) doesn't see a stale principal.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct HookRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth: Option<HookAuth>,
+    pub realm: String,
+    pub app: String,
+    pub collection: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HookAuth {
+    pub id: String,
+    pub role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub realm: Option<String>,
+}
+
+impl HookRequest {
+    /// A blank request — used for tests and for internal callers
+    /// (e.g. the bridge) that don't have an authenticated principal.
+    pub fn system(realm: &str, app: &str, collection: &str) -> Self {
+        Self {
+            auth: None,
+            realm: realm.to_string(),
+            app: app.to_string(),
+            collection: collection.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HookEvent {
     AfterCreate,
@@ -263,24 +300,36 @@ impl AppHooks {
         &self,
         collection: &str,
         event: HookEvent,
+        request: &HookRequest,
         payload: &T,
     ) -> Result<()> {
         let key = format!("{}:{}", collection, event.as_str());
         let json = serde_json::to_string(payload)
             .map_err(|e| RuntimeError::Js(format!("serialise payload: {e}")))?;
+        let request_json = serde_json::to_string(request)
+            .map_err(|e| RuntimeError::Js(format!("serialise request: {e}")))?;
+        // `$app.request` is set for the duration of dispatch and
+        // nulled in finally so leftover state doesn't leak into the
+        // next call.
         let driver = format!(
             r#"
             (function() {{
-                const list = (globalThis.__rb_handlers || {{}})[{key}] || [];
-                const payload = JSON.parse({payload_lit});
-                for (const fn of list) {{
-                    try {{ fn(payload); }}
-                    catch (e) {{ globalThis.__rb_record_error(String(e)); }}
+                globalThis.$app.request = JSON.parse({request_lit});
+                try {{
+                    const list = (globalThis.__rb_handlers || {{}})[{key}] || [];
+                    const payload = JSON.parse({payload_lit});
+                    for (const fn of list) {{
+                        try {{ fn(payload); }}
+                        catch (e) {{ globalThis.__rb_record_error(String(e)); }}
+                    }}
+                }} finally {{
+                    globalThis.$app.request = null;
                 }}
             }})();
             "#,
             key = json_quote(&key),
             payload_lit = json_quote(&json),
+            request_lit = json_quote(&request_json),
         );
         self.ctx
             .with(move |ctx| {
@@ -302,11 +351,13 @@ impl AppHooks {
     pub async fn dispatch_before_create(
         &self,
         collection: &str,
+        request: &HookRequest,
         payload: BTreeMap<String, Json>,
     ) -> Result<BTreeMap<String, Json>> {
         let result = self
             .run_before(
                 &format!("{collection}:before_create"),
+                request,
                 &serde_json::to_string(&payload)
                     .map_err(|e| RuntimeError::Js(format!("serialise: {e}")))?,
                 "fn(payload)",
@@ -325,6 +376,7 @@ impl AppHooks {
     pub async fn dispatch_before_update<E: Serialize>(
         &self,
         collection: &str,
+        request: &HookRequest,
         existing: &E,
         patch: BTreeMap<String, Json>,
     ) -> Result<BTreeMap<String, Json>> {
@@ -335,6 +387,7 @@ impl AppHooks {
         let result = self
             .run_before(
                 &format!("{collection}:before_update"),
+                request,
                 &patch_json,
                 "fn(existing, patch)",
                 "patch",
@@ -350,16 +403,15 @@ impl AppHooks {
     pub async fn dispatch_before_delete<E: Serialize>(
         &self,
         collection: &str,
+        request: &HookRequest,
         existing: &E,
     ) -> Result<()> {
         let existing_json = serde_json::to_string(existing)
             .map_err(|e| RuntimeError::Js(format!("serialise existing: {e}")))?;
-        // Treat `existing` as the primary so it's bound exactly once
-        // in the driver. The mutated result is irrelevant for delete —
-        // we only care about Ok vs Veto.
         let _ = self
             .run_before(
                 &format!("{collection}:before_delete"),
+                request,
                 &existing_json,
                 "fn(existing)",
                 "existing",
@@ -377,6 +429,7 @@ impl AppHooks {
     async fn run_before(
         &self,
         key: &str,
+        request: &HookRequest,
         primary_arg_json: &str,
         // human-readable shape, currently unused except for clarity
         _signature: &str,
@@ -387,25 +440,30 @@ impl AppHooks {
         let (sec_decl, call_args) = match secondary {
             Some((name, json)) => (
                 format!("const {name} = JSON.parse({});", json_quote(json)),
-                // primary is `payload`/`patch`; the secondary is the
-                // existing snapshot, so we pass (existing, primary).
                 format!("{name}, {primary_name}"),
             ),
             None => (String::new(), primary_name.to_string()),
         };
+        let request_json = serde_json::to_string(request)
+            .map_err(|e| RuntimeError::Js(format!("serialise request: {e}")))?;
         let driver = format!(
             r#"
             (function() {{
-                const list = (globalThis.__rb_handlers || {{}})[{key_lit}] || [];
-                const {primary} = JSON.parse({payload_lit});
-                {sec_decl}
-                for (const fn of list) {{
-                    try {{ fn({call_args}); }}
-                    catch (e) {{
-                        return "__rb_veto:" + String((e && e.message) || e);
+                globalThis.$app.request = JSON.parse({request_lit});
+                try {{
+                    const list = (globalThis.__rb_handlers || {{}})[{key_lit}] || [];
+                    const {primary} = JSON.parse({payload_lit});
+                    {sec_decl}
+                    for (const fn of list) {{
+                        try {{ fn({call_args}); }}
+                        catch (e) {{
+                            return "__rb_veto:" + String((e && e.message) || e);
+                        }}
                     }}
+                    return JSON.stringify({primary});
+                }} finally {{
+                    globalThis.$app.request = null;
                 }}
-                return JSON.stringify({primary});
             }})();
             "#,
             key_lit = json_quote(key),
@@ -413,6 +471,7 @@ impl AppHooks {
             payload_lit = json_quote(primary_arg_json),
             sec_decl = sec_decl,
             call_args = call_args,
+            request_lit = json_quote(&request_json),
         );
 
         let result: String = self
@@ -450,6 +509,9 @@ impl AppHooks {
                 }
 
                 globalThis.$app = {
+                    // populated per-call by the dispatch driver; null
+                    // outside any dispatch (e.g. at hook-load time).
+                    request: null,
                     onRecordAfterCreate(collection, fn) { register('after_create', collection, fn); },
                     onRecordAfterUpdate(collection, fn) { register('after_update', collection, fn); },
                     onRecordAfterDelete(collection, fn) { register('after_delete', collection, fn); },
@@ -735,12 +797,13 @@ impl HookEngine {
         app: &str,
         collection: &str,
         event: HookEvent,
+        request: &HookRequest,
         payload: &T,
     ) -> Result<()> {
         let Some(hooks) = self.get(realm, app) else {
             return Ok(());
         };
-        hooks.dispatch(collection, event, payload).await
+        hooks.dispatch(collection, event, request, payload).await
     }
 
     /// Before-create. If no hooks are loaded, returns `payload`
@@ -750,12 +813,15 @@ impl HookEngine {
         realm: &str,
         app: &str,
         collection: &str,
+        request: &HookRequest,
         payload: BTreeMap<String, Json>,
     ) -> Result<BTreeMap<String, Json>> {
         let Some(hooks) = self.get(realm, app) else {
             return Ok(payload);
         };
-        hooks.dispatch_before_create(collection, payload).await
+        hooks
+            .dispatch_before_create(collection, request, payload)
+            .await
     }
 
     pub async fn dispatch_before_update<E: Serialize>(
@@ -763,6 +829,7 @@ impl HookEngine {
         realm: &str,
         app: &str,
         collection: &str,
+        request: &HookRequest,
         existing: &E,
         patch: BTreeMap<String, Json>,
     ) -> Result<BTreeMap<String, Json>> {
@@ -770,7 +837,7 @@ impl HookEngine {
             return Ok(patch);
         };
         hooks
-            .dispatch_before_update(collection, existing, patch)
+            .dispatch_before_update(collection, request, existing, patch)
             .await
     }
 
@@ -779,12 +846,15 @@ impl HookEngine {
         realm: &str,
         app: &str,
         collection: &str,
+        request: &HookRequest,
         existing: &E,
     ) -> Result<()> {
         let Some(hooks) = self.get(realm, app) else {
             return Ok(());
         };
-        hooks.dispatch_before_delete(collection, existing).await
+        hooks
+            .dispatch_before_delete(collection, request, existing)
+            .await
     }
 }
 
@@ -820,7 +890,7 @@ mod tests {
             .await
             .unwrap();
         hooks
-            .dispatch("notes", HookEvent::AfterCreate, &json!({"id":"r1"}))
+            .dispatch("notes", HookEvent::AfterCreate, &HookRequest::default(), &json!({"id":"r1"}))
             .await
             .unwrap();
         let logs = hooks.drain_logs().await.unwrap();
@@ -838,7 +908,7 @@ mod tests {
             .await
             .unwrap();
         hooks
-            .dispatch("notes", HookEvent::AfterCreate, &json!({"id":"r1"}))
+            .dispatch("notes", HookEvent::AfterCreate, &HookRequest::default(), &json!({"id":"r1"}))
             .await
             .unwrap();
         let logs = hooks.drain_logs().await.unwrap();
@@ -859,7 +929,7 @@ mod tests {
             .await
             .unwrap();
         hooks
-            .dispatch("notes", HookEvent::AfterCreate, &json!({"id":"r1"}))
+            .dispatch("notes", HookEvent::AfterCreate, &HookRequest::default(), &json!({"id":"r1"}))
             .await
             .unwrap();
         let logs = hooks.drain_logs().await.unwrap();
@@ -880,7 +950,7 @@ mod tests {
             .await
             .unwrap();
         hooks
-            .dispatch("notes", HookEvent::AfterCreate, &json!({"id":"r1"}))
+            .dispatch("notes", HookEvent::AfterCreate, &HookRequest::default(), &json!({"id":"r1"}))
             .await
             .unwrap();
         let logs = hooks.drain_logs().await.unwrap();
@@ -908,6 +978,7 @@ mod tests {
                 "mobile",
                 "notes",
                 HookEvent::AfterCreate,
+                &HookRequest::default(),
                 &json!({"id":"x"}),
             )
             .await
@@ -925,6 +996,7 @@ mod tests {
                 "mobile",
                 "notes",
                 HookEvent::AfterCreate,
+                &HookRequest::default(),
                 &json!({}),
             )
             .await
@@ -950,6 +1022,7 @@ mod tests {
                 "mobile",
                 "c",
                 HookEvent::AfterCreate,
+                &HookRequest::default(),
                 &json!({}),
             )
             .await
@@ -1194,7 +1267,7 @@ mod tests {
             .await
             .unwrap();
         hooks
-            .dispatch("notes", HookEvent::AfterCreate, &serde_json::json!({"id":"n42"}))
+            .dispatch("notes", HookEvent::AfterCreate, &HookRequest::default(), &serde_json::json!({"id":"n42"}))
             .await
             .unwrap();
         let creates = mock.creates.lock();
@@ -1301,7 +1374,7 @@ mod tests {
     async fn before_create_no_hook_returns_input_unchanged() {
         let hooks = AppHooks::new().await.unwrap();
         let out = hooks
-            .dispatch_before_create("notes", payload(&[("title", serde_json::json!("x"))]))
+            .dispatch_before_create("notes", &HookRequest::default(), payload(&[("title", serde_json::json!("x"))]))
             .await
             .unwrap();
         assert_eq!(out.get("title"), Some(&serde_json::json!("x")));
@@ -1323,7 +1396,7 @@ mod tests {
             .await
             .unwrap();
         let out = hooks
-            .dispatch_before_create("notes", payload(&[("title", serde_json::json!("hello"))]))
+            .dispatch_before_create("notes", &HookRequest::default(), payload(&[("title", serde_json::json!("hello"))]))
             .await
             .unwrap();
         assert_eq!(out.get("title"), Some(&serde_json::json!("HELLO")));
@@ -1345,7 +1418,7 @@ mod tests {
             .await
             .unwrap();
         let err = hooks
-            .dispatch_before_create("notes", payload(&[]))
+            .dispatch_before_create("notes", &HookRequest::default(), payload(&[]))
             .await
             .unwrap_err();
         assert!(matches!(err, RuntimeError::Veto(ref m) if m.contains("title is required")));
@@ -1365,7 +1438,7 @@ mod tests {
             .await
             .unwrap();
         let out = hooks
-            .dispatch_before_create("notes", payload(&[]))
+            .dispatch_before_create("notes", &HookRequest::default(), payload(&[]))
             .await
             .unwrap();
         assert_eq!(out.get("x"), Some(&serde_json::json!(10)));
@@ -1399,6 +1472,7 @@ mod tests {
         let out = hooks
             .dispatch_before_update(
                 "notes",
+                &HookRequest::default(),
                 &existing,
                 payload(&[("title", serde_json::json!("new"))]),
             )
@@ -1411,6 +1485,7 @@ mod tests {
         let err = hooks
             .dispatch_before_update(
                 "notes",
+                &HookRequest::default(),
                 &existing,
                 payload(&[("owner", serde_json::json!("u2"))]),
             )
@@ -1436,16 +1511,112 @@ mod tests {
 
         let unlocked = serde_json::json!({"id":"r1","fields":{"locked":false}});
         hooks
-            .dispatch_before_delete("notes", &unlocked)
+            .dispatch_before_delete("notes", &HookRequest::default(), &unlocked)
             .await
             .unwrap();
 
         let locked = serde_json::json!({"id":"r2","fields":{"locked":true}});
         let err = hooks
-            .dispatch_before_delete("notes", &locked)
+            .dispatch_before_delete("notes", &HookRequest::default(), &locked)
             .await
             .unwrap_err();
         assert!(matches!(err, RuntimeError::Veto(ref m) if m.contains("locked")));
+    }
+
+    #[tokio::test]
+    async fn before_create_sees_app_request_auth_id() {
+        let hooks = AppHooks::new().await.unwrap();
+        hooks
+            .eval(
+                r#"
+                $app.onRecordBeforeCreate("notes", (p) => {
+                    p.owner = $app.request.auth.id;
+                    p.role = $app.request.auth.role;
+                });
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        let req = HookRequest {
+            auth: Some(HookAuth {
+                id: "u123".into(),
+                role: "user".into(),
+                realm: Some("acme".into()),
+            }),
+            realm: "acme".into(),
+            app: "mobile".into(),
+            collection: "notes".into(),
+        };
+        let out = hooks
+            .dispatch_before_create(
+                "notes",
+                &req,
+                payload(&[("title", serde_json::json!("hi"))]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.get("owner"), Some(&serde_json::json!("u123")));
+        assert_eq!(out.get("role"), Some(&serde_json::json!("user")));
+    }
+
+    #[tokio::test]
+    async fn app_request_is_cleared_after_dispatch() {
+        let hooks = AppHooks::new().await.unwrap();
+        hooks
+            .eval(
+                r#"$app.onRecordBeforeCreate("notes", () => {});"#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        let req = HookRequest::system("acme", "mobile", "notes");
+        hooks
+            .dispatch_before_create("notes", &req, payload(&[]))
+            .await
+            .unwrap();
+        // After dispatch returns, $app.request must be null again so a
+        // later internal eval can't see the stale principal.
+        hooks
+            .eval(
+                "$app.log($app.request === null ? 'cleared' : 'STALE');",
+                "<probe>",
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            hooks.drain_logs().await.unwrap(),
+            vec!["cleared".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn after_create_sees_app_request_realm_app_collection() {
+        let hooks = AppHooks::new().await.unwrap();
+        hooks
+            .eval(
+                r#"
+                $app.onRecordAfterCreate("notes", (rec) => {
+                    $app.log("ctx:" + $app.request.realm + "/" + $app.request.app + "/" + $app.request.collection);
+                });
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        hooks
+            .dispatch(
+                "notes",
+                HookEvent::AfterCreate,
+                &HookRequest::system("acme", "mobile", "notes"),
+                &serde_json::json!({"id":"r1"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            hooks.drain_logs().await.unwrap(),
+            vec!["ctx:acme/mobile/notes".to_string()]
+        );
     }
 
     #[tokio::test]
@@ -1460,7 +1631,7 @@ mod tests {
             .unwrap();
         // Dispatching on "notes" must not trip the posts hook.
         let out = hooks
-            .dispatch_before_create("notes", payload(&[("title", serde_json::json!("ok"))]))
+            .dispatch_before_create("notes", &HookRequest::default(), payload(&[("title", serde_json::json!("ok"))]))
             .await
             .unwrap();
         assert_eq!(out.get("title"), Some(&serde_json::json!("ok")));
