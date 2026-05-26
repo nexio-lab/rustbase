@@ -100,6 +100,29 @@ async fn main() -> Result<()> {
         }
     };
 
+    // File storage backend. S3 if `[storage.s3]` is configured, else
+    // a local directory rooted at `data_dir`. Boot aborts on a bad
+    // S3 config — silent fallback to local would hide misconfig until
+    // the first upload.
+    let storage = match &cfg.storage.s3 {
+        Some(s3_cfg) => {
+            tracing::info!(
+                bucket = %s3_cfg.bucket,
+                region = %s3_cfg.region,
+                endpoint = ?s3_cfg.endpoint,
+                "storage: S3 backend"
+            );
+            rustbase_storage::Storage::s3(s3_cfg)?
+        }
+        None => {
+            tracing::info!(
+                root = %cfg.data_dir.display(),
+                "storage: local backend"
+            );
+            rustbase_storage::Storage::local(&cfg.data_dir).await?
+        }
+    };
+
     let state = AppState {
         system: Arc::new(system),
         realms: Arc::new(RealmPoolManager::new(
@@ -115,6 +138,7 @@ async fn main() -> Result<()> {
         initialized: Arc::new(AtomicBool::new(already_initialized)),
         mailer,
         oauth_kek,
+        storage,
     };
 
     // Load JS hooks for every (realm, app) that exists on disk.

@@ -33,3 +33,16 @@ enabled = false
 # tls  = "none"          # one of: "none" | "start_tls" | "implicit"
 # # username = "..."     # SASL creds optional; MailHog accepts anonymous
 # # password = "..."
+
+# Optional S3-compatible file storage. Absent → uploaded files live
+# under `data_dir/realms/<realm>/apps/<app>/storage/`. Bring up MinIO
+# from infra/docker-compose.yml and uncomment to switch the backend
+# without changing on-disk paths anywhere else:
+#
+# [storage.s3]
+# bucket            = "rustbase-dev"
+# region            = "us-east-1"     # MinIO accepts any value; R2 uses "auto"
+# endpoint          = "http://localhost:9000"   # omit for AWS
+# access_key_id     = "minioadmin"
+# secret_access_key = "minioadmin"
+# # virtual_hosted_style_request = false  # default; required false for MinIO

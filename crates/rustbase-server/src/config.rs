@@ -13,6 +13,7 @@
 use anyhow::Result;
 use config::{Config, Environment, File};
 use rustbase_api::mailer::SmtpConfig;
+use rustbase_storage::S3Config;
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -31,6 +32,18 @@ pub struct ServerConfig {
     /// `[mail]` section. Absent → server boots with a `LogMailer`.
     #[serde(default)]
     pub mail: MailConfig,
+    /// `[storage]` section. Absent → local-disk backend rooted at
+    /// `data_dir`.
+    #[serde(default)]
+    pub storage: StorageConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct StorageConfig {
+    /// `[storage.s3]`. Present means: use S3Storage; absent → local
+    /// directory backend under `data_dir/.../storage/`.
+    #[serde(default)]
+    pub s3: Option<S3Config>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -81,6 +94,7 @@ impl Default for ServerConfig {
             app_pool_cap: default_app_pool_cap(),
             litestream: LitestreamConfig::default(),
             mail: MailConfig::default(),
+            storage: StorageConfig::default(),
         }
     }
 }

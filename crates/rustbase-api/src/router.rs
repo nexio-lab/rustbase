@@ -236,6 +236,7 @@ mod tests {
             .unwrap();
         ensure_master_realm(system.pool()).await.unwrap();
         let data_dir = dir.path().to_path_buf();
+        let storage = rustbase_storage::Storage::local(&data_dir).await.unwrap();
         let state = AppState {
             system: Arc::new(system),
             realms: Arc::new(RealmPoolManager::new(data_dir.clone(), 4)),
@@ -248,6 +249,7 @@ mod tests {
             initialized: Arc::new(AtomicBool::new(false)),
             mailer: Arc::new(crate::mailer::LogMailer::new()),
             oauth_kek: Arc::new(rustbase_auth::fresh_kek()),
+            storage,
         };
         (state, dir)
     }

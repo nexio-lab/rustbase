@@ -23,10 +23,8 @@ use rustbase_db::{
     FileMeta,
     apps::find_app,
     files::{delete_file, find_file, insert_file, list_files},
-    paths,
     realms::find_realm,
 };
-use rustbase_storage::Storage;
 
 use crate::auth::AdminAuth;
 use crate::error::ApiError;
@@ -45,7 +43,7 @@ pub async fn upload(
     body: Bytes,
 ) -> Result<(StatusCode, Json<FileMeta>), ApiError> {
     auth.require_app_access(&realm, &app)?;
-    let (app_pool, storage) = open_app_with_storage(&state, &realm, &app).await?;
+    let app_pool = open_app_pool(&state, &realm, &app).await?;
 
     if body.len() > MAX_UPLOAD_BYTES {
         return Err(ApiError::Core(CoreError::Validation(format!(
@@ -67,8 +65,9 @@ pub async fn upload(
         .map(str::to_string);
 
     let meta = insert_file(&app_pool, &filename, mime.as_deref(), body.len() as i64).await?;
-    storage
-        .put(&meta.id, body.to_vec())
+    state
+        .storage
+        .put(&storage_key(&realm, &app, &meta.id), body.to_vec())
         .await
         .map_err(|e| ApiError::Core(CoreError::Internal(format!("storage put: {e}"))))?;
 
@@ -85,7 +84,7 @@ pub async fn list(
     Path((realm, app)): Path<(String, String)>,
 ) -> Result<Json<Vec<FileMeta>>, ApiError> {
     auth.require_app_access(&realm, &app)?;
-    let (app_pool, _) = open_app_with_storage(&state, &realm, &app).await?;
+    let app_pool = open_app_pool(&state, &realm, &app).await?;
     Ok(Json(list_files(&app_pool).await?))
 }
 
@@ -95,7 +94,7 @@ pub async fn download(
     Path((realm, app, id)): Path<(String, String, String)>,
 ) -> Result<Response, ApiError> {
     auth.require_app_access(&realm, &app)?;
-    let (app_pool, storage) = open_app_with_storage(&state, &realm, &app).await?;
+    let app_pool = open_app_pool(&state, &realm, &app).await?;
 
     let meta = find_file(&app_pool, &id)
         .await?
@@ -103,8 +102,9 @@ pub async fn download(
             collection: "file".into(),
             id: id.clone(),
         }))?;
-    let bytes = storage
-        .get(&id)
+    let bytes = state
+        .storage
+        .get(&storage_key(&realm, &app, &id))
         .await
         .map_err(|e| ApiError::Core(CoreError::Internal(format!("storage get: {e}"))))?;
 
@@ -129,7 +129,7 @@ pub async fn meta(
     Path((realm, app, id)): Path<(String, String, String)>,
 ) -> Result<Json<FileMeta>, ApiError> {
     auth.require_app_access(&realm, &app)?;
-    let (app_pool, _) = open_app_with_storage(&state, &realm, &app).await?;
+    let app_pool = open_app_pool(&state, &realm, &app).await?;
     let meta = find_file(&app_pool, &id)
         .await?
         .ok_or(ApiError::Core(CoreError::NotFound {
@@ -145,7 +145,7 @@ pub async fn delete(
     Path((realm, app, id)): Path<(String, String, String)>,
 ) -> Result<StatusCode, ApiError> {
     auth.require_app_access(&realm, &app)?;
-    let (app_pool, storage) = open_app_with_storage(&state, &realm, &app).await?;
+    let app_pool = open_app_pool(&state, &realm, &app).await?;
 
     delete_file(&app_pool, &id).await.map_err(|e| match e {
         rustbase_db::DbError::Sqlx(sqlx::Error::RowNotFound) => {
@@ -159,15 +159,25 @@ pub async fn delete(
     // Best-effort delete on the object store. If the row was deleted
     // but the file is gone (or never existed), don't surface that as a
     // 500 — the row is the source of truth for "does this file exist".
-    let _ = storage.delete(&id).await;
+    let _ = state.storage.delete(&storage_key(&realm, &app, &id)).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn open_app_with_storage(
+/// Compose the per-(realm, app, file) key used by the global Storage
+/// backend. With LocalStorage rooted at `data_dir` this resolves to
+/// the same on-disk path as the previous per-app `Storage::local()`
+/// layout (`data_dir/realms/<r>/apps/<a>/storage/<id>`), so existing
+/// data carries over transparently. With S3 it becomes an in-bucket
+/// key with the same prefix.
+fn storage_key(realm: &str, app: &str, file_id: &str) -> String {
+    format!("realms/{realm}/apps/{app}/storage/{file_id}")
+}
+
+async fn open_app_pool(
     state: &AppState,
     realm: &str,
     app: &str,
-) -> Result<(sqlx::SqlitePool, Storage), ApiError> {
+) -> Result<sqlx::SqlitePool, ApiError> {
     find_realm(state.system.pool(), realm)
         .await?
         .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.to_string())))?;
@@ -180,10 +190,5 @@ async fn open_app_with_storage(
         })
     })?;
     let app_id = AppId::from(app.to_string());
-    let app_pool = state.apps.pool_for(&realm_id, &app_id).await?;
-    let storage_dir = paths::app_storage_dir(state.data_dir.as_ref(), &realm_id, &app_id);
-    let storage = Storage::local(&storage_dir)
-        .await
-        .map_err(|e| ApiError::Core(CoreError::Internal(format!("storage open: {e}"))))?;
-    Ok((app_pool, storage))
+    Ok(state.apps.pool_for(&realm_id, &app_id).await?)
 }
