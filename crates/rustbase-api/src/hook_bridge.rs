@@ -8,9 +8,9 @@
 use async_trait::async_trait;
 use rustbase_core::{AppId, FilterNode, RealmId, parse_filter};
 use rustbase_db::{
-    AppPoolManager, ListPage,
+    AppPoolManager, DbError, ListPage,
     collections::find_collection,
-    records::{create_record, find_record, list_records},
+    records::{create_record, delete_record, find_record, list_records, update_record},
 };
 use rustbase_runtime::{AsyncRecordsBridge, Result as RtResult, RuntimeError, SyncBridge};
 use serde_json::Value as Json;
@@ -119,5 +119,50 @@ impl AsyncRecordsBridge for ApiBridge {
             .map_err(|e| RuntimeError::Js(format!("create_record: {e}")))?;
         serde_json::to_value(rec)
             .map_err(|e| RuntimeError::Js(format!("serialise: {e}")))
+    }
+
+    async fn update(
+        &self,
+        collection: &str,
+        id: &str,
+        patch: BTreeMap<String, Json>,
+    ) -> RtResult<Json> {
+        let pool = self.pool().await?;
+        let Some(coll) = find_collection(&pool, collection)
+            .await
+            .map_err(|e| RuntimeError::Js(format!("find_collection: {e}")))?
+        else {
+            return Err(RuntimeError::Js(format!(
+                "unknown collection: {collection}"
+            )));
+        };
+        let rec = update_record(&pool, &coll.schema, id, patch)
+            .await
+            .map_err(|e| match e {
+                DbError::Sqlx(sqlx::Error::RowNotFound) => {
+                    RuntimeError::Js(format!("not found: {collection}/{id}"))
+                }
+                other => RuntimeError::Js(format!("update_record: {other}")),
+            })?;
+        serde_json::to_value(rec)
+            .map_err(|e| RuntimeError::Js(format!("serialise: {e}")))
+    }
+
+    async fn delete(&self, collection: &str, id: &str) -> RtResult<()> {
+        let pool = self.pool().await?;
+        let Some(coll) = find_collection(&pool, collection)
+            .await
+            .map_err(|e| RuntimeError::Js(format!("find_collection: {e}")))?
+        else {
+            return Err(RuntimeError::Js(format!(
+                "unknown collection: {collection}"
+            )));
+        };
+        delete_record(&pool, &coll.schema, id).await.map_err(|e| match e {
+            DbError::Sqlx(sqlx::Error::RowNotFound) => {
+                RuntimeError::Js(format!("not found: {collection}/{id}"))
+            }
+            other => RuntimeError::Js(format!("delete_record: {other}")),
+        })
     }
 }

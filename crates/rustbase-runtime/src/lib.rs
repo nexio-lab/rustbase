@@ -83,6 +83,13 @@ pub trait RecordsBridge: Send + Sync + 'static {
         per_page: u32,
     ) -> Result<Vec<Json>>;
     fn create(&self, collection: &str, fields: BTreeMap<String, Json>) -> Result<Json>;
+    fn update(
+        &self,
+        collection: &str,
+        id: &str,
+        patch: BTreeMap<String, Json>,
+    ) -> Result<Json>;
+    fn delete(&self, collection: &str, id: &str) -> Result<()>;
 }
 
 /// `async_trait` form for tests that want to write the bridge once
@@ -98,6 +105,13 @@ pub trait AsyncRecordsBridge: Send + Sync + 'static {
         per_page: u32,
     ) -> Result<Vec<Json>>;
     async fn create(&self, collection: &str, fields: BTreeMap<String, Json>) -> Result<Json>;
+    async fn update(
+        &self,
+        collection: &str,
+        id: &str,
+        patch: BTreeMap<String, Json>,
+    ) -> Result<Json>;
+    async fn delete(&self, collection: &str, id: &str) -> Result<()>;
 }
 
 /// Wrap an `AsyncRecordsBridge` to satisfy the sync `RecordsBridge`
@@ -137,6 +151,29 @@ impl<T: AsyncRecordsBridge> RecordsBridge for SyncBridge<T> {
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current()
                 .block_on(async move { inner.create(&collection, fields).await })
+        })
+    }
+    fn update(
+        &self,
+        collection: &str,
+        id: &str,
+        patch: BTreeMap<String, Json>,
+    ) -> Result<Json> {
+        let inner = self.0.clone();
+        let collection = collection.to_string();
+        let id = id.to_string();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current()
+                .block_on(async move { inner.update(&collection, &id, patch).await })
+        })
+    }
+    fn delete(&self, collection: &str, id: &str) -> Result<()> {
+        let inner = self.0.clone();
+        let collection = collection.to_string();
+        let id = id.to_string();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current()
+                .block_on(async move { inner.delete(&collection, &id).await })
         })
     }
 }
@@ -335,6 +372,13 @@ impl AppHooks {
                         const s = call('__rb_records_create', [collection, JSON.stringify(fields || {})]);
                         return JSON.parse(s);
                     },
+                    update(collection, id, patch) {
+                        const s = call('__rb_records_update', [collection, id, JSON.stringify(patch || {})]);
+                        return JSON.parse(s);
+                    },
+                    delete(collection, id) {
+                        call('__rb_records_delete', [collection, id]);
+                    },
                 };
             })();
         "#;
@@ -442,7 +486,7 @@ fn register_records_natives(
     .with_name("__rb_records_findByFilter")?;
     ctx.globals().set("__rb_records_findByFilter", find_by_filter)?;
 
-    let b3 = bridge;
+    let b3 = bridge.clone();
     let create = Function::new(
         ctx.clone(),
         move |collection: String, fields_json: String| -> String {
@@ -458,6 +502,36 @@ fn register_records_natives(
     )?
     .with_name("__rb_records_create")?;
     ctx.globals().set("__rb_records_create", create)?;
+
+    let b4 = bridge.clone();
+    let update = Function::new(
+        ctx.clone(),
+        move |collection: String, id: String, patch_json: String| -> String {
+            let patch: BTreeMap<String, Json> = match serde_json::from_str(&patch_json) {
+                Ok(v) => v,
+                Err(e) => return format!("{ERR}patch: {e}"),
+            };
+            match b4.update(&collection, &id, patch) {
+                Ok(rec) => serde_json::to_string(&rec).unwrap_or_else(|_| "{}".into()),
+                Err(e) => format!("{ERR}{e}"),
+            }
+        },
+    )?
+    .with_name("__rb_records_update")?;
+    ctx.globals().set("__rb_records_update", update)?;
+
+    let b5 = bridge;
+    let delete_fn = Function::new(
+        ctx.clone(),
+        move |collection: String, id: String| -> String {
+            match b5.delete(&collection, &id) {
+                Ok(()) => "null".to_string(),
+                Err(e) => format!("{ERR}{e}"),
+            }
+        },
+    )?
+    .with_name("__rb_records_delete")?;
+    ctx.globals().set("__rb_records_delete", delete_fn)?;
 
     Ok(())
 }
@@ -760,6 +834,32 @@ mod tests {
                 .insert((collection.to_string(), id), row.clone());
             Ok(row)
         }
+        fn update(
+            &self,
+            collection: &str,
+            id: &str,
+            patch: BTreeMap<String, Json>,
+        ) -> Result<Json> {
+            let key = (collection.to_string(), id.to_string());
+            let mut rows = self.rows.lock();
+            let Some(row) = rows.get_mut(&key) else {
+                return Err(RuntimeError::Js(format!("not found: {collection}/{id}")));
+            };
+            // Apply patch to row.fields if it's an object.
+            if let Some(fields) = row.get_mut("fields").and_then(Json::as_object_mut) {
+                for (k, v) in patch {
+                    fields.insert(k, v);
+                }
+            }
+            Ok(row.clone())
+        }
+        fn delete(&self, collection: &str, id: &str) -> Result<()> {
+            let key = (collection.to_string(), id.to_string());
+            if self.rows.lock().remove(&key).is_none() {
+                return Err(RuntimeError::Js(format!("not found: {collection}/{id}")));
+            }
+            Ok(())
+        }
     }
 
     async fn hooks_with_mock(mock: Arc<MockBridge>) -> AppHooks {
@@ -910,6 +1010,91 @@ mod tests {
         assert_eq!(
             creates[0].1.get("ref").and_then(|v| v.as_str()),
             Some("n42")
+        );
+    }
+
+    #[tokio::test]
+    async fn records_update_merges_patch_into_row() {
+        let mock = MockBridge::new();
+        mock.with_row(
+            "notes",
+            "n1",
+            serde_json::json!({"id":"n1","collection":"notes","fields":{"title":"old","pinned":false}}),
+        );
+        let hooks = hooks_with_mock(mock.clone()).await;
+        hooks
+            .eval(
+                r#"
+                const r = $app.records.update("notes", "n1", {title: "new"});
+                $app.log("title=" + r.fields.title + " pinned=" + r.fields.pinned);
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            hooks.drain_logs().await.unwrap(),
+            vec!["title=new pinned=false".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn records_update_on_missing_throws() {
+        let hooks = hooks_with_mock(MockBridge::new()).await;
+        hooks
+            .eval(
+                r#"
+                try { $app.records.update("notes", "ghost", {x: 1}); $app.log("noop"); }
+                catch (e) { $app.log("threw"); }
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            hooks.drain_logs().await.unwrap(),
+            vec!["threw".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn records_delete_removes_row() {
+        let mock = MockBridge::new();
+        mock.with_row("notes", "n1", serde_json::json!({"id":"n1"}));
+        let hooks = hooks_with_mock(mock.clone()).await;
+        hooks
+            .eval(
+                r#"
+                $app.records.delete("notes", "n1");
+                const after = $app.records.findOne("notes", "n1");
+                $app.log(after === null ? "gone" : "still here");
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            hooks.drain_logs().await.unwrap(),
+            vec!["gone".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn records_delete_on_missing_throws() {
+        let hooks = hooks_with_mock(MockBridge::new()).await;
+        hooks
+            .eval(
+                r#"
+                try { $app.records.delete("notes", "ghost"); $app.log("noop"); }
+                catch (e) { $app.log("threw"); }
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            hooks.drain_logs().await.unwrap(),
+            vec!["threw".to_string()]
         );
     }
 }
