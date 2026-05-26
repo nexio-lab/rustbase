@@ -39,6 +39,9 @@ pub enum RuntimeError {
     Io(#[from] std::io::Error),
     #[error("js error: {0}")]
     Js(String),
+    /// A before-hook threw, vetoing the request.
+    #[error("vetoed by hook: {0}")]
+    Veto(String),
 }
 
 pub type Result<T> = std::result::Result<T, RuntimeError>;
@@ -54,6 +57,9 @@ pub enum HookEvent {
     AfterCreate,
     AfterUpdate,
     AfterDelete,
+    BeforeCreate,
+    BeforeUpdate,
+    BeforeDelete,
 }
 
 impl HookEvent {
@@ -62,6 +68,9 @@ impl HookEvent {
             HookEvent::AfterCreate => "after_create",
             HookEvent::AfterUpdate => "after_update",
             HookEvent::AfterDelete => "after_delete",
+            HookEvent::BeforeCreate => "before_create",
+            HookEvent::BeforeUpdate => "before_update",
+            HookEvent::BeforeDelete => "before_delete",
         }
     }
 }
@@ -285,6 +294,143 @@ impl AppHooks {
         Ok(())
     }
 
+    /// Run BEFORE-create hooks against `payload` (the incoming
+    /// fields). Handlers may mutate the object or throw. Returns the
+    /// (possibly mutated) payload on success, or `Err(Veto)` if any
+    /// handler threw — the caller maps that to a 4xx and skips the
+    /// DB write.
+    pub async fn dispatch_before_create(
+        &self,
+        collection: &str,
+        payload: BTreeMap<String, Json>,
+    ) -> Result<BTreeMap<String, Json>> {
+        let result = self
+            .run_before(
+                &format!("{collection}:before_create"),
+                &serde_json::to_string(&payload)
+                    .map_err(|e| RuntimeError::Js(format!("serialise: {e}")))?,
+                "fn(payload)",
+                "payload",
+                None,
+            )
+            .await?;
+        serde_json::from_str(&result)
+            .map_err(|e| RuntimeError::Js(format!("deserialise mutated payload: {e}")))
+    }
+
+    /// Run BEFORE-update hooks with `(existing, patch)`. `patch` is
+    /// the only object handlers should mutate; `existing` is a
+    /// snapshot of the row prior to the write. Returns the mutated
+    /// patch on success.
+    pub async fn dispatch_before_update<E: Serialize>(
+        &self,
+        collection: &str,
+        existing: &E,
+        patch: BTreeMap<String, Json>,
+    ) -> Result<BTreeMap<String, Json>> {
+        let existing_json = serde_json::to_string(existing)
+            .map_err(|e| RuntimeError::Js(format!("serialise existing: {e}")))?;
+        let patch_json = serde_json::to_string(&patch)
+            .map_err(|e| RuntimeError::Js(format!("serialise patch: {e}")))?;
+        let result = self
+            .run_before(
+                &format!("{collection}:before_update"),
+                &patch_json,
+                "fn(existing, patch)",
+                "patch",
+                Some(("existing", &existing_json)),
+            )
+            .await?;
+        serde_json::from_str(&result)
+            .map_err(|e| RuntimeError::Js(format!("deserialise mutated patch: {e}")))
+    }
+
+    /// Run BEFORE-delete hooks against `existing`. Returns `Ok(())`
+    /// on success; `Err(Veto)` if any handler threw.
+    pub async fn dispatch_before_delete<E: Serialize>(
+        &self,
+        collection: &str,
+        existing: &E,
+    ) -> Result<()> {
+        let existing_json = serde_json::to_string(existing)
+            .map_err(|e| RuntimeError::Js(format!("serialise existing: {e}")))?;
+        // Treat `existing` as the primary so it's bound exactly once
+        // in the driver. The mutated result is irrelevant for delete —
+        // we only care about Ok vs Veto.
+        let _ = self
+            .run_before(
+                &format!("{collection}:before_delete"),
+                &existing_json,
+                "fn(existing)",
+                "existing",
+                None,
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Shared driver for before-* dispatch. Builds a JS IIFE that
+    /// iterates handlers, calling each with the right shape. On a
+    /// caught throw, the driver returns the sentinel string
+    /// `"__rb_veto:<msg>"`. On success, it returns
+    /// `JSON.stringify(<primary_arg>)` so we can pick up mutations.
+    async fn run_before(
+        &self,
+        key: &str,
+        primary_arg_json: &str,
+        // human-readable shape, currently unused except for clarity
+        _signature: &str,
+        // which JS binding is the "mutable primary" we re-stringify
+        primary_name: &str,
+        secondary: Option<(&str, &str)>,
+    ) -> Result<String> {
+        let (sec_decl, call_args) = match secondary {
+            Some((name, json)) => (
+                format!("const {name} = JSON.parse({});", json_quote(json)),
+                // primary is `payload`/`patch`; the secondary is the
+                // existing snapshot, so we pass (existing, primary).
+                format!("{name}, {primary_name}"),
+            ),
+            None => (String::new(), primary_name.to_string()),
+        };
+        let driver = format!(
+            r#"
+            (function() {{
+                const list = (globalThis.__rb_handlers || {{}})[{key_lit}] || [];
+                const {primary} = JSON.parse({payload_lit});
+                {sec_decl}
+                for (const fn of list) {{
+                    try {{ fn({call_args}); }}
+                    catch (e) {{
+                        return "__rb_veto:" + String((e && e.message) || e);
+                    }}
+                }}
+                return JSON.stringify({primary});
+            }})();
+            "#,
+            key_lit = json_quote(key),
+            primary = primary_name,
+            payload_lit = json_quote(primary_arg_json),
+            sec_decl = sec_decl,
+            call_args = call_args,
+        );
+
+        let result: String = self
+            .ctx
+            .with(move |ctx| {
+                let v: String = ctx.eval(driver.as_bytes()).catch(&ctx).map_err(|e| {
+                    RuntimeError::Js(format!("dispatch_before: {e}"))
+                })?;
+                Ok::<_, RuntimeError>(v)
+            })
+            .await?;
+
+        if let Some(msg) = result.strip_prefix("__rb_veto:") {
+            return Err(RuntimeError::Veto(msg.to_string()));
+        }
+        Ok(result)
+    }
+
     async fn install_app_global(&self) -> Result<()> {
         // Pure-JS half: handler registry, error collector, $app.log
         // that ALSO stashes to __rb_log so tests can drain it.
@@ -307,6 +453,9 @@ impl AppHooks {
                     onRecordAfterCreate(collection, fn) { register('after_create', collection, fn); },
                     onRecordAfterUpdate(collection, fn) { register('after_update', collection, fn); },
                     onRecordAfterDelete(collection, fn) { register('after_delete', collection, fn); },
+                    onRecordBeforeCreate(collection, fn) { register('before_create', collection, fn); },
+                    onRecordBeforeUpdate(collection, fn) { register('before_update', collection, fn); },
+                    onRecordBeforeDelete(collection, fn) { register('before_delete', collection, fn); },
                     log(msg) {
                         const s = String(msg);
                         globalThis.__rb_log.push(s);
@@ -592,6 +741,50 @@ impl HookEngine {
             return Ok(());
         };
         hooks.dispatch(collection, event, payload).await
+    }
+
+    /// Before-create. If no hooks are loaded, returns `payload`
+    /// unchanged. `Err(Veto)` is propagated to the API layer as 400.
+    pub async fn dispatch_before_create(
+        &self,
+        realm: &str,
+        app: &str,
+        collection: &str,
+        payload: BTreeMap<String, Json>,
+    ) -> Result<BTreeMap<String, Json>> {
+        let Some(hooks) = self.get(realm, app) else {
+            return Ok(payload);
+        };
+        hooks.dispatch_before_create(collection, payload).await
+    }
+
+    pub async fn dispatch_before_update<E: Serialize>(
+        &self,
+        realm: &str,
+        app: &str,
+        collection: &str,
+        existing: &E,
+        patch: BTreeMap<String, Json>,
+    ) -> Result<BTreeMap<String, Json>> {
+        let Some(hooks) = self.get(realm, app) else {
+            return Ok(patch);
+        };
+        hooks
+            .dispatch_before_update(collection, existing, patch)
+            .await
+    }
+
+    pub async fn dispatch_before_delete<E: Serialize>(
+        &self,
+        realm: &str,
+        app: &str,
+        collection: &str,
+        existing: &E,
+    ) -> Result<()> {
+        let Some(hooks) = self.get(realm, app) else {
+            return Ok(());
+        };
+        hooks.dispatch_before_delete(collection, existing).await
     }
 }
 
@@ -1096,5 +1289,180 @@ mod tests {
             hooks.drain_logs().await.unwrap(),
             vec!["threw".to_string()]
         );
+    }
+
+    // ------------- before-hook tests -------------
+
+    fn payload(pairs: &[(&str, Json)]) -> BTreeMap<String, Json> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
+    }
+
+    #[tokio::test]
+    async fn before_create_no_hook_returns_input_unchanged() {
+        let hooks = AppHooks::new().await.unwrap();
+        let out = hooks
+            .dispatch_before_create("notes", payload(&[("title", serde_json::json!("x"))]))
+            .await
+            .unwrap();
+        assert_eq!(out.get("title"), Some(&serde_json::json!("x")));
+    }
+
+    #[tokio::test]
+    async fn before_create_hook_can_mutate_payload() {
+        let hooks = AppHooks::new().await.unwrap();
+        hooks
+            .eval(
+                r#"
+                $app.onRecordBeforeCreate("notes", (payload) => {
+                    payload.title = payload.title.toUpperCase();
+                    payload.processed = true;
+                });
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        let out = hooks
+            .dispatch_before_create("notes", payload(&[("title", serde_json::json!("hello"))]))
+            .await
+            .unwrap();
+        assert_eq!(out.get("title"), Some(&serde_json::json!("HELLO")));
+        assert_eq!(out.get("processed"), Some(&serde_json::json!(true)));
+    }
+
+    #[tokio::test]
+    async fn before_create_hook_can_veto_with_thrown_error() {
+        let hooks = AppHooks::new().await.unwrap();
+        hooks
+            .eval(
+                r#"
+                $app.onRecordBeforeCreate("notes", (payload) => {
+                    if (!payload.title) throw new Error("title is required");
+                });
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        let err = hooks
+            .dispatch_before_create("notes", payload(&[]))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RuntimeError::Veto(ref m) if m.contains("title is required")));
+    }
+
+    #[tokio::test]
+    async fn before_create_chains_multiple_hooks_in_order() {
+        let hooks = AppHooks::new().await.unwrap();
+        hooks
+            .eval(
+                r#"
+                $app.onRecordBeforeCreate("notes", (p) => { p.x = (p.x || 0) + 1; });
+                $app.onRecordBeforeCreate("notes", (p) => { p.x = p.x * 10; });
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        let out = hooks
+            .dispatch_before_create("notes", payload(&[]))
+            .await
+            .unwrap();
+        assert_eq!(out.get("x"), Some(&serde_json::json!(10)));
+    }
+
+    #[tokio::test]
+    async fn before_update_sees_existing_and_mutates_patch() {
+        let hooks = AppHooks::new().await.unwrap();
+        hooks
+            .eval(
+                r#"
+                $app.onRecordBeforeUpdate("notes", (existing, patch) => {
+                    // forbid changing the owner
+                    if ("owner" in patch && patch.owner !== existing.fields.owner) {
+                        throw new Error("owner is immutable");
+                    }
+                    patch.updated_by = "system";
+                });
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        let existing = serde_json::json!({
+            "id": "r1",
+            "collection": "notes",
+            "fields": { "owner": "u1", "title": "old" },
+        });
+
+        // Good patch: owner unchanged
+        let out = hooks
+            .dispatch_before_update(
+                "notes",
+                &existing,
+                payload(&[("title", serde_json::json!("new"))]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.get("title"), Some(&serde_json::json!("new")));
+        assert_eq!(out.get("updated_by"), Some(&serde_json::json!("system")));
+
+        // Bad patch: owner changed → veto
+        let err = hooks
+            .dispatch_before_update(
+                "notes",
+                &existing,
+                payload(&[("owner", serde_json::json!("u2"))]),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RuntimeError::Veto(ref m) if m.contains("owner is immutable")));
+    }
+
+    #[tokio::test]
+    async fn before_delete_can_veto() {
+        let hooks = AppHooks::new().await.unwrap();
+        hooks
+            .eval(
+                r#"
+                $app.onRecordBeforeDelete("notes", (existing) => {
+                    if (existing.fields.locked) throw new Error("record is locked");
+                });
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+
+        let unlocked = serde_json::json!({"id":"r1","fields":{"locked":false}});
+        hooks
+            .dispatch_before_delete("notes", &unlocked)
+            .await
+            .unwrap();
+
+        let locked = serde_json::json!({"id":"r2","fields":{"locked":true}});
+        let err = hooks
+            .dispatch_before_delete("notes", &locked)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RuntimeError::Veto(ref m) if m.contains("locked")));
+    }
+
+    #[tokio::test]
+    async fn before_hook_for_other_collection_is_silent() {
+        let hooks = AppHooks::new().await.unwrap();
+        hooks
+            .eval(
+                r#"$app.onRecordBeforeCreate("posts", () => { throw new Error("not me"); });"#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        // Dispatching on "notes" must not trip the posts hook.
+        let out = hooks
+            .dispatch_before_create("notes", payload(&[("title", serde_json::json!("ok"))]))
+            .await
+            .unwrap();
+        assert_eq!(out.get("title"), Some(&serde_json::json!("ok")));
     }
 }
