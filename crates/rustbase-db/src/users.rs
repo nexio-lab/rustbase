@@ -16,11 +16,7 @@ pub struct User {
     pub created_at: DateTime<Utc>,
 }
 
-pub async fn insert_user(
-    pool: &SqlitePool,
-    email: &str,
-    password_hash: &str,
-) -> Result<User> {
+pub async fn insert_user(pool: &SqlitePool, email: &str, password_hash: &str) -> Result<User> {
     let id = Uuid::now_v7().to_string();
     let now = Utc::now();
     sqlx::query(
@@ -105,7 +101,9 @@ mod tests {
 
     async fn fresh_pool() -> SqlitePool {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(pool.clone(), REALM_MIGRATIONS).await.unwrap();
+        apply_migrations(pool.clone(), REALM_MIGRATIONS)
+            .await
+            .unwrap();
         pool
     }
 
@@ -115,7 +113,10 @@ mod tests {
         let u = insert_user(&pool, "ada@x.com", "$argon2id$hash")
             .await
             .unwrap();
-        let f = find_user_by_email(&pool, "ada@x.com").await.unwrap().unwrap();
+        let f = find_user_by_email(&pool, "ada@x.com")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(u.id, f.id);
         assert!(!f.verified);
         assert!(f.last_login.is_none());

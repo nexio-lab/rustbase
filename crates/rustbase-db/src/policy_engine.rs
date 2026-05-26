@@ -193,16 +193,17 @@ mod tests {
     ) {
         let dir = tempdir().unwrap();
         let system = open_memory_pool().await.unwrap();
-        apply_migrations(system.clone(), SYSTEM_MIGRATIONS).await.unwrap();
+        apply_migrations(system.clone(), SYSTEM_MIGRATIONS)
+            .await
+            .unwrap();
         ensure_master_realm(&system).await.unwrap();
         create_realm(&system, "acme", "Acme").await.unwrap();
 
         let realm_pools = Arc::new(RealmPoolManager::new(dir.path().to_path_buf(), 4));
-        let realm_pool = realm_pools
-            .pool_for(&RealmId::from("acme"))
+        let realm_pool = realm_pools.pool_for(&RealmId::from("acme")).await.unwrap();
+        apply_migrations(realm_pool.clone(), REALM_MIGRATIONS)
             .await
             .unwrap();
-        apply_migrations(realm_pool.clone(), REALM_MIGRATIONS).await.unwrap();
         create_app(&realm_pool, "mobile", "Mobile").await.unwrap();
 
         let app_pools = Arc::new(AppPoolManager::new(dir.path().to_path_buf(), 4));
@@ -210,7 +211,9 @@ mod tests {
             .pool_for(&RealmId::from("acme"), &AppId::from("mobile"))
             .await
             .unwrap();
-        apply_migrations(app_pool.clone(), APP_MIGRATIONS).await.unwrap();
+        apply_migrations(app_pool.clone(), APP_MIGRATIONS)
+            .await
+            .unwrap();
 
         (system, realm_pools, app_pools, dir)
     }
@@ -218,10 +221,7 @@ mod tests {
     #[tokio::test]
     async fn master_tighten_clamps_realm_and_app() {
         let (system, realm_pools, app_pools, _dir) = universe().await;
-        let realm_pool = realm_pools
-            .pool_for(&RealmId::from("acme"))
-            .await
-            .unwrap();
+        let realm_pool = realm_pools.pool_for(&RealmId::from("acme")).await.unwrap();
         let app_pool = app_pools
             .pool_for(&RealmId::from("acme"), &AppId::from("mobile"))
             .await
@@ -283,10 +283,7 @@ mod tests {
     #[tokio::test]
     async fn master_loosen_is_a_noop() {
         let (system, realm_pools, app_pools, _dir) = universe().await;
-        let realm_pool = realm_pools
-            .pool_for(&RealmId::from("acme"))
-            .await
-            .unwrap();
+        let realm_pool = realm_pools.pool_for(&RealmId::from("acme")).await.unwrap();
         policies::upsert_policy(&system, "password.length", &r(4, 64))
             .await
             .unwrap();
@@ -315,10 +312,7 @@ mod tests {
     #[tokio::test]
     async fn realm_tighten_clamps_only_apps_under_it() {
         let (system, realm_pools, app_pools, _dir) = universe().await;
-        let realm_pool = realm_pools
-            .pool_for(&RealmId::from("acme"))
-            .await
-            .unwrap();
+        let realm_pool = realm_pools.pool_for(&RealmId::from("acme")).await.unwrap();
         let app_pool = app_pools
             .pool_for(&RealmId::from("acme"), &AppId::from("mobile"))
             .await

@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+#
+# pre-commit: fast checks only. Slow stuff (full test suite,
+# `cargo audit`) runs in pre-push and CI.
+#
+# To bypass intentionally: `git commit --no-verify`. Don't make a
+# habit of it — main is supposed to stay green.
+
+set -euo pipefail
+
+GREEN=$'\e[32m'
+RED=$'\e[31m'
+YELLOW=$'\e[33m'
+DIM=$'\e[2m'
+RESET=$'\e[0m'
+
+# `step <label> <cmd...>` — pretty-print a labeled command.
+step() {
+    local label="$1"; shift
+    printf '%s▶%s  %s\n' "$DIM" "$RESET" "$label"
+    if "$@"; then
+        printf '%s✓ %s%s\n' "$GREEN" "$label" "$RESET"
+    else
+        printf '%s✗ %s%s\n' "$RED" "$label" "$RESET"
+        exit 1
+    fi
+}
+
+# 1. cargo fmt --check — formatting drift catches most diff churn.
+step "cargo fmt --check" \
+    cargo fmt --all --check
+
+# 2. cargo clippy strict — lint, warnings = errors.
+step "cargo clippy (-D warnings)" \
+    cargo clippy --workspace --all-targets -- -D warnings
+
+# 3. Architecture greps — the "must NOT do" list from CLAUDE.md.
+
+# (a) no .unwrap()/.expect(...) outside #[cfg(test)] blocks.
+#     A line-by-line grep can't see the surrounding cfg; an AST-aware
+#     check would be ideal but a per-file heuristic catches the common
+#     case: if the file has src/ in the path but isn't a tests/ file,
+#     and the line outside a `mod tests` block uses unwrap/expect, flag.
+#
+#     Heuristic: skip lines that come after `#[cfg(test)]` on the same
+#     file. We approximate with `awk` per-file.
+printf '%s▶%s  arch: no unwrap/expect outside tests\n' "$DIM" "$RESET"
+# Once we see `#[cfg(test)]` or `mod tests {` in a file, everything
+# below is considered test scope — we never reset the flag. Good enough
+# for the convention this project follows (one test mod per file at the
+# bottom). Lines inside line comments (// ...) are skipped.
+offenders="$(
+    for f in $(git ls-files 'crates/*.rs' 'crates/**/*.rs' 2>/dev/null); do
+        awk '
+            /^#\[cfg\(test\)\]/ { in_test = 1; next }
+            /^mod tests[[:space:]]*\{/ { in_test = 1; next }
+            !in_test && /\.unwrap\(\)|\.expect\(/ {
+                if ($0 ~ /^[[:space:]]*\/\//) next
+                print FILENAME ":" NR ": " $0
+            }
+        ' "$f"
+    done
+)"
+if [ -n "$offenders" ]; then
+    printf '%s✗ arch: unwrap/expect outside tests%s\n%s\n' "$RED" "$RESET" "$offenders"
+    exit 1
+fi
+printf '%s✓ arch: no unwrap/expect outside tests%s\n' "$GREEN" "$RESET"
+
+# (b) rustbase-core must stay IO-free. Reject known IO crates in its
+#     Cargo.toml. The trait re-exports it adds via async-trait are fine
+#     (no IO performed by core itself).
+printf '%s▶%s  arch: rustbase-core stays IO-free\n' "$DIM" "$RESET"
+io_hits="$(
+    grep -nE '^(sqlx|axum|tokio|reqwest|hyper|object_store|rquickjs|tower|tower_http)\.workspace = true|^(sqlx|axum|tokio|reqwest|hyper|object_store|rquickjs|tower|tower_http)[[:space:]]' \
+        crates/rustbase-core/Cargo.toml || true
+)"
+if [ -n "$io_hits" ]; then
+    printf '%s✗ arch: rustbase-core gained an IO dep%s\n%s\n' "$RED" "$RESET" "$io_hits"
+    exit 1
+fi
+printf '%s✓ arch: rustbase-core stays IO-free%s\n' "$GREEN" "$RESET"
+
+# 4. AI-attribution check on staged content (per the no-attribution
+#    memory rule). Looks at the staged diff only — historical commits
+#    are not re-scanned. The hook itself is excluded so the regex
+#    doesn't trip on its own definition.
+printf '%s▶%s  no AI attribution in staged diff\n' "$DIM" "$RESET"
+# Build the regex from fragments so the markers don't appear literally
+# in any source file or commit message they get embedded into.
+ai_pat="$(printf '%s|%s|%s|%s|%s' \
+    'co-authored-by:[[:space:]]*cl[a]ude' \
+    'a[n]thropic' \
+    'noreply@a[n]thropic' \
+    'generated with \[?cl[a]ude code' \
+    '🤖 generated')"
+ai_pat="${ai_pat//\[a\]/a}"   # collapse the [a] disguises
+staged_diff="$(git diff --cached --no-color -- ':!.githooks/' || true)"
+if printf '%s' "$staged_diff" | grep -iE "$ai_pat" >/dev/null; then
+    printf '%s✗ staged diff contains AI-attribution markers%s\n' "$RED" "$RESET"
+    printf '%s   Remove these before committing.%s\n' "$YELLOW" "$RESET"
+    exit 1
+fi
+printf '%s✓ no AI attribution in staged diff%s\n' "$GREEN" "$RESET"
+
+printf '\n%sall pre-commit checks passed%s\n' "$GREEN" "$RESET"

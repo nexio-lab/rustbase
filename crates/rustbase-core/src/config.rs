@@ -156,11 +156,7 @@ impl EnumSetPolicy {
 
     pub fn clamp(&self, child: EnumSetPolicy) -> EnumSetPolicy {
         EnumSetPolicy {
-            allowed: child
-                .allowed
-                .intersection(&self.allowed)
-                .cloned()
-                .collect(),
+            allowed: child.allowed.intersection(&self.allowed).cloned().collect(),
         }
     }
 }
@@ -228,7 +224,10 @@ pub fn validate_chain(field: &str, levels: &[PolicyLevel]) -> Result<()> {
 /// The caller passes `levels` with the *new* top-level spec already in
 /// position 0 — typically because they just edited it. This function
 /// rewrites positions 1..n so the whole chain re-validates.
-pub fn cascade_clamp(field: &str, levels: Vec<PolicyLevel>) -> (Vec<PolicyLevel>, Vec<PolicyChange>) {
+pub fn cascade_clamp(
+    field: &str,
+    levels: Vec<PolicyLevel>,
+) -> (Vec<PolicyLevel>, Vec<PolicyChange>) {
     let mut changes = Vec::new();
     let mut out: Vec<PolicyLevel> = Vec::with_capacity(levels.len());
 
@@ -324,7 +323,10 @@ mod tests {
         let master = EnumSetPolicy::new(["google", "github", "email"]);
         let realm = EnumSetPolicy::new(["google", "facebook"]);
         let clamped = master.clamp(realm);
-        assert_eq!(clamped.allowed, ["google".to_string()].into_iter().collect());
+        assert_eq!(
+            clamped.allowed,
+            ["google".to_string()].into_iter().collect()
+        );
     }
 
     #[test]
@@ -377,7 +379,10 @@ mod tests {
         match err {
             CoreError::PolicyViolation { field, .. } => {
                 assert!(field.contains("password.length"), "got {field}");
-                assert!(field.contains("app"), "blame should point at the leaf level: {field}");
+                assert!(
+                    field.contains("app"),
+                    "blame should point at the leaf level: {field}"
+                );
             }
             other => panic!("expected PolicyViolation, got: {other:?}"),
         }
@@ -393,7 +398,10 @@ mod tests {
         let err = validate_chain("password.length", &chain).unwrap_err();
         match err {
             CoreError::PolicyViolation { field, .. } => {
-                assert!(field.contains("realm"), "blame should point at realm: {field}");
+                assert!(
+                    field.contains("realm"),
+                    "blame should point at realm: {field}"
+                );
             }
             other => panic!("expected PolicyViolation, got: {other:?}"),
         }
@@ -492,10 +500,7 @@ mod tests {
                 "realm",
                 PolicySpec::EnumSet(EnumSetPolicy::new(["google", "github", "facebook"])),
             ),
-            PolicyLevel::new(
-                "app",
-                PolicySpec::EnumSet(EnumSetPolicy::new(["facebook"])),
-            ),
+            PolicyLevel::new("app", PolicySpec::EnumSet(EnumSetPolicy::new(["facebook"]))),
         ];
         let (out, changes) = cascade_clamp("oauth.providers", chain);
         let realm = match &out[1].spec {

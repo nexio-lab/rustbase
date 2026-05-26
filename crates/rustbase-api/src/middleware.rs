@@ -25,14 +25,8 @@ fn is_allowed_before_setup(method: &axum::http::Method, path: &str) -> bool {
     method == axum::http::Method::GET && (path == "/_/" || path.starts_with("/_/"))
 }
 
-pub async fn setup_gate(
-    State(state): State<AppState>,
-    req: Request,
-    next: Next,
-) -> Response {
-    if state.is_initialized()
-        || is_allowed_before_setup(req.method(), req.uri().path())
-    {
+pub async fn setup_gate(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    if state.is_initialized() || is_allowed_before_setup(req.method(), req.uri().path()) {
         return next.run(req).await;
     }
     (

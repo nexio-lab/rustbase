@@ -54,14 +54,12 @@ pub async fn list_realms(pool: &SqlitePool) -> Result<Vec<Realm>> {
 /// `ensure_master_realm` at boot.
 pub async fn create_realm(pool: &SqlitePool, id: &str, name: &str) -> Result<Realm> {
     let now = Utc::now();
-    sqlx::query(
-        "INSERT INTO realms (id, name, is_master, created_at) VALUES (?, ?, 0, ?)",
-    )
-    .bind(id)
-    .bind(name)
-    .bind(now)
-    .execute(pool)
-    .await?;
+    sqlx::query("INSERT INTO realms (id, name, is_master, created_at) VALUES (?, ?, 0, ?)")
+        .bind(id)
+        .bind(name)
+        .bind(now)
+        .execute(pool)
+        .await?;
     Ok(Realm {
         id: id.to_string(),
         name: name.to_string(),
@@ -105,7 +103,9 @@ mod tests {
 
     async fn fresh_pool() -> SqlitePool {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(pool.clone(), SYSTEM_MIGRATIONS).await.unwrap();
+        apply_migrations(pool.clone(), SYSTEM_MIGRATIONS)
+            .await
+            .unwrap();
         pool
     }
 

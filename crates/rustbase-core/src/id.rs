@@ -48,7 +48,10 @@ macro_rules! id_type {
     };
 }
 
-id_type!(RealmId, "Identifier for a realm (identity / organization boundary).");
+id_type!(
+    RealmId,
+    "Identifier for a realm (identity / organization boundary)."
+);
 id_type!(AppId, "Identifier for an app within a realm.");
 id_type!(UserId, "Identifier for an end user within a realm.");
 id_type!(AdminId, "Identifier for a master, realm, or app admin.");

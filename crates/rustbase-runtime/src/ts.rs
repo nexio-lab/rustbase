@@ -12,7 +12,9 @@
 //! support. None of those are needed for hook scripts.
 
 use crate::RuntimeError;
-use swc_common::{FileName, Globals, Mark, SourceMap, comments::SingleThreadedComments, sync::Lrc, GLOBALS};
+use swc_common::{
+    FileName, GLOBALS, Globals, Mark, SourceMap, comments::SingleThreadedComments, sync::Lrc,
+};
 use swc_ecma_ast::{EsVersion, Pass};
 use swc_ecma_codegen::{Config as CodegenConfig, Emitter, text_writer::JsWriter};
 use swc_ecma_parser::{Parser, StringInput, Syntax, TsSyntax, lexer::Lexer};
@@ -42,12 +44,7 @@ pub fn transpile(src: &str) -> Result<String, RuntimeError> {
         let top_level_mark = Mark::new();
 
         resolver(unresolved_mark, top_level_mark, true).process(&mut program);
-        typescript(
-            Default::default(),
-            unresolved_mark,
-            top_level_mark,
-        )
-        .process(&mut program);
+        typescript(Default::default(), unresolved_mark, top_level_mark).process(&mut program);
 
         let mut buf = Vec::with_capacity(src.len());
         {
@@ -62,8 +59,7 @@ pub fn transpile(src: &str) -> Result<String, RuntimeError> {
                 .emit_program(&program)
                 .map_err(|e| RuntimeError::Js(format!("ts emit: {e}")))?;
         }
-        String::from_utf8(buf)
-            .map_err(|e| RuntimeError::Js(format!("ts emit utf-8: {e}")))
+        String::from_utf8(buf).map_err(|e| RuntimeError::Js(format!("ts emit utf-8: {e}")))
     })
 }
 
@@ -98,8 +94,7 @@ mod tests {
     fn strips_as_casts_and_non_null_bangs() {
         // swc preserves the parens that originally wrapped the cast expression;
         // the type annotations themselves (`as any`, `!`) are what we want gone.
-        let js =
-            transpile(r#"const id = ($app.request as any).auth!.id;"#).unwrap();
+        let js = transpile(r#"const id = ($app.request as any).auth!.id;"#).unwrap();
         assert!(!js.contains(" as "), "got: {js}");
         assert!(!js.contains("!."), "got: {js}");
         assert!(js.contains(".auth.id"), "got: {js}");

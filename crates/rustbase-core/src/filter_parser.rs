@@ -68,11 +68,7 @@ fn not_expr(i: &str) -> IResult<&str, FilterNode> {
 }
 
 fn atom(i: &str) -> IResult<&str, FilterNode> {
-    alt((
-        delimited(ws_char('('), expr, ws_char(')')),
-        comparison,
-    ))
-    .parse(i)
+    alt((delimited(ws_char('('), expr, ws_char(')')), comparison)).parse(i)
 }
 
 fn comparison(i: &str) -> IResult<&str, FilterNode> {
@@ -180,8 +176,8 @@ mod tests {
 
     #[test]
     fn negative_number_literal() {
-        let node = parse_filter("delta = -3.14").unwrap();
-        assert_eq!(node, FilterNode::Eq("delta".into(), json!(-3.14)));
+        let node = parse_filter("delta = -2.5").unwrap();
+        assert_eq!(node, FilterNode::Eq("delta".into(), json!(-2.5)));
     }
 
     #[test]

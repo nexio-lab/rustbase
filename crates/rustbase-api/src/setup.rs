@@ -52,13 +52,8 @@ pub async fn setup(
     }
 
     let hash = hash_password(&req.password)?;
-    let admin = insert_master_admin(
-        state.system.pool(),
-        &req.email,
-        &hash,
-        req.name.as_deref(),
-    )
-    .await?;
+    let admin =
+        insert_master_admin(state.system.pool(), &req.email, &hash, req.name.as_deref()).await?;
 
     state.mark_initialized();
     tracing::info!(admin_id = %admin.id, email = %admin.email, "master admin created via setup wizard");

@@ -89,8 +89,7 @@ pub async fn find_record(pool: &SqlitePool, schema: &Schema, id: &str) -> Result
         quote_ident(schema.id.as_str())
     );
     let row: Option<SqliteRow> = sqlx::query(&sql).bind(id).fetch_optional(pool).await?;
-    row.map(|r| Ok::<_, DbError>(row_to_record(&r, schema)?))
-        .transpose()
+    row.map(|r| row_to_record(&r, schema)).transpose()
 }
 
 pub async fn list_records(
@@ -281,9 +280,7 @@ fn push_field_value(q: &mut QueryBuilder<'_, Sqlite>, value: Option<&Json>, ty: 
 }
 
 fn row_to_record(row: &SqliteRow, schema: &Schema) -> Result<Record> {
-    let id: String = row
-        .try_get::<String, _>("id")
-        .map_err(DbError::Sqlx)?;
+    let id: String = row.try_get::<String, _>("id").map_err(DbError::Sqlx)?;
     let created_at: DateTime<Utc> = row
         .try_get::<DateTime<Utc>, _>("created_at")
         .map_err(DbError::Sqlx)?;
@@ -340,20 +337,28 @@ mod tests {
 
     async fn pool_with_users() -> (SqlitePool, Schema) {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(pool.clone(), APP_MIGRATIONS).await.unwrap();
+        apply_migrations(pool.clone(), APP_MIGRATIONS)
+            .await
+            .unwrap();
         let schema = Schema {
             id: CollectionId::from("users"),
             kind: CollectionKind::Base,
             fields: vec![
                 Field {
                     name: "name".into(),
-                    ty: FieldType::Text { min: None, max: None },
+                    ty: FieldType::Text {
+                        min: None,
+                        max: None,
+                    },
                     required: true,
                     unique: false,
                 },
                 Field {
                     name: "age".into(),
-                    ty: FieldType::Number { min: None, max: None },
+                    ty: FieldType::Number {
+                        min: None,
+                        max: None,
+                    },
                     required: false,
                     unique: false,
                 },
@@ -460,10 +465,12 @@ mod tests {
         delete_record(&pool, &schema, created.id.as_str())
             .await
             .unwrap();
-        assert!(find_record(&pool, &schema, created.id.as_str())
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            find_record(&pool, &schema, created.id.as_str())
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -482,14 +489,9 @@ mod tests {
         }
 
         let filter = rustbase_core::parse_filter("age = 36 && verified = true").unwrap();
-        let listed = list_records(
-            &pool,
-            &schema,
-            ListPage::default(),
-            Some(&filter),
-        )
-        .await
-        .unwrap();
+        let listed = list_records(&pool, &schema, ListPage::default(), Some(&filter))
+            .await
+            .unwrap();
         assert_eq!(listed.total_items, 2);
         assert_eq!(listed.items.len(), 2);
         // both returned names are "Ada" or "Lovelace"

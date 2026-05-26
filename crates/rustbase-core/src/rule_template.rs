@@ -44,9 +44,9 @@ pub fn substitute(template: &str, ctx: &RuleContext) -> Result<String, CoreError
                 j += 1;
             }
             if j + 1 >= bytes.len() || bytes[j] != b'}' || bytes[j + 1] != b'}' {
-                return Err(CoreError::Validation(format!(
-                    "unterminated {{{{ }}}} in rule template"
-                )));
+                return Err(CoreError::Validation(
+                    "unterminated {{ }} in rule template".to_string(),
+                ));
             }
             let path = std::str::from_utf8(&bytes[start..j])
                 .map_err(|e| CoreError::Validation(format!("invalid utf-8 in template: {e}")))?

@@ -60,7 +60,10 @@ pub async fn create(
     let realm_id = RealmId::from(realm.clone());
     let pool = state.realms.pool_for(&realm_id).await?;
 
-    if find_realm_admin_by_email(&pool, &req.email).await?.is_some() {
+    if find_realm_admin_by_email(&pool, &req.email)
+        .await?
+        .is_some()
+    {
         return Err(ApiError::Core(CoreError::Conflict(format!(
             "realm admin '{}' already exists in realm '{}'",
             req.email, realm

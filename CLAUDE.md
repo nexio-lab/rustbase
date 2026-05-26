@@ -363,6 +363,27 @@ Sandbox limits (set per app, bounded by realm, bounded by master):
 
 ---
 
+## Dev tooling
+
+Git hooks are tracked under `.githooks/`. Wire them on first clone:
+
+```sh
+./scripts/install-hooks.sh
+```
+
+This sets `git config core.hooksPath .githooks`. The hooks run:
+
+- **`pre-commit`** (fast, sub-5s): `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, arch greps (no `unwrap`/`expect` outside `#[cfg(test)]`, `rustbase-core` stays IO-free), and a no-AI-attribution scan of the staged diff.
+- **`pre-push`** (slower, ~10–15s): `cargo test --workspace`, and `cargo audit` if installed (`cargo install cargo-audit`).
+
+Bypass for one commit only with `git commit --no-verify` / `git push --no-verify`.
+
+The same checks run on every PR via `.github/workflows/ci.yml`. The `release-build` job (`cargo build --workspace --release`) is gated on the check job passing.
+
+`cargo audit`'s ignore list lives in `.cargo/audit.toml` — every entry carries a one-line rationale and must be re-evaluated on every dependency bump.
+
+---
+
 ## Technology choices (locked — do not change without updating this file)
 
 | Concern | Choice | Rationale |

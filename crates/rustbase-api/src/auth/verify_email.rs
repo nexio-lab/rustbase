@@ -3,16 +3,16 @@
 //! Two routes, both under a realm scope:
 //!
 //! - `POST /api/realms/:realm/auth/verify-email/request`
-//!     Authenticated end-user asks to receive a verification email.
-//!     A fresh token is issued in the realm DB, mailed to the user's
-//!     stored address, and the response indicates whether a mail was
-//!     dispatched. Already-verified users receive `204 No Content`
-//!     instead — we don't leak whether a token row was created.
+//!   Authenticated end-user asks to receive a verification email.
+//!   A fresh token is issued in the realm DB, mailed to the user's
+//!   stored address, and the response indicates whether a mail was
+//!   dispatched. Already-verified users receive `204 No Content`
+//!   instead — we don't leak whether a token row was created.
 //!
 //! - `POST /api/realms/:realm/auth/verify-email/confirm`
-//!     Anyone can call. Body carries `{ "token": "<opaque>" }`. The
-//!     token is consumed atomically; on success the matching user is
-//!     marked verified.
+//!   Anyone can call. Body carries `{ "token": "<opaque>" }`. The
+//!   token is consumed atomically; on success the matching user is
+//!   marked verified.
 //!
 //! Tokens are 32 random bytes encoded as 64 hex chars, with a 24-hour
 //! TTL. The `consume` machinery in `rustbase_db::email_verifications`
@@ -73,12 +73,12 @@ pub async fn request(
         .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.clone())))?;
     let pool = state.realms.pool_for(&RealmId::from(realm.clone())).await?;
 
-    let user = find_user_by_id(&pool, &auth.subject_id).await?.ok_or(
-        ApiError::Core(CoreError::NotFound {
+    let user = find_user_by_id(&pool, &auth.subject_id)
+        .await?
+        .ok_or(ApiError::Core(CoreError::NotFound {
             collection: "user".into(),
             id: auth.subject_id.clone(),
-        }),
-    )?;
+        }))?;
 
     if user.verified {
         return Ok((

@@ -30,10 +30,13 @@ pub async fn master_admin_refresh(
     State(state): State<AppState>,
     Json(req): Json<RefreshRequest>,
 ) -> Result<Json<RefreshResponse>, ApiError> {
-    let existing =
-        find_active_refresh_token(state.system.pool(), &req.refresh_token, SubjectKind::MasterAdmin)
-            .await?
-            .ok_or(ApiError::Core(CoreError::Unauthorized))?;
+    let existing = find_active_refresh_token(
+        state.system.pool(),
+        &req.refresh_token,
+        SubjectKind::MasterAdmin,
+    )
+    .await?
+    .ok_or(ApiError::Core(CoreError::Unauthorized))?;
 
     revoke_refresh_token(state.system.pool(), &existing.token).await?;
 

@@ -1,19 +1,19 @@
 //! Password-reset endpoints.
 //!
 //! - `POST /api/realms/:realm/auth/password-reset/request`
-//!     Anonymous. Body: `{ "email": "..." }`. Always answers
-//!     `202 Accepted` with the same generic message so the response
-//!     can't be used to enumerate which addresses are registered. A
-//!     reset token is issued and mailed *only* when the email
-//!     actually resolves to a user in this realm; the no-match case
-//!     is silent.
+//!   Anonymous. Body: `{ "email": "..." }`. Always answers
+//!   `202 Accepted` with the same generic message so the response
+//!   can't be used to enumerate which addresses are registered. A
+//!   reset token is issued and mailed *only* when the email
+//!   actually resolves to a user in this realm; the no-match case
+//!   is silent.
 //!
 //! - `POST /api/realms/:realm/auth/password-reset/confirm`
-//!     Anonymous. Body: `{ "token": "...", "new_password": "..." }`.
-//!     Consumes the token atomically, rehashes the new password, and
-//!     replaces the stored hash. On success, every other pending
-//!     reset token for the same user is invalidated so a parallel
-//!     in-flight request becomes a dead letter.
+//!   Anonymous. Body: `{ "token": "...", "new_password": "..." }`.
+//!   Consumes the token atomically, rehashes the new password, and
+//!   replaces the stored hash. On success, every other pending
+//!   reset token for the same user is invalidated so a parallel
+//!   in-flight request becomes a dead letter.
 //!
 //! Tokens are 32 random bytes hex-encoded, with a 1-hour TTL — the
 //! reset window is deliberately tighter than email verification.

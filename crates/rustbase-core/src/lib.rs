@@ -18,8 +18,8 @@ pub mod rule_template;
 pub mod schema;
 
 pub use config::{
-    EnumSetPolicy, PolicyChange, PolicyLevel, PolicySpec, RangePolicy, TogglePolicy,
-    cascade_clamp, validate_chain,
+    EnumSetPolicy, PolicyChange, PolicyLevel, PolicySpec, RangePolicy, TogglePolicy, cascade_clamp,
+    validate_chain,
 };
 pub use ctx::{AppCtx, Principal, RealmCtx};
 pub use error::{CoreError, Result};

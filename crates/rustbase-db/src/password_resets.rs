@@ -63,7 +63,9 @@ pub async fn find(pool: &SqlitePool, token: &str) -> Result<Option<PasswordReset
 #[derive(Debug, PartialEq, Eq)]
 pub enum ConsumeOutcome {
     /// Successfully consumed — caller should set the new password.
-    Ok { user_id: String },
+    Ok {
+        user_id: String,
+    },
     Unknown,
     AlreadyConsumed,
     Expired,
@@ -123,7 +125,9 @@ mod tests {
 
     async fn setup() -> (SqlitePool, String) {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(pool.clone(), REALM_MIGRATIONS).await.unwrap();
+        apply_migrations(pool.clone(), REALM_MIGRATIONS)
+            .await
+            .unwrap();
         let user = insert_user(&pool, "ada@x.com", "hash").await.unwrap();
         (pool, user.id)
     }
@@ -131,7 +135,9 @@ mod tests {
     #[tokio::test]
     async fn issue_then_consume_returns_user_id() {
         let (pool, user_id) = setup().await;
-        issue(&pool, "tok-1", &user_id, Duration::hours(1)).await.unwrap();
+        issue(&pool, "tok-1", &user_id, Duration::hours(1))
+            .await
+            .unwrap();
         match consume(&pool, "tok-1").await.unwrap() {
             ConsumeOutcome::Ok { user_id: out } => assert_eq!(out, user_id),
             other => panic!("expected Ok, got {other:?}"),
@@ -141,40 +147,65 @@ mod tests {
     #[tokio::test]
     async fn second_consume_returns_already_consumed() {
         let (pool, user_id) = setup().await;
-        issue(&pool, "tok-2", &user_id, Duration::hours(1)).await.unwrap();
+        issue(&pool, "tok-2", &user_id, Duration::hours(1))
+            .await
+            .unwrap();
         consume(&pool, "tok-2").await.unwrap();
-        assert_eq!(consume(&pool, "tok-2").await.unwrap(), ConsumeOutcome::AlreadyConsumed);
+        assert_eq!(
+            consume(&pool, "tok-2").await.unwrap(),
+            ConsumeOutcome::AlreadyConsumed
+        );
     }
 
     #[tokio::test]
     async fn unknown_token_returns_unknown() {
         let (pool, _user_id) = setup().await;
-        assert_eq!(consume(&pool, "nope").await.unwrap(), ConsumeOutcome::Unknown);
+        assert_eq!(
+            consume(&pool, "nope").await.unwrap(),
+            ConsumeOutcome::Unknown
+        );
     }
 
     #[tokio::test]
     async fn expired_token_returns_expired() {
         let (pool, user_id) = setup().await;
-        issue(&pool, "tok-exp", &user_id, Duration::seconds(-1)).await.unwrap();
-        assert_eq!(consume(&pool, "tok-exp").await.unwrap(), ConsumeOutcome::Expired);
+        issue(&pool, "tok-exp", &user_id, Duration::seconds(-1))
+            .await
+            .unwrap();
+        assert_eq!(
+            consume(&pool, "tok-exp").await.unwrap(),
+            ConsumeOutcome::Expired
+        );
     }
 
     #[tokio::test]
     async fn invalidate_all_marks_pending_consumed() {
         let (pool, user_id) = setup().await;
-        issue(&pool, "tok-a", &user_id, Duration::hours(1)).await.unwrap();
-        issue(&pool, "tok-b", &user_id, Duration::hours(1)).await.unwrap();
+        issue(&pool, "tok-a", &user_id, Duration::hours(1))
+            .await
+            .unwrap();
+        issue(&pool, "tok-b", &user_id, Duration::hours(1))
+            .await
+            .unwrap();
         let n = invalidate_all_for_user(&pool, &user_id).await.unwrap();
         assert_eq!(n, 2);
         // Both tokens now refuse to consume.
-        assert_eq!(consume(&pool, "tok-a").await.unwrap(), ConsumeOutcome::AlreadyConsumed);
-        assert_eq!(consume(&pool, "tok-b").await.unwrap(), ConsumeOutcome::AlreadyConsumed);
+        assert_eq!(
+            consume(&pool, "tok-a").await.unwrap(),
+            ConsumeOutcome::AlreadyConsumed
+        );
+        assert_eq!(
+            consume(&pool, "tok-b").await.unwrap(),
+            ConsumeOutcome::AlreadyConsumed
+        );
     }
 
     #[tokio::test]
     async fn invalidate_all_skips_already_consumed_rows() {
         let (pool, user_id) = setup().await;
-        issue(&pool, "tok-used", &user_id, Duration::hours(1)).await.unwrap();
+        issue(&pool, "tok-used", &user_id, Duration::hours(1))
+            .await
+            .unwrap();
         consume(&pool, "tok-used").await.unwrap();
         // Nothing pending, so 0 rows updated.
         let n = invalidate_all_for_user(&pool, &user_id).await.unwrap();

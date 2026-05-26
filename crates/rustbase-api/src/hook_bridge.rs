@@ -100,11 +100,7 @@ impl AsyncRecordsBridge for ApiBridge {
             .collect())
     }
 
-    async fn create(
-        &self,
-        collection: &str,
-        fields: BTreeMap<String, Json>,
-    ) -> RtResult<Json> {
+    async fn create(&self, collection: &str, fields: BTreeMap<String, Json>) -> RtResult<Json> {
         let pool = self.pool().await?;
         let Some(coll) = find_collection(&pool, collection)
             .await
@@ -117,8 +113,7 @@ impl AsyncRecordsBridge for ApiBridge {
         let rec = create_record(&pool, &coll.schema, fields)
             .await
             .map_err(|e| RuntimeError::Js(format!("create_record: {e}")))?;
-        serde_json::to_value(rec)
-            .map_err(|e| RuntimeError::Js(format!("serialise: {e}")))
+        serde_json::to_value(rec).map_err(|e| RuntimeError::Js(format!("serialise: {e}")))
     }
 
     async fn update(
@@ -144,8 +139,7 @@ impl AsyncRecordsBridge for ApiBridge {
                 }
                 other => RuntimeError::Js(format!("update_record: {other}")),
             })?;
-        serde_json::to_value(rec)
-            .map_err(|e| RuntimeError::Js(format!("serialise: {e}")))
+        serde_json::to_value(rec).map_err(|e| RuntimeError::Js(format!("serialise: {e}")))
     }
 
     async fn delete(&self, collection: &str, id: &str) -> RtResult<()> {
@@ -158,11 +152,13 @@ impl AsyncRecordsBridge for ApiBridge {
                 "unknown collection: {collection}"
             )));
         };
-        delete_record(&pool, &coll.schema, id).await.map_err(|e| match e {
-            DbError::Sqlx(sqlx::Error::RowNotFound) => {
-                RuntimeError::Js(format!("not found: {collection}/{id}"))
-            }
-            other => RuntimeError::Js(format!("delete_record: {other}")),
-        })
+        delete_record(&pool, &coll.schema, id)
+            .await
+            .map_err(|e| match e {
+                DbError::Sqlx(sqlx::Error::RowNotFound) => {
+                    RuntimeError::Js(format!("not found: {collection}/{id}"))
+                }
+                other => RuntimeError::Js(format!("delete_record: {other}")),
+            })
     }
 }

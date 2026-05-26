@@ -21,8 +21,7 @@ use axum::{
     http::StatusCode,
 };
 use rustbase_core::{
-    AppId, CoreError, FilterNode, RealmId, Record, RuleContext, Schema, parse_filter,
-    rule_template,
+    AppId, CoreError, FilterNode, RealmId, Record, RuleContext, Schema, parse_filter, rule_template,
 };
 use rustbase_db::{
     DbError, ListPage, ListedRecords,
@@ -30,7 +29,7 @@ use rustbase_db::{
     apps::find_app,
     collections::find_collection,
     realms::find_realm,
-    records::{create_record, delete_record, find_record, list_records, update_record},
+    records::{create_record, delete_record, list_records, update_record},
 };
 use rustbase_realtime::{RealtimeEvent, SubscriptionKey};
 use rustbase_runtime::{HookAuth, HookEvent, HookRequest};
@@ -71,7 +70,7 @@ pub struct ListResponse {
 impl From<ListedRecords> for ListResponse {
     fn from(l: ListedRecords) -> Self {
         let per = l.per_page.max(1) as u64;
-        let total_pages = (l.total_items + per - 1) / per;
+        let total_pages = l.total_items.div_ceil(per);
         Self {
             items: l.items,
             page: l.page,
@@ -102,7 +101,13 @@ pub async fn list(
 ) -> Result<Json<ListResponse>, ApiError> {
     let (app_pool, schema) = open_app_and_schema(&state, &realm, &app, &coll).await?;
     let rule_filter = authorize_record_action(
-        &auth, &app_pool, &realm, &app, &coll, AccessAction::List, &schema,
+        &auth,
+        &app_pool,
+        &realm,
+        &app,
+        &coll,
+        AccessAction::List,
+        &schema,
     )
     .await?;
 
@@ -186,7 +191,13 @@ pub async fn create(
 ) -> Result<(StatusCode, Json<Record>), ApiError> {
     let (app_pool, schema) = open_app_and_schema(&state, &realm, &app, &coll).await?;
     let rule_filter = authorize_record_action(
-        &auth, &app_pool, &realm, &app, &coll, AccessAction::Create, &schema,
+        &auth,
+        &app_pool,
+        &realm,
+        &app,
+        &coll,
+        AccessAction::Create,
+        &schema,
     )
     .await?;
     // Template rules don't apply to creation: the record doesn't exist
@@ -206,18 +217,13 @@ pub async fn create(
     let rec = create_record(&app_pool, &schema, fields).await?;
     state.broker.publish(
         &SubscriptionKey::new(&realm, &app, &coll),
-        RealtimeEvent::RecordCreated { record: rec.clone() },
+        RealtimeEvent::RecordCreated {
+            record: rec.clone(),
+        },
     );
     if let Err(e) = state
         .hooks
-        .dispatch(
-            &realm,
-            &app,
-            &coll,
-            HookEvent::AfterCreate,
-            &request,
-            &rec,
-        )
+        .dispatch(&realm, &app, &coll, HookEvent::AfterCreate, &request, &rec)
         .await
     {
         tracing::error!(error = %e, "hook dispatch (after_create) failed");
@@ -232,7 +238,13 @@ pub async fn get(
 ) -> Result<Json<Record>, ApiError> {
     let (app_pool, schema) = open_app_and_schema(&state, &realm, &app, &coll).await?;
     let rule_filter = authorize_record_action(
-        &auth, &app_pool, &realm, &app, &coll, AccessAction::View, &schema,
+        &auth,
+        &app_pool,
+        &realm,
+        &app,
+        &coll,
+        AccessAction::View,
+        &schema,
     )
     .await?;
 
@@ -272,7 +284,13 @@ pub async fn update(
 ) -> Result<Json<Record>, ApiError> {
     let (app_pool, schema) = open_app_and_schema(&state, &realm, &app, &coll).await?;
     let rule_filter = authorize_record_action(
-        &auth, &app_pool, &realm, &app, &coll, AccessAction::Update, &schema,
+        &auth,
+        &app_pool,
+        &realm,
+        &app,
+        &coll,
+        AccessAction::Update,
+        &schema,
     )
     .await?;
 
@@ -287,7 +305,10 @@ pub async fn update(
     let listed = list_records(
         &app_pool,
         &schema,
-        ListPage { page: 1, per_page: 1 },
+        ListPage {
+            page: 1,
+            per_page: 1,
+        },
         Some(&lookup_filter),
     )
     .await?;
@@ -316,18 +337,13 @@ pub async fn update(
         })?;
     state.broker.publish(
         &SubscriptionKey::new(&realm, &app, &coll),
-        RealtimeEvent::RecordUpdated { record: rec.clone() },
+        RealtimeEvent::RecordUpdated {
+            record: rec.clone(),
+        },
     );
     if let Err(e) = state
         .hooks
-        .dispatch(
-            &realm,
-            &app,
-            &coll,
-            HookEvent::AfterUpdate,
-            &request,
-            &rec,
-        )
+        .dispatch(&realm, &app, &coll, HookEvent::AfterUpdate, &request, &rec)
         .await
     {
         tracing::error!(error = %e, "hook dispatch (after_update) failed");
@@ -342,7 +358,13 @@ pub async fn delete(
 ) -> Result<StatusCode, ApiError> {
     let (app_pool, schema) = open_app_and_schema(&state, &realm, &app, &coll).await?;
     let rule_filter = authorize_record_action(
-        &auth, &app_pool, &realm, &app, &coll, AccessAction::Delete, &schema,
+        &auth,
+        &app_pool,
+        &realm,
+        &app,
+        &coll,
+        AccessAction::Delete,
+        &schema,
     )
     .await?;
 
@@ -355,7 +377,10 @@ pub async fn delete(
     let listed = list_records(
         &app_pool,
         &schema,
-        ListPage { page: 1, per_page: 1 },
+        ListPage {
+            page: 1,
+            per_page: 1,
+        },
         Some(&lookup_filter),
     )
     .await?;
@@ -439,8 +464,7 @@ async fn authorize_record_action(
                 user_email: None, // populated in a later branch when the user record is loaded
                 user_realm: auth.user_realm().map(str::to_string),
             };
-            let resolved = rule_template::substitute(&template, &ctx)
-                .map_err(ApiError::Core)?;
+            let resolved = rule_template::substitute(&template, &ctx).map_err(ApiError::Core)?;
             let node = parse_filter(&resolved).map_err(ApiError::Core)?;
             validate_filter_columns(&node, schema)?;
             Ok(Some(node))
@@ -480,12 +504,7 @@ async fn open_app_and_schema(
 
 /// Build a HookRequest from the authenticated principal + path scope.
 /// `$app.request` inside JS hooks reflects this.
-fn hook_request(
-    auth: &PrincipalAuth,
-    realm: &str,
-    app: &str,
-    coll: &str,
-) -> HookRequest {
+fn hook_request(auth: &PrincipalAuth, realm: &str, app: &str, coll: &str) -> HookRequest {
     let role = match auth.claims.role {
         rustbase_auth::TokenRole::MasterAdmin => "master_admin",
         rustbase_auth::TokenRole::RealmAdmin => "realm_admin",

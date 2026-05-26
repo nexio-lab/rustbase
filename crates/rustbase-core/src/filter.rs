@@ -28,6 +28,10 @@ impl FilterNode {
         FilterNode::Or(Box::new(lhs), Box::new(rhs))
     }
 
+    // Companion constructor for the AST variant — mirrors `and` / `or`
+    // above. Not an impl of std::ops::Not, which would force `!value`
+    // syntax and lose the explicit construction pattern.
+    #[allow(clippy::should_implement_trait)]
     pub fn not(inner: FilterNode) -> Self {
         FilterNode::Not(Box::new(inner))
     }

@@ -27,16 +27,14 @@ pub async fn insert_file(
 ) -> Result<FileMeta> {
     let id = Uuid::now_v7().to_string();
     let now = Utc::now();
-    sqlx::query(
-        "INSERT INTO _files (id, filename, mime, size, created_at) VALUES (?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(filename)
-    .bind(mime)
-    .bind(size)
-    .bind(now)
-    .execute(pool)
-    .await?;
+    sqlx::query("INSERT INTO _files (id, filename, mime, size, created_at) VALUES (?, ?, ?, ?, ?)")
+        .bind(&id)
+        .bind(filename)
+        .bind(mime)
+        .bind(size)
+        .bind(now)
+        .execute(pool)
+        .await?;
     Ok(FileMeta {
         id,
         filename: filename.to_string(),
@@ -47,12 +45,11 @@ pub async fn insert_file(
 }
 
 pub async fn find_file(pool: &SqlitePool, id: &str) -> Result<Option<FileMeta>> {
-    let row: Option<FileMeta> = sqlx::query_as(
-        "SELECT id, filename, mime, size, created_at FROM _files WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<FileMeta> =
+        sqlx::query_as("SELECT id, filename, mime, size, created_at FROM _files WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
     Ok(row)
 }
 
@@ -85,7 +82,9 @@ mod tests {
 
     async fn fresh_pool() -> SqlitePool {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(pool.clone(), APP_MIGRATIONS).await.unwrap();
+        apply_migrations(pool.clone(), APP_MIGRATIONS)
+            .await
+            .unwrap();
         pool
     }
 

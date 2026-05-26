@@ -28,21 +28,18 @@ pub async fn create_app(pool: &SqlitePool, id: &str, name: &str) -> Result<App> 
 }
 
 pub async fn find_app(pool: &SqlitePool, id: &str) -> Result<Option<App>> {
-    let row: Option<App> = sqlx::query_as(
-        "SELECT id, name, created_at FROM apps WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<App> = sqlx::query_as("SELECT id, name, created_at FROM apps WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
     Ok(row)
 }
 
 pub async fn list_apps(pool: &SqlitePool) -> Result<Vec<App>> {
-    let rows: Vec<App> = sqlx::query_as(
-        "SELECT id, name, created_at FROM apps ORDER BY created_at ASC",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows: Vec<App> =
+        sqlx::query_as("SELECT id, name, created_at FROM apps ORDER BY created_at ASC")
+            .fetch_all(pool)
+            .await?;
     Ok(rows)
 }
 
@@ -77,7 +74,9 @@ mod tests {
 
     async fn fresh_pool() -> SqlitePool {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(pool.clone(), REALM_MIGRATIONS).await.unwrap();
+        apply_migrations(pool.clone(), REALM_MIGRATIONS)
+            .await
+            .unwrap();
         pool
     }
 
@@ -123,13 +122,12 @@ mod tests {
         crate::admins::insert_app_admin(&pool, "y", "a@b.c", "h", None)
             .await
             .unwrap();
-        let admin_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM app_admins WHERE app_id = ?",
-        )
-        .bind("y")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let admin_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM app_admins WHERE app_id = ?")
+                .bind("y")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(admin_count, 1);
 
         delete_app(&pool, "y").await.unwrap();
@@ -139,13 +137,12 @@ mod tests {
             .unwrap();
         assert_eq!(app_count, 0);
         // FK ON DELETE CASCADE drops the matching app_admins row too
-        let admin_after: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM app_admins WHERE app_id = ?",
-        )
-        .bind("y")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let admin_after: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM app_admins WHERE app_id = ?")
+                .bind("y")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(admin_after, 0);
     }
 }

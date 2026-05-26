@@ -126,7 +126,9 @@ mod tests {
 
     async fn fresh_pool() -> SqlitePool {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(pool.clone(), SYSTEM_MIGRATIONS).await.unwrap();
+        apply_migrations(pool.clone(), SYSTEM_MIGRATIONS)
+            .await
+            .unwrap();
         pool
     }
 

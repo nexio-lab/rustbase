@@ -39,7 +39,7 @@ impl Default for SandboxLimits {
     fn default() -> Self {
         Self {
             memory_bytes: Some(64 * 1024 * 1024), // 64 MiB
-            stack_bytes: Some(1 * 1024 * 1024),   //  1 MiB
+            stack_bytes: Some(1024 * 1024),       //  1 MiB
             cpu_time_ms: Some(1_000),             //  1 s
         }
     }

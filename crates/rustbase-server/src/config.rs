@@ -77,11 +77,17 @@ pub fn load() -> Result<ServerConfig> {
     let builder = Config::builder()
         // defaults
         .set_default("listen", default_listen())?
-        .set_default("data_dir", default_data_dir().to_string_lossy().into_owned())?
+        .set_default(
+            "data_dir",
+            default_data_dir().to_string_lossy().into_owned(),
+        )?
         .set_default("realm_pool_cap", default_realm_pool_cap() as i64)?
         .set_default("app_pool_cap", default_app_pool_cap() as i64)?
         .set_default("litestream.enabled", false)?
-        .set_default("litestream.replicate_interval_sec", default_replicate_interval() as i64)?
+        .set_default(
+            "litestream.replicate_interval_sec",
+            default_replicate_interval() as i64,
+        )?
         // file
         .add_source(File::with_name("rustbase").required(false))
         // env: prefix=RUSTBASE, "_" splits prefix from key, "__" splits

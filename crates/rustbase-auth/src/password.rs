@@ -20,8 +20,8 @@ pub fn hash_password(password: &str) -> Result<String> {
 /// `Ok(true)` on match, `Ok(false)` on mismatch, and an error only if the
 /// stored hash is malformed.
 pub fn verify_password(password: &str, stored_hash: &str) -> Result<bool> {
-    let parsed = PasswordHash::new(stored_hash)
-        .map_err(|e| AuthError::PasswordHash(e.to_string()))?;
+    let parsed =
+        PasswordHash::new(stored_hash).map_err(|e| AuthError::PasswordHash(e.to_string()))?;
     Ok(Argon2::default()
         .verify_password(password.as_bytes(), &parsed)
         .is_ok())

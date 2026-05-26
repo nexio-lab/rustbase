@@ -85,8 +85,12 @@ pub async fn create_collection(pool: &SqlitePool, schema: &Schema) -> Result<Col
     })
 }
 
+/// Row shape returned by the `_collections` SELECTs:
+/// `(id, kind, schema_json, created_at, updated_at)`.
+type CollectionRow = (String, String, String, DateTime<Utc>, DateTime<Utc>);
+
 pub async fn find_collection(pool: &SqlitePool, id: &str) -> Result<Option<Collection>> {
-    let row: Option<(String, String, String, DateTime<Utc>, DateTime<Utc>)> = sqlx::query_as(
+    let row: Option<CollectionRow> = sqlx::query_as(
         "SELECT id, kind, schema_json, created_at, updated_at FROM _collections WHERE id = ?",
     )
     .bind(id)
@@ -97,7 +101,7 @@ pub async fn find_collection(pool: &SqlitePool, id: &str) -> Result<Option<Colle
 }
 
 pub async fn list_collections(pool: &SqlitePool) -> Result<Vec<Collection>> {
-    let rows: Vec<(String, String, String, DateTime<Utc>, DateTime<Utc>)> = sqlx::query_as(
+    let rows: Vec<CollectionRow> = sqlx::query_as(
         "SELECT id, kind, schema_json, created_at, updated_at FROM _collections \
          ORDER BY created_at ASC",
     )
@@ -158,10 +162,17 @@ pub async fn patch_collection(
         ));
     }
 
-    let old_by_name: std::collections::BTreeMap<&str, &Field> =
-        existing.schema.fields.iter().map(|f| (f.name.as_str(), f)).collect();
-    let new_by_name: std::collections::BTreeMap<&str, &Field> =
-        desired.fields.iter().map(|f| (f.name.as_str(), f)).collect();
+    let old_by_name: std::collections::BTreeMap<&str, &Field> = existing
+        .schema
+        .fields
+        .iter()
+        .map(|f| (f.name.as_str(), f))
+        .collect();
+    let new_by_name: std::collections::BTreeMap<&str, &Field> = desired
+        .fields
+        .iter()
+        .map(|f| (f.name.as_str(), f))
+        .collect();
 
     // Fields kept on both sides — reject type changes.
     for (name, new_field) in &new_by_name {
@@ -218,14 +229,12 @@ pub async fn patch_collection(
     let schema_json = serde_json::to_string(desired)
         .map_err(|e| DbError::InvalidIdentifier(format!("schema json: {e}")))?;
     let now = Utc::now();
-    sqlx::query(
-        "UPDATE _collections SET schema_json = ?, updated_at = ? WHERE id = ?",
-    )
-    .bind(&schema_json)
-    .bind(now)
-    .bind(desired.id.as_str())
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE _collections SET schema_json = ?, updated_at = ? WHERE id = ?")
+        .bind(&schema_json)
+        .bind(now)
+        .bind(desired.id.as_str())
+        .execute(pool)
+        .await?;
 
     let diff = SchemaDiff {
         added: added.iter().map(|f| f.name.clone()).collect(),
@@ -251,8 +260,9 @@ fn decode_collection(
     row: (String, String, String, DateTime<Utc>, DateTime<Utc>),
 ) -> Result<Collection> {
     let (id, kind_str, schema_json, created_at, updated_at) = row;
-    let kind = parse_collection_kind(&kind_str)
-        .ok_or_else(|| DbError::InvalidIdentifier(format!("unknown collection kind: {kind_str}")))?;
+    let kind = parse_collection_kind(&kind_str).ok_or_else(|| {
+        DbError::InvalidIdentifier(format!("unknown collection kind: {kind_str}"))
+    })?;
     let schema: Schema = serde_json::from_str(&schema_json)
         .map_err(|e| DbError::InvalidIdentifier(format!("schema json: {e}")))?;
     Ok(Collection {
@@ -312,8 +322,9 @@ pub fn is_valid_ident(s: &str) -> bool {
     if !(2..=50).contains(&len) {
         return false;
     }
-    let mut chars = s.chars();
-    let first = chars.next().unwrap();
+    let Some(first) = s.chars().next() else {
+        return false;
+    };
     if !(first.is_ascii_lowercase() || first == '_') {
         return false;
     }
@@ -372,7 +383,9 @@ mod tests {
 
     async fn fresh_pool() -> SqlitePool {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(pool.clone(), APP_MIGRATIONS).await.unwrap();
+        apply_migrations(pool.clone(), APP_MIGRATIONS)
+            .await
+            .unwrap();
         pool
     }
 
@@ -448,7 +461,10 @@ mod tests {
             kind: CollectionKind::Base,
             fields: vec![Field {
                 name: "id".into(),
-                ty: FieldType::Text { min: None, max: None },
+                ty: FieldType::Text {
+                    min: None,
+                    max: None,
+                },
                 required: false,
                 unique: false,
             }],
@@ -518,7 +534,10 @@ mod tests {
     fn fld_text(name: &str) -> Field {
         Field {
             name: name.into(),
-            ty: FieldType::Text { min: None, max: None },
+            ty: FieldType::Text {
+                min: None,
+                max: None,
+            },
             required: false,
             unique: false,
         }
@@ -575,11 +594,10 @@ mod tests {
         // with force the column is dropped
         let (_after, diff) = patch_collection(&pool, &next, true).await.unwrap();
         assert_eq!(diff.dropped, vec!["verified".to_string()]);
-        let cols: Vec<(String,)> =
-            sqlx::query_as("SELECT name FROM pragma_table_info('users')")
-                .fetch_all(&pool)
-                .await
-                .unwrap();
+        let cols: Vec<(String,)> = sqlx::query_as("SELECT name FROM pragma_table_info('users')")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
         let names: Vec<String> = cols.into_iter().map(|c| c.0).collect();
         assert!(!names.contains(&"verified".to_string()));
     }

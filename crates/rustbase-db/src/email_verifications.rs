@@ -117,7 +117,9 @@ mod tests {
 
     async fn setup() -> (SqlitePool, String) {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(pool.clone(), REALM_MIGRATIONS).await.unwrap();
+        apply_migrations(pool.clone(), REALM_MIGRATIONS)
+            .await
+            .unwrap();
         let user = insert_user(&pool, "ada@x.com", "hash").await.unwrap();
         (pool, user.id)
     }
@@ -125,7 +127,9 @@ mod tests {
     #[tokio::test]
     async fn issue_then_consume_marks_consumed_and_returns_user() {
         let (pool, user_id) = setup().await;
-        issue(&pool, "tok-1", &user_id, Duration::hours(1)).await.unwrap();
+        issue(&pool, "tok-1", &user_id, Duration::hours(1))
+            .await
+            .unwrap();
         match consume(&pool, "tok-1").await.unwrap() {
             ConsumeOutcome::Ok { user_id: out } => assert_eq!(out, user_id),
             other => panic!("expected Ok, got {other:?}"),
@@ -137,23 +141,36 @@ mod tests {
     #[tokio::test]
     async fn second_consume_returns_already_consumed() {
         let (pool, user_id) = setup().await;
-        issue(&pool, "tok-2", &user_id, Duration::hours(1)).await.unwrap();
+        issue(&pool, "tok-2", &user_id, Duration::hours(1))
+            .await
+            .unwrap();
         consume(&pool, "tok-2").await.unwrap();
-        assert_eq!(consume(&pool, "tok-2").await.unwrap(), ConsumeOutcome::AlreadyConsumed);
+        assert_eq!(
+            consume(&pool, "tok-2").await.unwrap(),
+            ConsumeOutcome::AlreadyConsumed
+        );
     }
 
     #[tokio::test]
     async fn unknown_token_returns_unknown() {
         let (pool, _user_id) = setup().await;
-        assert_eq!(consume(&pool, "nope").await.unwrap(), ConsumeOutcome::Unknown);
+        assert_eq!(
+            consume(&pool, "nope").await.unwrap(),
+            ConsumeOutcome::Unknown
+        );
     }
 
     #[tokio::test]
     async fn expired_token_returns_expired_and_is_not_marked_consumed() {
         let (pool, user_id) = setup().await;
         // Issue with a NEGATIVE TTL so the row is already expired.
-        issue(&pool, "tok-exp", &user_id, Duration::seconds(-1)).await.unwrap();
-        assert_eq!(consume(&pool, "tok-exp").await.unwrap(), ConsumeOutcome::Expired);
+        issue(&pool, "tok-exp", &user_id, Duration::seconds(-1))
+            .await
+            .unwrap();
+        assert_eq!(
+            consume(&pool, "tok-exp").await.unwrap(),
+            ConsumeOutcome::Expired
+        );
         let row = find(&pool, "tok-exp").await.unwrap().unwrap();
         assert!(row.consumed_at.is_none());
     }
