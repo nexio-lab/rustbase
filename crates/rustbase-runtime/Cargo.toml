@@ -20,5 +20,14 @@ dashmap.workspace = true
 parking_lot.workspace = true
 async-trait.workspace = true
 
+# TypeScript transpile
+swc_common.workspace = true
+swc_ecma_ast.workspace = true
+swc_ecma_codegen.workspace = true
+swc_ecma_parser.workspace = true
+swc_ecma_transforms_base.workspace = true
+swc_ecma_transforms_typescript.workspace = true
+swc_ecma_visit.workspace = true
+
 [dev-dependencies]
 tempfile = "3"
