@@ -3,6 +3,7 @@ use rustbase_core::Mailer;
 use rustbase_db::{AppPoolManager, RealmPoolManager, SystemPool};
 use rustbase_realtime::RealtimeBroker;
 use rustbase_runtime::HookEngine;
+use rustbase_storage::Storage;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,6 +38,11 @@ pub struct AppState {
     /// (generated once on first boot, then re-loaded). Stored as an
     /// `Arc<[u8; 32]>` so handlers can clone the slice cheaply.
     pub oauth_kek: Arc<[u8; 32]>,
+    /// File storage backend. Either a local directory rooted at
+    /// `data_dir` or an S3-compatible bucket — picked by config at
+    /// boot. Handlers use it with scoped keys of the form
+    /// `realms/<realm>/apps/<app>/storage/<file_id>`.
+    pub storage: Storage,
 }
 
 impl AppState {

@@ -19,6 +19,7 @@ rustbase-core.workspace = true
 rustbase-db.workspace = true
 rustbase-realtime.workspace = true
 rustbase-runtime.workspace = true
+rustbase-storage.workspace = true
 tokio.workspace = true
 axum.workspace = true
 config.workspace = true
