@@ -26,7 +26,8 @@
 use async_trait::async_trait;
 use dashmap::DashMap;
 use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt};
-use serde::Serialize;
+use rustbase_core::{EmailMessage, Mailer};
+use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -221,6 +222,7 @@ pub struct AppHooks {
     #[allow(dead_code)]
     rt: AsyncRuntime,
     records: Option<Arc<dyn RecordsBridge>>,
+    mailer: Option<Arc<dyn Mailer>>,
     limits: SandboxLimits,
     clock: CpuClock,
 }
@@ -242,6 +244,27 @@ impl AppHooks {
         records: Option<Arc<dyn RecordsBridge>>,
         limits: SandboxLimits,
     ) -> Result<Self> {
+        Self::build(records, None, limits).await
+    }
+
+    /// Like `with_records_and_limits` but also wires a mailer so user
+    /// hooks can call `$app.mailer.send(...)`. The mailer is `None` ⇒
+    /// the JS surface is still present but every call throws "no
+    /// mailer bound", which keeps the shim shape consistent across
+    /// dev (LogMailer) and bare test (no mailer) runs.
+    pub async fn with_records_mailer_and_limits(
+        records: Option<Arc<dyn RecordsBridge>>,
+        mailer: Option<Arc<dyn Mailer>>,
+        limits: SandboxLimits,
+    ) -> Result<Self> {
+        Self::build(records, mailer, limits).await
+    }
+
+    async fn build(
+        records: Option<Arc<dyn RecordsBridge>>,
+        mailer: Option<Arc<dyn Mailer>>,
+        limits: SandboxLimits,
+    ) -> Result<Self> {
         let rt = AsyncRuntime::new()?;
         let ctx = AsyncContext::full(&rt).await?;
         let clock = CpuClock::new();
@@ -249,6 +272,7 @@ impl AppHooks {
             rt,
             ctx,
             records,
+            mailer,
             limits,
             clock,
         };
@@ -600,6 +624,7 @@ impl AppHooks {
         // up in the server's logs. Test-only callers can still drain
         // the pure-JS __rb_log array.
         let records = self.records.clone();
+        let mailer = self.mailer.clone();
         self.ctx
             .with(move |ctx| {
                 use rquickjs::Function;
@@ -617,6 +642,12 @@ impl AppHooks {
                     register_records_natives(ctx.clone(), bridge)?;
                 }
 
+                // $app.mailer.send binding. Without a mailer the shim
+                // throws "no mailer bound" — same shape as records.
+                if let Some(m) = mailer {
+                    register_mailer_native(ctx.clone(), m)?;
+                }
+
                 Ok::<_, rquickjs::Error>(())
             })
             .await?;
@@ -627,7 +658,7 @@ impl AppHooks {
                 const ERR = '__rb_err:';
                 function call(name, args) {
                     if (typeof globalThis[name] !== 'function') {
-                        throw new Error("$app.records." + name + " is not available (no bridge bound)");
+                        throw new Error(name + " is not available (no bridge bound)");
                     }
                     const s = globalThis[name].apply(null, args);
                     if (typeof s === 'string' && s.indexOf(ERR) === 0) {
@@ -654,6 +685,28 @@ impl AppHooks {
                     },
                     delete(collection, id) {
                         call('__rb_records_delete', [collection, id]);
+                    },
+                };
+                $app.mailer = {
+                    /**
+                     * Send one outbound email synchronously from a hook.
+                     *
+                     *   $app.mailer.send({
+                     *     from: "no-reply@app.com",
+                     *     to:   "alice@example.com",
+                     *     subject: "hi",
+                     *     text: "plain body",
+                     *     html: "<p>optional html body</p>",  // optional
+                     *   });
+                     *
+                     * Throws if no mailer is bound (test contexts) or if
+                     * the underlying transport rejects the message.
+                     */
+                    send(msg) {
+                        if (!msg || typeof msg !== 'object') {
+                            throw new Error('$app.mailer.send: message must be an object');
+                        }
+                        call('__rb_mailer_send', [JSON.stringify(msg)]);
                     },
                 };
             })();
@@ -813,6 +866,54 @@ fn register_records_natives(
     Ok(())
 }
 
+/// JSON shape the JS shim hands us for `$app.mailer.send(msg)`.
+#[derive(Deserialize)]
+struct MailerSendArgs {
+    from: String,
+    to: String,
+    subject: String,
+    text: String,
+    #[serde(default)]
+    html: Option<String>,
+}
+
+/// Bind `__rb_mailer_send` so the JS shim's `$app.mailer.send(msg)`
+/// reaches `Arc<dyn Mailer>`. The JS side serialises the message
+/// object; this side parses, dispatches the async `send` on the
+/// current tokio runtime via `block_in_place + block_on`, and
+/// returns `"null"` on success or `__rb_err:<reason>` on failure.
+fn register_mailer_native(
+    ctx: rquickjs::Ctx<'_>,
+    mailer: Arc<dyn Mailer>,
+) -> std::result::Result<(), rquickjs::Error> {
+    use rquickjs::Function;
+    const ERR: &str = "__rb_err:";
+
+    let send_fn = Function::new(ctx.clone(), move |msg_json: String| -> String {
+        let parsed: MailerSendArgs = match serde_json::from_str(&msg_json) {
+            Ok(v) => v,
+            Err(e) => return format!("{ERR}invalid message: {e}"),
+        };
+        let mut msg = EmailMessage::new(parsed.from, parsed.to, parsed.subject, parsed.text);
+        if let Some(h) = parsed.html {
+            msg = msg.with_html(h);
+        }
+        let mailer = mailer.clone();
+        // Hooks run on a tokio worker; block_in_place + block_on is the
+        // sanctioned way to call async code from a sync FFI shim.
+        let res = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async move { mailer.send(msg).await })
+        });
+        match res {
+            Ok(()) => "null".to_string(),
+            Err(e) => format!("{ERR}{e}"),
+        }
+    })?
+    .with_name("__rb_mailer_send")?;
+    ctx.globals().set("__rb_mailer_send", send_fn)?;
+    Ok(())
+}
+
 /// Engine bound to the whole server. Holds one `AppHooks` per
 /// (realm, app) — lazily created on first hook load. `Clone` is
 /// cheap; the inner map is `Arc`'d.
@@ -828,16 +929,22 @@ impl HookEngine {
 
     /// Load (or reload) hooks for `(realm, app)` from `dir`. Existing
     /// state for this app is discarded — a fresh `AppHooks` is built
-    /// and any previously-registered handlers vanish. The optional
-    /// `bridge` exposes `$app.records.*` to user code.
+    /// and any previously-registered handlers vanish.
+    ///
+    /// `bridge` exposes `$app.records.*` to user code; `mailer`
+    /// exposes `$app.mailer.send(...)`. Either can be `None` — the
+    /// matching JS surface throws "no bridge bound" when invoked.
     pub async fn load_app(
         &self,
         realm: &str,
         app: &str,
         dir: &Path,
         bridge: Option<Arc<dyn RecordsBridge>>,
+        mailer: Option<Arc<dyn Mailer>>,
     ) -> Result<usize> {
-        let hooks = AppHooks::with_records(bridge).await?;
+        let hooks =
+            AppHooks::with_records_mailer_and_limits(bridge, mailer, SandboxLimits::default())
+                .await?;
         let loaded = hooks.load_dir(dir).await?;
         self.apps
             .insert((realm.to_string(), app.to_string()), Arc::new(hooks));
@@ -1059,7 +1166,7 @@ mod tests {
         std::fs::write(dir.path().join("ignored.txt"), "not js").unwrap();
         let engine = HookEngine::new();
         let n = engine
-            .load_app("acme", "mobile", dir.path(), None)
+            .load_app("acme", "mobile", dir.path(), None, None)
             .await
             .unwrap();
         assert_eq!(n, 1);
@@ -1295,7 +1402,7 @@ mod tests {
 
         let engine = HookEngine::new();
         let n = engine
-            .load_app("acme", "mobile", dir.path(), None)
+            .load_app("acme", "mobile", dir.path(), None, None)
             .await
             .unwrap();
         assert_eq!(
@@ -1336,7 +1443,7 @@ mod tests {
         .unwrap();
         let engine = HookEngine::new();
         let n = engine
-            .load_app("acme", "mobile", dir.path(), None)
+            .load_app("acme", "mobile", dir.path(), None, None)
             .await
             .unwrap();
         assert_eq!(n, 1);
@@ -1543,6 +1650,171 @@ mod tests {
             creates[0].1.get("action").and_then(|v| v.as_str()),
             Some("x")
         );
+    }
+
+    // ------------- $app.mailer.send via mock mailer -------------
+
+    /// Minimal in-memory `Mailer` for runtime tests. Captures every
+    /// send in a shared vec; never errors.
+    struct MockMailer {
+        sent: parking_lot::Mutex<Vec<EmailMessage>>,
+    }
+    impl MockMailer {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                sent: parking_lot::Mutex::new(Vec::new()),
+            })
+        }
+        fn drain(&self) -> Vec<EmailMessage> {
+            std::mem::take(&mut *self.sent.lock())
+        }
+    }
+    #[async_trait]
+    impl Mailer for MockMailer {
+        async fn send(
+            &self,
+            msg: EmailMessage,
+        ) -> std::result::Result<(), rustbase_core::MailerError> {
+            self.sent.lock().push(msg);
+            Ok(())
+        }
+    }
+
+    /// A `Mailer` that always returns Rejected — used to prove errors
+    /// propagate from JS as thrown exceptions, not silent successes.
+    struct RejectingMailer;
+    #[async_trait]
+    impl Mailer for RejectingMailer {
+        async fn send(
+            &self,
+            _msg: EmailMessage,
+        ) -> std::result::Result<(), rustbase_core::MailerError> {
+            Err(rustbase_core::MailerError::Rejected("smtp said no".into()))
+        }
+    }
+
+    async fn hooks_with_mailer(mailer: Arc<dyn Mailer>) -> AppHooks {
+        AppHooks::with_records_mailer_and_limits(None, Some(mailer), SandboxLimits::default())
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn mailer_send_routes_through_to_bridge() {
+        let mock = MockMailer::new();
+        let hooks = hooks_with_mailer(mock.clone() as Arc<dyn Mailer>).await;
+        hooks
+            .eval(
+                r#"
+                $app.mailer.send({
+                    from: "no-reply@app.test",
+                    to: "ada@example.com",
+                    subject: "hi",
+                    text: "body line",
+                });
+                $app.log("sent");
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        assert_eq!(hooks.drain_logs().await.unwrap(), vec!["sent".to_string()]);
+        let sent = mock.drain();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].from, "no-reply@app.test");
+        assert_eq!(sent[0].to, "ada@example.com");
+        assert_eq!(sent[0].subject, "hi");
+        assert_eq!(sent[0].text, "body line");
+        assert!(sent[0].html.is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn mailer_send_preserves_optional_html() {
+        let mock = MockMailer::new();
+        let hooks = hooks_with_mailer(mock.clone() as Arc<dyn Mailer>).await;
+        hooks
+            .eval(
+                r#"
+                $app.mailer.send({
+                    from: "a@x", to: "b@y", subject: "s",
+                    text: "plain", html: "<p>fancy</p>",
+                });
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        let sent = mock.drain();
+        assert_eq!(sent[0].html.as_deref(), Some("<p>fancy</p>"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn mailer_send_throws_in_js_when_transport_rejects() {
+        let hooks = hooks_with_mailer(Arc::new(RejectingMailer) as Arc<dyn Mailer>).await;
+        hooks
+            .eval(
+                r#"
+                try {
+                    $app.mailer.send({from:"a", to:"b", subject:"s", text:"t"});
+                    $app.log("unexpected");
+                } catch (e) {
+                    $app.log("caught: " + e.message);
+                }
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        let logs = hooks.drain_logs().await.unwrap();
+        assert_eq!(logs.len(), 1);
+        assert!(logs[0].starts_with("caught:"), "got: {logs:?}");
+        assert!(logs[0].contains("smtp said no"), "got: {logs:?}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn mailer_send_rejects_non_object_arg() {
+        let mock = MockMailer::new();
+        let hooks = hooks_with_mailer(mock.clone() as Arc<dyn Mailer>).await;
+        hooks
+            .eval(
+                r#"
+                try {
+                    $app.mailer.send("not an object");
+                    $app.log("unexpected");
+                } catch (e) {
+                    $app.log("caught: " + e.message);
+                }
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        assert!(mock.drain().is_empty(), "transport must not see the call");
+        let logs = hooks.drain_logs().await.unwrap();
+        assert!(logs[0].starts_with("caught:"), "got: {logs:?}");
+    }
+
+    #[tokio::test]
+    async fn mailer_unavailable_when_no_bridge_throws() {
+        // AppHooks with no mailer bound: the JS shim is still present
+        // (consistent surface across dev / test) but every call throws.
+        let hooks = AppHooks::new().await.unwrap();
+        hooks
+            .eval(
+                r#"
+                try {
+                    $app.mailer.send({from:"a", to:"b", subject:"s", text:"t"});
+                    $app.log("unexpected");
+                } catch (e) {
+                    $app.log("caught: " + e.message);
+                }
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        let logs = hooks.drain_logs().await.unwrap();
+        assert!(logs[0].starts_with("caught:"), "got: {logs:?}");
     }
 
     #[tokio::test]

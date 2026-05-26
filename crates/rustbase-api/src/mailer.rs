@@ -248,6 +248,49 @@ mod tests {
             .expect("MailHog must accept the message");
     }
 
+    /// End-to-end: a JS hook calls `$app.mailer.send(...)` which goes
+    /// through SmtpMailer → lettre → MailHog. Same opt-in as the
+    /// bare SMTP smoke test: `--ignored`, with MailHog running.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "requires MailHog at localhost:1025 (infra/docker-compose.yml)"]
+    async fn hook_mailer_send_delivers_to_mailhog() {
+        use rustbase_core::Mailer;
+        use rustbase_runtime::{AppHooks, SandboxLimits};
+        use std::sync::Arc;
+
+        let cfg = SmtpConfig {
+            host: "localhost".into(),
+            port: 1025,
+            username: None,
+            password: None,
+            tls: SmtpTls::None,
+        };
+        let smtp: Arc<dyn Mailer> = Arc::new(SmtpMailer::new(&cfg).unwrap());
+        let hooks =
+            AppHooks::with_records_mailer_and_limits(None, Some(smtp), SandboxLimits::default())
+                .await
+                .unwrap();
+
+        let stamp = chrono::Utc::now().timestamp_micros();
+        let src = format!(
+            r#"
+            $app.mailer.send({{
+                from: "no-reply@rustbase.local",
+                to:   "hook-test@example.com",
+                subject: "from $app.mailer.send #{stamp}",
+                text: "this came from a hook"
+            }});
+            $app.log("dispatched");
+            "#
+        );
+        hooks
+            .eval(&src, "<hook-smoke>")
+            .await
+            .expect("hook eval must succeed");
+        let logs = hooks.drain_logs().await.unwrap();
+        assert_eq!(logs, vec!["dispatched".to_string()]);
+    }
+
     #[tokio::test]
     async fn smtp_mailer_rejects_malformed_addresses_without_network() {
         // Pointed at a sink that will never accept; reaching transport

@@ -92,7 +92,13 @@ pub async fn create(
     .into_sync();
     if let Err(e) = state
         .hooks
-        .load_app(&realm, &req.id, &hooks_dir, Some(bridge))
+        .load_app(
+            &realm,
+            &req.id,
+            &hooks_dir,
+            Some(bridge),
+            Some(state.mailer.clone()),
+        )
         .await
     {
         tracing::warn!(realm = %realm, app = %req.id, error = %e, "loading hooks failed");
