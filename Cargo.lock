@@ -1839,6 +1839,7 @@ dependencies = [
 name = "rustbase-api"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
  "chrono",
  "futures",
@@ -1930,6 +1931,7 @@ dependencies = [
 name = "rustbase-runtime"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "dashmap",
  "parking_lot",
  "rquickjs",

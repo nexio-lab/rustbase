@@ -114,7 +114,17 @@ async fn load_all_hooks(state: &rustbase_api::AppState) -> Result<()> {
                 .join("hooks")
                 .join(realm_id.as_str())
                 .join(app_id.as_str());
-            match state.hooks.load_app(&realm.id, &app.id, &dir).await {
+            let bridge = rustbase_api::hook_bridge::ApiBridge::new(
+                realm_id.clone(),
+                app_id.clone(),
+                state.apps.clone(),
+            )
+            .into_sync();
+            match state
+                .hooks
+                .load_app(&realm.id, &app.id, &dir, Some(bridge))
+                .await
+            {
                 Ok(n) if n > 0 => {
                     tracing::info!(
                         realm = %realm.id,
