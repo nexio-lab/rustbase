@@ -1,4 +1,5 @@
 use rustbase_auth::{RevocationSet, SigningKey};
+use rustbase_core::Mailer;
 use rustbase_db::{AppPoolManager, RealmPoolManager, SystemPool};
 use rustbase_realtime::RealtimeBroker;
 use rustbase_runtime::HookEngine;
@@ -27,6 +28,9 @@ pub struct AppState {
     /// `true` exactly once when the setup wizard completes; on subsequent
     /// boots, populated from the DB count.
     pub initialized: Arc<AtomicBool>,
+    /// Outbound mail. In tests this is a `LogMailer` that captures
+    /// messages in memory; in production it's an SMTP-backed impl.
+    pub mailer: Arc<dyn Mailer>,
 }
 
 impl AppState {

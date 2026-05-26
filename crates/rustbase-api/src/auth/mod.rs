@@ -10,6 +10,7 @@ pub mod extract;
 pub mod login;
 pub mod refresh;
 pub mod register;
+pub mod verify_email;
 
 pub use extract::{AdminAuth, PrincipalAuth};
 pub use login::{master_admin_login, realm_admin_login, user_login};

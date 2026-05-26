@@ -76,6 +76,16 @@ pub async fn record_last_login(pool: &SqlitePool, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Flip `verified` to true. Idempotent: re-running on an already-
+/// verified user is a no-op write.
+pub async fn mark_verified(pool: &SqlitePool, id: &str) -> Result<()> {
+    sqlx::query("UPDATE users SET verified = 1 WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

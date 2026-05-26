@@ -267,6 +267,20 @@ pub const REALM_MIGRATIONS: &[Migration] = &[Migration::new(
     );
     CREATE INDEX audit_log_ts ON audit_log(ts);
     "#,
+),
+Migration::new(
+    "20260526_000001_email_verifications",
+    MigrationScope::Realm,
+    r#"
+    CREATE TABLE _email_verifications (
+        token TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        issued_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT
+    );
+    CREATE INDEX email_verifications_user ON _email_verifications(user_id);
+    "#,
 )];
 
 pub const APP_MIGRATIONS: &[Migration] = &[
