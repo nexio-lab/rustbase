@@ -65,6 +65,30 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Pick a mailer: SMTP if `[mail.smtp]` is configured, otherwise a
+    // capturing LogMailer that only writes to the tracing log. A bad
+    // SMTP config aborts boot — silently downgrading would hide the
+    // misconfiguration until the first verify-email request.
+    let mailer: Arc<dyn rustbase_core::Mailer> = match &cfg.mail.smtp {
+        Some(smtp_cfg) => {
+            let smtp = rustbase_api::mailer::SmtpMailer::new(smtp_cfg)?;
+            tracing::info!(
+                host = %smtp_cfg.host,
+                port = smtp_cfg.port,
+                tls = ?smtp_cfg.tls,
+                "mail: SMTP transport ready"
+            );
+            Arc::new(smtp)
+        }
+        None => {
+            tracing::info!(
+                "mail: no [mail.smtp] configured; using LogMailer \
+                 (messages captured + logged, not delivered)"
+            );
+            Arc::new(rustbase_api::mailer::LogMailer::new())
+        }
+    };
+
     let state = AppState {
         system: Arc::new(system),
         realms: Arc::new(RealmPoolManager::new(
@@ -78,9 +102,7 @@ async fn main() -> Result<()> {
         hooks: HookEngine::new(),
         data_dir: Arc::new(cfg.data_dir.clone()),
         initialized: Arc::new(AtomicBool::new(already_initialized)),
-        // No SMTP yet — boot with a capturing mailer that logs every
-        // message. Production SMTP support lands as a follow-up.
-        mailer: Arc::new(rustbase_api::mailer::LogMailer::new()),
+        mailer,
     };
 
     // Load JS hooks for every (realm, app) that exists on disk.

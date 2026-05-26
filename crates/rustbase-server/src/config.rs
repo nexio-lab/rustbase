@@ -12,6 +12,7 @@
 
 use anyhow::Result;
 use config::{Config, Environment, File};
+use rustbase_api::mailer::SmtpConfig;
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -27,6 +28,16 @@ pub struct ServerConfig {
     pub app_pool_cap: usize,
     #[serde(default)]
     pub litestream: LitestreamConfig,
+    /// `[mail]` section. Absent → server boots with a `LogMailer`.
+    #[serde(default)]
+    pub mail: MailConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct MailConfig {
+    /// `[mail.smtp]`. Present means: use SmtpMailer; absent → LogMailer.
+    #[serde(default)]
+    pub smtp: Option<SmtpConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -69,6 +80,7 @@ impl Default for ServerConfig {
             realm_pool_cap: default_realm_pool_cap(),
             app_pool_cap: default_app_pool_cap(),
             litestream: LitestreamConfig::default(),
+            mail: MailConfig::default(),
         }
     }
 }

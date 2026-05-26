@@ -39,6 +39,9 @@ jsonwebtoken = "9"
 argon2 = "0.5"
 rand_core = { version = "0.6", features = ["getrandom"] }
 
+# mail
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1", "tokio1-rustls-tls", "builder"] }
+
 # serde
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
