@@ -153,7 +153,13 @@ async fn load_all_hooks(state: &rustbase_api::AppState) -> Result<()> {
             .into_sync();
             match state
                 .hooks
-                .load_app(&realm.id, &app.id, &dir, Some(bridge))
+                .load_app(
+                    &realm.id,
+                    &app.id,
+                    &dir,
+                    Some(bridge),
+                    Some(state.mailer.clone()),
+                )
                 .await
             {
                 Ok(n) if n > 0 => {
