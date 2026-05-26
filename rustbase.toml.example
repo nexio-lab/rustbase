@@ -18,3 +18,18 @@ enabled = false
 # bucket = "s3://my-rustbase-backups"
 # prefix = "prod"
 # replicate_interval_sec = 10
+
+# Optional SMTP relay. Absent → server uses a LogMailer (messages are
+# captured + traced but never delivered) — fine for dev runs that
+# don't need real email yet.
+#
+# For a local dev relay, bring up MailHog:
+#     docker compose -f infra/docker-compose.yml up -d
+# Then uncomment:
+#
+# [mail.smtp]
+# host = "localhost"
+# port = 1025
+# tls  = "none"          # one of: "none" | "start_tls" | "implicit"
+# # username = "..."     # SASL creds optional; MailHog accepts anonymous
+# # password = "..."
