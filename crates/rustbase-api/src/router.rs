@@ -7,8 +7,8 @@ use tower_http::trace::TraceLayer;
 use crate::access_rules;
 use crate::apps;
 use crate::auth::{
-    master_admin_login, master_admin_refresh, realm_admin_login, realm_admin_refresh,
-    user_login, user_refresh, user_register,
+    master_admin_login, master_admin_refresh, realm_admin_login, realm_admin_refresh, user_login,
+    user_refresh, user_register,
 };
 use crate::collections;
 use crate::files;
@@ -34,12 +34,23 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/realms", get(realms::list).post(realms::create))
         .route(
             "/api/realms/{id}",
-            get(realms::get).patch(realms::update).delete(realms::delete),
+            get(realms::get)
+                .patch(realms::update)
+                .delete(realms::delete),
         )
         .route("/api/realms/{realm}/admins", post(realm_admins::create))
-        .route("/api/realms/{realm}/auth/admin/login", post(realm_admin_login))
-        .route("/api/realms/{realm}/auth/refresh", post(realm_admin_refresh))
-        .route("/api/realms/{realm}/auth/users/register", post(user_register))
+        .route(
+            "/api/realms/{realm}/auth/admin/login",
+            post(realm_admin_login),
+        )
+        .route(
+            "/api/realms/{realm}/auth/refresh",
+            post(realm_admin_refresh),
+        )
+        .route(
+            "/api/realms/{realm}/auth/users/register",
+            post(user_register),
+        )
         .route("/api/realms/{realm}/auth/users/login", post(user_login))
         .route("/api/realms/{realm}/auth/users/refresh", post(user_refresh))
         .route(
@@ -120,10 +131,7 @@ pub fn build_router(state: AppState) -> Router {
                 .put(policies::system_put)
                 .delete(policies::system_delete),
         )
-        .route(
-            "/api/realms/{realm}/policies",
-            get(policies::realm_list),
-        )
+        .route("/api/realms/{realm}/policies", get(policies::realm_list))
         .route(
             "/api/realms/{realm}/policies/{field}",
             get(policies::realm_get)
@@ -172,7 +180,9 @@ mod tests {
     async fn fresh_state() -> (AppState, tempfile::TempDir) {
         let dir = tempdir().unwrap();
         let system = SystemPool::open(dir.path()).await.unwrap();
-        apply_migrations(system.pool().clone(), SYSTEM_MIGRATIONS).await.unwrap();
+        apply_migrations(system.pool().clone(), SYSTEM_MIGRATIONS)
+            .await
+            .unwrap();
         ensure_master_realm(system.pool()).await.unwrap();
         let data_dir = dir.path().to_path_buf();
         let state = AppState {
@@ -199,7 +209,10 @@ mod tests {
     async fn healthz_returns_uninitialized_on_fresh_install() {
         let (state, _dir) = fresh_state().await;
         let app = build_router(state);
-        let req = Request::builder().uri("/healthz").body(Body::empty()).unwrap();
+        let req = Request::builder()
+            .uri("/healthz")
+            .body(Body::empty())
+            .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let j = json_body(resp).await;
@@ -245,7 +258,10 @@ mod tests {
 
         // Healthz now reports initialized=true.
         let app2 = build_router(state.clone());
-        let req = Request::builder().uri("/healthz").body(Body::empty()).unwrap();
+        let req = Request::builder()
+            .uri("/healthz")
+            .body(Body::empty())
+            .unwrap();
         let resp = app2.oneshot(req).await.unwrap();
         let j = json_body(resp).await;
         assert_eq!(j["initialized"], true);
@@ -311,9 +327,7 @@ mod tests {
 
     // ------------- auth flow tests -------------
 
-    async fn initialized_state_with_admin(
-        password: &str,
-    ) -> (AppState, tempfile::TempDir, String) {
+    async fn initialized_state_with_admin(password: &str) -> (AppState, tempfile::TempDir, String) {
         let (state, dir) = fresh_state().await;
         let hash = rustbase_auth::hash_password(password).unwrap();
         let admin = rustbase_db::admins::insert_master_admin(
@@ -605,12 +619,7 @@ mod tests {
         let token = master_token(&state, &admin_id);
         let app = build_router(state);
         let resp = app
-            .oneshot(req_with_auth(
-                "GET",
-                "/api/realms/nope",
-                Some(&token),
-                None,
-            ))
+            .oneshot(req_with_auth("GET", "/api/realms/nope", Some(&token), None))
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -1421,12 +1430,7 @@ mod tests {
     /// Bootstrap to: realm 'acme' + open app 'mobile' + collection
     /// 'notes' + one registered user 'u@acme'. Returns (state, dir,
     /// master_token, user_access_token).
-    async fn state_with_collection_and_user() -> (
-        AppState,
-        tempfile::TempDir,
-        String,
-        String,
-    ) {
+    async fn state_with_collection_and_user() -> (AppState, tempfile::TempDir, String, String) {
         let (state, dir, tok) = state_with_app_and_collection().await;
         let row: (String,) = sqlx::query_as("SELECT id FROM master_admins LIMIT 1")
             .fetch_one(state.system.pool())
@@ -1505,7 +1509,11 @@ mod tests {
     /// downcast `Arc<dyn Mailer>` from AppState to read the body of
     /// the captured LogMailer message — the row that backs the email
     /// is the same string.
-    async fn read_pending_verification_token(state: &AppState, realm: &str, user_email: &str) -> String {
+    async fn read_pending_verification_token(
+        state: &AppState,
+        realm: &str,
+        user_email: &str,
+    ) -> String {
         let pool = state
             .realms
             .pool_for(&rustbase_core::RealmId::from(realm.to_string()))
@@ -1853,8 +1861,7 @@ mod tests {
 
     #[tokio::test]
     async fn open_list_rule_lets_user_read() {
-        let (state, _dir, master_tok, user_tok) =
-            state_with_collection_and_user().await;
+        let (state, _dir, master_tok, user_tok) = state_with_collection_and_user().await;
         // master opens 'list' rule
         let app = build_router(state.clone());
         let resp = app
@@ -1884,8 +1891,7 @@ mod tests {
 
     #[tokio::test]
     async fn user_in_one_realm_cannot_read_another_realms_records() {
-        let (state, _dir, master_tok, user_tok) =
-            state_with_collection_and_user().await;
+        let (state, _dir, master_tok, user_tok) = state_with_collection_and_user().await;
         // master creates widgetco with an OPEN notes collection
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
@@ -1943,8 +1949,7 @@ mod tests {
 
     #[tokio::test]
     async fn template_rule_scopes_user_to_own_rows() {
-        let (state, _dir, master_tok, user_tok) =
-            state_with_collection_and_user().await;
+        let (state, _dir, master_tok, user_tok) = state_with_collection_and_user().await;
 
         // Add an `owner` text field to 'notes' so the rule has something to bind to.
         let app = build_router(state.clone());
@@ -1981,18 +1986,17 @@ mod tests {
 
         // Seed: one record owned by our user, one owned by someone else.
         let user_id: String = {
-            let row: (String,) =
-                sqlx::query_as("SELECT id FROM users WHERE email = ?")
-                    .bind("u@acme.com")
-                    .fetch_one(
-                        &state
-                            .realms
-                            .pool_for(&rustbase_core::RealmId::from("acme"))
-                            .await
-                            .unwrap(),
-                    )
-                    .await
-                    .unwrap();
+            let row: (String,) = sqlx::query_as("SELECT id FROM users WHERE email = ?")
+                .bind("u@acme.com")
+                .fetch_one(
+                    &state
+                        .realms
+                        .pool_for(&rustbase_core::RealmId::from("acme"))
+                        .await
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
             row.0
         };
         let app = build_router(state.clone());
@@ -2046,8 +2050,7 @@ mod tests {
 
     #[tokio::test]
     async fn template_rule_scoped_get_returns_404_for_unowned() {
-        let (state, _dir, master_tok, user_tok) =
-            state_with_collection_and_user().await;
+        let (state, _dir, master_tok, user_tok) = state_with_collection_and_user().await;
 
         // Replace notes with an owner field.
         let app = build_router(state.clone());
@@ -2094,9 +2097,7 @@ mod tests {
             let app = build_router(state.clone());
             app.oneshot(req_with_auth(
                 "PUT",
-                &format!(
-                    "/api/realms/acme/apps/mobile/collections/notes/access_rules/{action}"
-                ),
+                &format!("/api/realms/acme/apps/mobile/collections/notes/access_rules/{action}"),
                 Some(&master_tok),
                 Some(&serde_json::json!({"filter":"owner = {{request.auth.id}}"})),
             ))
@@ -2120,8 +2121,7 @@ mod tests {
 
     #[tokio::test]
     async fn template_with_unknown_placeholder_is_400() {
-        let (state, _dir, master_tok, user_tok) =
-            state_with_collection_and_user().await;
+        let (state, _dir, master_tok, user_tok) = state_with_collection_and_user().await;
 
         // Open list with a bogus placeholder.
         let app = build_router(state.clone());
@@ -2347,11 +2347,10 @@ mod tests {
         let _ = master_admin_id;
 
         // simpler: derive the master id from the inserted row
-        let row: (String,) =
-            sqlx::query_as("SELECT id FROM master_admins LIMIT 1")
-                .fetch_one(state.system.pool())
-                .await
-                .unwrap();
+        let row: (String,) = sqlx::query_as("SELECT id FROM master_admins LIMIT 1")
+            .fetch_one(state.system.pool())
+            .await
+            .unwrap();
         let master_tok = master_token(&state, &row.0);
 
         let app = build_router(state.clone());

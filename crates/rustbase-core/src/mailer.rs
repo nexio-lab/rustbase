@@ -68,8 +68,7 @@ mod tests {
 
     #[test]
     fn message_builder_round_trips_html() {
-        let m = EmailMessage::new("a@x", "b@y", "hi", "hello")
-            .with_html("<p>hello</p>");
+        let m = EmailMessage::new("a@x", "b@y", "hi", "hello").with_html("<p>hello</p>");
         assert_eq!(m.html.as_deref(), Some("<p>hello</p>"));
         assert_eq!(m.from, "a@x");
     }

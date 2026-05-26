@@ -25,11 +25,10 @@ use rand_core::{OsRng, RngCore};
 pub fn new_refresh_token() -> String {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);
-    use std::fmt::Write;
     let mut out = String::with_capacity(5 + 64);
     out.push_str("rfsh_");
     for b in &bytes {
-        write!(&mut out, "{b:02x}").unwrap();
+        out.push_str(&format!("{b:02x}"));
     }
     out
 }

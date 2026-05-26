@@ -83,11 +83,7 @@ pub async fn create(
     apply_migrations(app_pool, APP_MIGRATIONS).await?;
 
     // Pick up any JS hooks dropped on disk before the app was created.
-    let hooks_dir = state
-        .data_dir
-        .join("hooks")
-        .join(&realm)
-        .join(&req.id);
+    let hooks_dir = state.data_dir.join("hooks").join(&realm).join(&req.id);
     let bridge = crate::hook_bridge::ApiBridge::new(
         RealmId::from(realm.clone()),
         AppId::from(req.id.clone()),
@@ -132,15 +128,17 @@ pub async fn update(
     require_realm_exists(&state, &realm).await?;
 
     let pool = state.realms.pool_for(&RealmId::from(realm.clone())).await?;
-    rename_app(&pool, &app, &req.name).await.map_err(|e| match e {
-        rustbase_db::DbError::Sqlx(sqlx::Error::RowNotFound) => {
-            ApiError::Core(CoreError::AppNotFound {
-                realm: realm.clone(),
-                app: app.clone(),
-            })
-        }
-        other => ApiError::from(other),
-    })?;
+    rename_app(&pool, &app, &req.name)
+        .await
+        .map_err(|e| match e {
+            rustbase_db::DbError::Sqlx(sqlx::Error::RowNotFound) => {
+                ApiError::Core(CoreError::AppNotFound {
+                    realm: realm.clone(),
+                    app: app.clone(),
+                })
+            }
+            other => ApiError::from(other),
+        })?;
 
     let row = find_app(&pool, &app)
         .await?
@@ -160,14 +158,12 @@ pub async fn delete(
     let app_id = AppId::from(app.clone());
     let realm_pool = state.realms.pool_for(&realm_id).await?;
 
-    find_app(&realm_pool, &app)
-        .await?
-        .ok_or_else(|| {
-            ApiError::Core(CoreError::AppNotFound {
-                realm: realm.clone(),
-                app: app.clone(),
-            })
-        })?;
+    find_app(&realm_pool, &app).await?.ok_or_else(|| {
+        ApiError::Core(CoreError::AppNotFound {
+            realm: realm.clone(),
+            app: app.clone(),
+        })
+    })?;
 
     state.apps.evict(&realm_id, &app_id);
     delete_app(&realm_pool, &app).await?;

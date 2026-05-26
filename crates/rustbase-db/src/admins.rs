@@ -201,13 +201,17 @@ mod tests {
 
     async fn system_pool() -> SqlitePool {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(pool.clone(), SYSTEM_MIGRATIONS).await.unwrap();
+        apply_migrations(pool.clone(), SYSTEM_MIGRATIONS)
+            .await
+            .unwrap();
         pool
     }
 
     async fn realm_pool() -> SqlitePool {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(pool.clone(), REALM_MIGRATIONS).await.unwrap();
+        apply_migrations(pool.clone(), REALM_MIGRATIONS)
+            .await
+            .unwrap();
         pool
     }
 
@@ -241,11 +245,10 @@ mod tests {
     #[tokio::test]
     async fn delete_master_admin_reports_missing() {
         let pool = system_pool().await;
-        let err = delete_master_admin(&pool, "does-not-exist").await.unwrap_err();
-        assert!(matches!(
-            err,
-            DbError::Sqlx(sqlx::Error::RowNotFound)
-        ));
+        let err = delete_master_admin(&pool, "does-not-exist")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, DbError::Sqlx(sqlx::Error::RowNotFound)));
     }
 
     #[tokio::test]

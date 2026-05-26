@@ -20,7 +20,10 @@ use crate::state::AppState;
 /// Returns `None` if the header is missing; only signature / expiry /
 /// revocation errors are surfaced.
 fn extract_claims(parts: &Parts, state: &AppState) -> Result<Option<Claims>, ApiError> {
-    let Some(header) = parts.headers.get("authorization").and_then(|h| h.to_str().ok())
+    let Some(header) = parts
+        .headers
+        .get("authorization")
+        .and_then(|h| h.to_str().ok())
     else {
         return Ok(None);
     };
@@ -103,8 +106,8 @@ impl FromRequestParts<AppState> for AdminAuth {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
-        let claims = extract_claims(parts, state)?
-            .ok_or(ApiError::Core(CoreError::Unauthorized))?;
+        let claims =
+            extract_claims(parts, state)?.ok_or(ApiError::Core(CoreError::Unauthorized))?;
         if matches!(claims.role, TokenRole::User) {
             return Err(ApiError::Core(CoreError::Forbidden));
         }
@@ -151,8 +154,8 @@ impl FromRequestParts<AppState> for PrincipalAuth {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
-        let claims = extract_claims(parts, state)?
-            .ok_or(ApiError::Core(CoreError::Unauthorized))?;
+        let claims =
+            extract_claims(parts, state)?.ok_or(ApiError::Core(CoreError::Unauthorized))?;
         Ok(PrincipalAuth {
             subject_id: claims.sub.clone(),
             claims,

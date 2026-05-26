@@ -71,7 +71,10 @@ mod tests {
     async fn put_get_round_trips_bytes() {
         let dir = tempdir().unwrap();
         let storage = Storage::local(dir.path()).await.unwrap();
-        storage.put("hello.txt", b"hello world".to_vec()).await.unwrap();
+        storage
+            .put("hello.txt", b"hello world".to_vec())
+            .await
+            .unwrap();
         let got = storage.get("hello.txt").await.unwrap();
         assert_eq!(got, b"hello world");
     }

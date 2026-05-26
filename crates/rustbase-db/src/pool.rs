@@ -88,7 +88,9 @@ pub struct RealmPoolManager {
 
 impl RealmPoolManager {
     pub fn new(data_dir: PathBuf, cap: usize) -> Self {
-        let cap = NonZeroUsize::new(cap.max(1)).expect("cap is at least 1");
+        // Saturate at 1 if the caller passes 0; cap.max(1) is provably
+        // >= 1, but the explicit MIN fallback keeps this `expect`-free.
+        let cap = NonZeroUsize::new(cap).unwrap_or(NonZeroUsize::MIN);
         Self {
             data_dir,
             cache: Mutex::new(LruCache::new(cap)),
@@ -134,7 +136,9 @@ pub struct AppPoolManager {
 
 impl AppPoolManager {
     pub fn new(data_dir: PathBuf, cap: usize) -> Self {
-        let cap = NonZeroUsize::new(cap.max(1)).expect("cap is at least 1");
+        // Saturate at 1 if the caller passes 0; cap.max(1) is provably
+        // >= 1, but the explicit MIN fallback keeps this `expect`-free.
+        let cap = NonZeroUsize::new(cap).unwrap_or(NonZeroUsize::MIN);
         Self {
             data_dir,
             cache: Mutex::new(LruCache::new(cap)),

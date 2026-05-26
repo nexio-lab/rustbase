@@ -5,19 +5,19 @@
 //! - `GET    /api/system/policies`                              master scope
 //! - `GET    /api/system/policies/:field`
 //! - `PUT    /api/system/policies/:field`                       master only;
-//!     triggers an auto-clamp cascade down to every realm + every app
-//!     whose stored value would violate the new bound.
+//!   triggers an auto-clamp cascade down to every realm + every app
+//!   whose stored value would violate the new bound.
 //! - `DELETE /api/system/policies/:field`
 //!
 //! - `GET    /api/realms/:realm/policies`                       realm scope;
-//!     master OR realm-admin
+//!   master OR realm-admin
 //! - `PUT    /api/realms/:realm/policies/:field`                validated
-//!     against the master bound (if any), then cascades to apps.
+//!   against the master bound (if any), then cascades to apps.
 //! - `DELETE /api/realms/:realm/policies/:field`
 //!
 //! - `GET    /api/realms/:realm/apps/:app/policies`             app scope
 //! - `PUT    /api/realms/:realm/apps/:app/policies/:field`      validated
-//!     against the realm bound (if any).
+//!   against the realm bound (if any).
 //! - `DELETE /api/realms/:realm/apps/:app/policies/:field`
 
 use axum::{
@@ -26,10 +26,7 @@ use axum::{
     http::StatusCode,
 };
 use rustbase_core::{AppId, CoreError, PolicyLevel, PolicySpec, RealmId, validate_chain};
-use rustbase_db::{
-    apps::find_app,
-    audit, policies, policy_engine, realms::find_realm,
-};
+use rustbase_db::{apps::find_app, audit, policies, policy_engine, realms::find_realm};
 use serde::Serialize;
 use serde_json::json;
 

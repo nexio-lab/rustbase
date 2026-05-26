@@ -22,15 +22,13 @@ pub struct PolicyRow {
 }
 
 pub async fn get_policy(pool: &SqlitePool, field: &str) -> Result<Option<PolicySpec>> {
-    let row: Option<(String,)> =
-        sqlx::query_as("SELECT policy_json FROM policies WHERE field = ?")
-            .bind(field)
-            .fetch_optional(pool)
-            .await?;
+    let row: Option<(String,)> = sqlx::query_as("SELECT policy_json FROM policies WHERE field = ?")
+        .bind(field)
+        .fetch_optional(pool)
+        .await?;
     row.map(|(json,)| {
-        serde_json::from_str(&json).map_err(|e| {
-            DbError::InvalidIdentifier(format!("policy_json for '{field}': {e}"))
-        })
+        serde_json::from_str(&json)
+            .map_err(|e| DbError::InvalidIdentifier(format!("policy_json for '{field}': {e}")))
     })
     .transpose()
 }
@@ -67,11 +65,10 @@ pub async fn delete_policy(pool: &SqlitePool, field: &str) -> Result<()> {
 }
 
 pub async fn list_policies(pool: &SqlitePool) -> Result<Vec<PolicyRow>> {
-    let rows: Vec<(String, String, DateTime<Utc>)> = sqlx::query_as(
-        "SELECT field, policy_json, updated_at FROM policies ORDER BY field",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows: Vec<(String, String, DateTime<Utc>)> =
+        sqlx::query_as("SELECT field, policy_json, updated_at FROM policies ORDER BY field")
+            .fetch_all(pool)
+            .await?;
     rows.into_iter()
         .map(|(field, json, updated_at)| {
             let spec: PolicySpec = serde_json::from_str(&json).map_err(|e| {
@@ -91,11 +88,13 @@ mod tests {
     use super::*;
     use crate::migrations::{SYSTEM_MIGRATIONS, apply_migrations};
     use crate::pool::open_memory_pool;
-    use rustbase_core::{RangePolicy, PolicySpec};
+    use rustbase_core::{PolicySpec, RangePolicy};
 
     async fn fresh_pool() -> SqlitePool {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(pool.clone(), SYSTEM_MIGRATIONS).await.unwrap();
+        apply_migrations(pool.clone(), SYSTEM_MIGRATIONS)
+            .await
+            .unwrap();
         pool
     }
 

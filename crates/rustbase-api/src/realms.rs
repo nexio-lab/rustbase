@@ -177,4 +177,3 @@ fn validate_realm_id(id: &str) -> Result<(), ApiError> {
     }
     Ok(())
 }
-

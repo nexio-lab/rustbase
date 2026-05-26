@@ -31,9 +31,7 @@ impl From<AuthError> for ApiError {
 impl From<rustbase_runtime::RuntimeError> for ApiError {
     fn from(e: rustbase_runtime::RuntimeError) -> Self {
         match e {
-            rustbase_runtime::RuntimeError::Veto(msg) => {
-                ApiError::Core(CoreError::Validation(msg))
-            }
+            rustbase_runtime::RuntimeError::Veto(msg) => ApiError::Core(CoreError::Validation(msg)),
             other => ApiError::Core(CoreError::Internal(format!("hook: {other}"))),
         }
     }

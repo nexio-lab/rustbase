@@ -5,7 +5,10 @@ use axum::{
 };
 use rustbase_auth::hash_password;
 use rustbase_core::{CoreError, RealmId};
-use rustbase_db::{realms::find_realm, users::{find_user_by_email, insert_user}};
+use rustbase_db::{
+    realms::find_realm,
+    users::{find_user_by_email, insert_user},
+};
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 

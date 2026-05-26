@@ -20,24 +20,18 @@ pub async fn get_secret(pool: &SqlitePool, name: &str) -> Result<Option<Vec<u8>>
 }
 
 pub async fn put_secret(pool: &SqlitePool, name: &str, value: &[u8]) -> Result<()> {
-    sqlx::query(
-        "INSERT OR REPLACE INTO _secrets (name, value, created_at) VALUES (?, ?, ?)",
-    )
-    .bind(name)
-    .bind(value)
-    .bind(Utc::now())
-    .execute(pool)
-    .await?;
+    sqlx::query("INSERT OR REPLACE INTO _secrets (name, value, created_at) VALUES (?, ?, ?)")
+        .bind(name)
+        .bind(value)
+        .bind(Utc::now())
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
 /// Fetch `name`; if missing, persist `default` and return it. Lets the
 /// caller's RNG never leak into this module.
-pub async fn get_or_init_secret(
-    pool: &SqlitePool,
-    name: &str,
-    default: &[u8],
-) -> Result<Vec<u8>> {
+pub async fn get_or_init_secret(pool: &SqlitePool, name: &str, default: &[u8]) -> Result<Vec<u8>> {
     if let Some(value) = get_secret(pool, name).await? {
         return Ok(value);
     }
@@ -53,7 +47,9 @@ mod tests {
 
     async fn fresh_pool() -> SqlitePool {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(pool.clone(), SYSTEM_MIGRATIONS).await.unwrap();
+        apply_migrations(pool.clone(), SYSTEM_MIGRATIONS)
+            .await
+            .unwrap();
         pool
     }
 

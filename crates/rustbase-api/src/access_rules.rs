@@ -51,9 +51,9 @@ pub async fn put(
     Json(req): Json<SetRuleRequest>,
 ) -> Result<Json<AccessRule>, ApiError> {
     auth.require_app_access(&realm, &app)?;
-    let action = AccessAction::from_str(&action).ok_or(ApiError::Core(
-        CoreError::Validation(format!("unknown access action: {action}")),
-    ))?;
+    let action = AccessAction::from_str(&action).ok_or(ApiError::Core(CoreError::Validation(
+        format!("unknown access action: {action}"),
+    )))?;
     let app_pool = open_app_and_check(&state, &realm, &app, &coll).await?;
     set_rule(&app_pool, &coll, action, req.filter.as_deref()).await?;
     let _ = get_rule(&app_pool, &coll, action).await?;
@@ -71,18 +71,16 @@ pub async fn delete(
     Path((realm, app, coll, action)): Path<(String, String, String, String)>,
 ) -> Result<StatusCode, ApiError> {
     auth.require_app_access(&realm, &app)?;
-    let action = AccessAction::from_str(&action).ok_or(ApiError::Core(
-        CoreError::Validation(format!("unknown access action: {action}")),
-    ))?;
+    let action = AccessAction::from_str(&action).ok_or(ApiError::Core(CoreError::Validation(
+        format!("unknown access action: {action}"),
+    )))?;
     let app_pool = open_app_and_check(&state, &realm, &app, &coll).await?;
-    let res = sqlx::query(
-        "DELETE FROM _access_rules WHERE collection_id = ? AND action = ?",
-    )
-    .bind(&coll)
-    .bind(action.as_str())
-    .execute(&app_pool)
-    .await
-    .map_err(rustbase_db::DbError::Sqlx)?;
+    let res = sqlx::query("DELETE FROM _access_rules WHERE collection_id = ? AND action = ?")
+        .bind(&coll)
+        .bind(action.as_str())
+        .execute(&app_pool)
+        .await
+        .map_err(rustbase_db::DbError::Sqlx)?;
     if res.rows_affected() == 0 {
         return Err(ApiError::Core(CoreError::NotFound {
             collection: coll,

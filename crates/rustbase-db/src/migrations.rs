@@ -27,11 +27,7 @@ pub struct Migration {
 }
 
 impl Migration {
-    pub const fn new(
-        id: &'static str,
-        scope: MigrationScope,
-        sql: &'static str,
-    ) -> Self {
+    pub const fn new(id: &'static str, scope: MigrationScope, sql: &'static str) -> Self {
         Self { id, scope, sql }
     }
 }
@@ -54,10 +50,7 @@ CREATE TABLE IF NOT EXISTS _migrations (
 /// returned future has no captured borrow, sidestepping a known sqlx
 /// HRTB inference quirk that otherwise prevents this future from being
 /// `Send` when composed inside an axum handler.
-pub async fn apply_migrations<'a>(
-    pool: SqlitePool,
-    migrations: &'a [Migration],
-) -> Result<usize> {
+pub async fn apply_migrations(pool: SqlitePool, migrations: &[Migration]) -> Result<usize> {
     sqlx::raw_sql(ENSURE_MIGRATIONS_TABLE)
         .execute(&pool)
         .await?;
@@ -190,10 +183,11 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
     ),
 ];
 
-pub const REALM_MIGRATIONS: &[Migration] = &[Migration::new(
-    "20260520_000001_initial_realm",
-    MigrationScope::Realm,
-    r#"
+pub const REALM_MIGRATIONS: &[Migration] = &[
+    Migration::new(
+        "20260520_000001_initial_realm",
+        MigrationScope::Realm,
+        r#"
     CREATE TABLE apps (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -267,11 +261,11 @@ pub const REALM_MIGRATIONS: &[Migration] = &[Migration::new(
     );
     CREATE INDEX audit_log_ts ON audit_log(ts);
     "#,
-),
-Migration::new(
-    "20260526_000001_email_verifications",
-    MigrationScope::Realm,
-    r#"
+    ),
+    Migration::new(
+        "20260526_000001_email_verifications",
+        MigrationScope::Realm,
+        r#"
     CREATE TABLE _email_verifications (
         token TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -281,11 +275,11 @@ Migration::new(
     );
     CREATE INDEX email_verifications_user ON _email_verifications(user_id);
     "#,
-),
-Migration::new(
-    "20260526_000002_password_resets",
-    MigrationScope::Realm,
-    r#"
+    ),
+    Migration::new(
+        "20260526_000002_password_resets",
+        MigrationScope::Realm,
+        r#"
     CREATE TABLE _password_resets (
         token TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -295,7 +289,8 @@ Migration::new(
     );
     CREATE INDEX password_resets_user ON _password_resets(user_id);
     "#,
-)];
+    ),
+];
 
 pub const APP_MIGRATIONS: &[Migration] = &[
     Migration::new(
@@ -359,8 +354,12 @@ mod tests {
     #[tokio::test]
     async fn applies_system_migrations_once_and_is_idempotent() {
         let pool = open_memory_pool().await.unwrap();
-        let n1 = apply_migrations(pool.clone(), SYSTEM_MIGRATIONS).await.unwrap();
-        let n2 = apply_migrations(pool.clone(), SYSTEM_MIGRATIONS).await.unwrap();
+        let n1 = apply_migrations(pool.clone(), SYSTEM_MIGRATIONS)
+            .await
+            .unwrap();
+        let n2 = apply_migrations(pool.clone(), SYSTEM_MIGRATIONS)
+            .await
+            .unwrap();
         assert_eq!(n1, SYSTEM_MIGRATIONS.len());
         assert_eq!(n2, 0);
 
@@ -375,7 +374,9 @@ mod tests {
     #[tokio::test]
     async fn applies_realm_migrations() {
         let pool = open_memory_pool().await.unwrap();
-        let n = apply_migrations(pool.clone(), REALM_MIGRATIONS).await.unwrap();
+        let n = apply_migrations(pool.clone(), REALM_MIGRATIONS)
+            .await
+            .unwrap();
         assert_eq!(n, REALM_MIGRATIONS.len());
 
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
@@ -388,7 +389,9 @@ mod tests {
     #[tokio::test]
     async fn applies_app_migrations() {
         let pool = open_memory_pool().await.unwrap();
-        let n = apply_migrations(pool.clone(), APP_MIGRATIONS).await.unwrap();
+        let n = apply_migrations(pool.clone(), APP_MIGRATIONS)
+            .await
+            .unwrap();
         assert_eq!(n, APP_MIGRATIONS.len());
 
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _collections")
@@ -427,12 +430,13 @@ mod tests {
     #[tokio::test]
     async fn records_duration_in_migrations_table() {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(pool.clone(), SYSTEM_MIGRATIONS).await.unwrap();
-        let row: (String, i64) =
-            sqlx::query_as("SELECT id, duration_ms FROM _migrations LIMIT 1")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        apply_migrations(pool.clone(), SYSTEM_MIGRATIONS)
+            .await
+            .unwrap();
+        let row: (String, i64) = sqlx::query_as("SELECT id, duration_ms FROM _migrations LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(row.0, SYSTEM_MIGRATIONS[0].id);
         assert!(row.1 >= 0);
     }

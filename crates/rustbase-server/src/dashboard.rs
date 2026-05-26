@@ -30,7 +30,14 @@ fn dev_root() -> Option<PathBuf> {
 /// SPA client-side routing works.
 fn resolve(path: &str) -> Option<(Vec<u8>, String)> {
     let clean = path.trim_start_matches('/');
-    let candidates: [&str; 2] = [if clean.is_empty() { "index.html" } else { clean }, "index.html"];
+    let candidates: [&str; 2] = [
+        if clean.is_empty() {
+            "index.html"
+        } else {
+            clean
+        },
+        "index.html",
+    ];
 
     // dev override
     if let Some(root) = dev_root() {

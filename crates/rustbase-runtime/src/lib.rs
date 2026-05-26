@@ -1,7 +1,7 @@
 //! Embedded JS hook runtime for RustBase.
 //!
 //! One `AppHooks` per (realm, app). Each holds its own `AsyncRuntime`
-//! + `AsyncContext`. At load time we evaluate every `.js` file under
+//! and `AsyncContext`. At load time we evaluate every `.js` file under
 //! `data/hooks/<realm>/<app>/` against the context; user code registers
 //! handlers via the injected `$app` global:
 //!
@@ -34,8 +34,8 @@ use std::sync::Arc;
 use thiserror::Error;
 
 mod sandbox;
-pub use sandbox::SandboxLimits;
 use sandbox::CpuClock;
+pub use sandbox::SandboxLimits;
 
 mod ts;
 
@@ -133,19 +133,9 @@ impl HookEvent {
 /// the async DB layer.
 pub trait RecordsBridge: Send + Sync + 'static {
     fn find_one(&self, collection: &str, id: &str) -> Result<Option<Json>>;
-    fn find_by_filter(
-        &self,
-        collection: &str,
-        filter: &str,
-        per_page: u32,
-    ) -> Result<Vec<Json>>;
+    fn find_by_filter(&self, collection: &str, filter: &str, per_page: u32) -> Result<Vec<Json>>;
     fn create(&self, collection: &str, fields: BTreeMap<String, Json>) -> Result<Json>;
-    fn update(
-        &self,
-        collection: &str,
-        id: &str,
-        patch: BTreeMap<String, Json>,
-    ) -> Result<Json>;
+    fn update(&self, collection: &str, id: &str, patch: BTreeMap<String, Json>) -> Result<Json>;
     fn delete(&self, collection: &str, id: &str) -> Result<()>;
 }
 
@@ -187,19 +177,13 @@ impl<T: AsyncRecordsBridge> RecordsBridge for SyncBridge<T> {
                 .block_on(async move { inner.find_one(&collection, &id).await })
         })
     }
-    fn find_by_filter(
-        &self,
-        collection: &str,
-        filter: &str,
-        per_page: u32,
-    ) -> Result<Vec<Json>> {
+    fn find_by_filter(&self, collection: &str, filter: &str, per_page: u32) -> Result<Vec<Json>> {
         let inner = self.0.clone();
         let collection = collection.to_string();
         let filter = filter.to_string();
         tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async move {
-                inner.find_by_filter(&collection, &filter, per_page).await
-            })
+            tokio::runtime::Handle::current()
+                .block_on(async move { inner.find_by_filter(&collection, &filter, per_page).await })
         })
     }
     fn create(&self, collection: &str, fields: BTreeMap<String, Json>) -> Result<Json> {
@@ -210,12 +194,7 @@ impl<T: AsyncRecordsBridge> RecordsBridge for SyncBridge<T> {
                 .block_on(async move { inner.create(&collection, fields).await })
         })
     }
-    fn update(
-        &self,
-        collection: &str,
-        id: &str,
-        patch: BTreeMap<String, Json>,
-    ) -> Result<Json> {
+    fn update(&self, collection: &str, id: &str, patch: BTreeMap<String, Json>) -> Result<Json> {
         let inner = self.0.clone();
         let collection = collection.to_string();
         let id = id.to_string();
@@ -323,10 +302,10 @@ impl AppHooks {
         let res = self
             .ctx
             .with(move |ctx| {
-                let _: rquickjs::Value =
-                    ctx.eval(src.as_bytes()).catch(&ctx).map_err(|e| {
-                        RuntimeError::Js(format!("{label}: {e}"))
-                    })?;
+                let _: rquickjs::Value = ctx
+                    .eval(src.as_bytes())
+                    .catch(&ctx)
+                    .map_err(|e| RuntimeError::Js(format!("{label}: {e}")))?;
                 Ok::<_, RuntimeError>(())
             })
             .await;
@@ -416,10 +395,10 @@ impl AppHooks {
         let res = self
             .ctx
             .with(move |ctx| {
-                let _: rquickjs::Value =
-                    ctx.eval(driver.as_bytes()).catch(&ctx).map_err(|e| {
-                        RuntimeError::Js(format!("dispatch: {e}"))
-                    })?;
+                let _: rquickjs::Value = ctx
+                    .eval(driver.as_bytes())
+                    .catch(&ctx)
+                    .map_err(|e| RuntimeError::Js(format!("dispatch: {e}")))?;
                 Ok::<_, RuntimeError>(())
             })
             .await;
@@ -562,9 +541,10 @@ impl AppHooks {
         let result: String = self
             .ctx
             .with(move |ctx| {
-                let v: String = ctx.eval(driver.as_bytes()).catch(&ctx).map_err(|e| {
-                    RuntimeError::Js(format!("dispatch_before: {e}"))
-                })?;
+                let v: String = ctx
+                    .eval(driver.as_bytes())
+                    .catch(&ctx)
+                    .map_err(|e| RuntimeError::Js(format!("dispatch_before: {e}")))?;
                 Ok::<_, RuntimeError>(v)
             })
             .await
@@ -624,11 +604,10 @@ impl AppHooks {
             .with(move |ctx| {
                 use rquickjs::Function;
 
-                let log_fn =
-                    Function::new(ctx.clone(), |msg: String| {
-                        tracing::info!(target: "rustbase_runtime::hook", "{msg}");
-                    })?
-                    .with_name("__rb_native_log")?;
+                let log_fn = Function::new(ctx.clone(), |msg: String| {
+                    tracing::info!(target: "rustbase_runtime::hook", "{msg}");
+                })?
+                .with_name("__rb_native_log")?;
                 ctx.globals().set("__rb_native_log", log_fn)?;
 
                 // $app.records.* bindings — only wired if the engine
@@ -781,7 +760,8 @@ fn register_records_natives(
         },
     )?
     .with_name("__rb_records_findByFilter")?;
-    ctx.globals().set("__rb_records_findByFilter", find_by_filter)?;
+    ctx.globals()
+        .set("__rb_records_findByFilter", find_by_filter)?;
 
     let b3 = bridge.clone();
     let create = Function::new(
@@ -945,6 +925,9 @@ impl HookEngine {
 }
 
 #[cfg(test)]
+// Test names mirror the JS API surface (records.findOne, records.findByFilter)
+// to make failures grep-able from a hook author's perspective.
+#[allow(non_snake_case)]
 mod tests {
     use super::*;
     use serde_json::json;
@@ -976,7 +959,12 @@ mod tests {
             .await
             .unwrap();
         hooks
-            .dispatch("notes", HookEvent::AfterCreate, &HookRequest::default(), &json!({"id":"r1"}))
+            .dispatch(
+                "notes",
+                HookEvent::AfterCreate,
+                &HookRequest::default(),
+                &json!({"id":"r1"}),
+            )
             .await
             .unwrap();
         let logs = hooks.drain_logs().await.unwrap();
@@ -994,7 +982,12 @@ mod tests {
             .await
             .unwrap();
         hooks
-            .dispatch("notes", HookEvent::AfterCreate, &HookRequest::default(), &json!({"id":"r1"}))
+            .dispatch(
+                "notes",
+                HookEvent::AfterCreate,
+                &HookRequest::default(),
+                &json!({"id":"r1"}),
+            )
             .await
             .unwrap();
         let logs = hooks.drain_logs().await.unwrap();
@@ -1015,7 +1008,12 @@ mod tests {
             .await
             .unwrap();
         hooks
-            .dispatch("notes", HookEvent::AfterCreate, &HookRequest::default(), &json!({"id":"r1"}))
+            .dispatch(
+                "notes",
+                HookEvent::AfterCreate,
+                &HookRequest::default(),
+                &json!({"id":"r1"}),
+            )
             .await
             .unwrap();
         let logs = hooks.drain_logs().await.unwrap();
@@ -1036,7 +1034,12 @@ mod tests {
             .await
             .unwrap();
         hooks
-            .dispatch("notes", HookEvent::AfterCreate, &HookRequest::default(), &json!({"id":"r1"}))
+            .dispatch(
+                "notes",
+                HookEvent::AfterCreate,
+                &HookRequest::default(),
+                &json!({"id":"r1"}),
+            )
             .await
             .unwrap();
         let logs = hooks.drain_logs().await.unwrap();
@@ -1055,7 +1058,10 @@ mod tests {
         .unwrap();
         std::fs::write(dir.path().join("ignored.txt"), "not js").unwrap();
         let engine = HookEngine::new();
-        let n = engine.load_app("acme", "mobile", dir.path(), None).await.unwrap();
+        let n = engine
+            .load_app("acme", "mobile", dir.path(), None)
+            .await
+            .unwrap();
         assert_eq!(n, 1);
 
         engine
@@ -1070,7 +1076,10 @@ mod tests {
             .await
             .unwrap();
         let hooks = engine.get("acme", "mobile").unwrap();
-        assert_eq!(hooks.drain_logs().await.unwrap(), vec!["hello x".to_string()]);
+        assert_eq!(
+            hooks.drain_logs().await.unwrap(),
+            vec!["hello x".to_string()]
+        );
     }
 
     #[tokio::test]
@@ -1098,7 +1107,9 @@ mod tests {
             stack_bytes: None,
             cpu_time_ms: Some(50),
         };
-        let hooks = AppHooks::with_records_and_limits(None, limits).await.unwrap();
+        let hooks = AppHooks::with_records_and_limits(None, limits)
+            .await
+            .unwrap();
         hooks
             .eval(
                 r#"$app.onRecordAfterCreate("notes", () => { while (true) {} });"#,
@@ -1123,7 +1134,10 @@ mod tests {
             other => panic!("expected Timeout(50), got: {other:?}"),
         }
         // 50 ms deadline; allow generous slack for CI but reject runaway.
-        assert!(elapsed < std::time::Duration::from_secs(2), "took {elapsed:?}");
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "took {elapsed:?}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1135,7 +1149,9 @@ mod tests {
             stack_bytes: None,
             cpu_time_ms: Some(50),
         };
-        let hooks = AppHooks::with_records_and_limits(None, limits).await.unwrap();
+        let hooks = AppHooks::with_records_and_limits(None, limits)
+            .await
+            .unwrap();
         hooks
             .eval(
                 r#"
@@ -1151,13 +1167,26 @@ mod tests {
             .unwrap();
 
         let first = hooks
-            .dispatch("notes", HookEvent::AfterCreate, &HookRequest::default(), &json!({}))
+            .dispatch(
+                "notes",
+                HookEvent::AfterCreate,
+                &HookRequest::default(),
+                &json!({}),
+            )
             .await;
-        assert!(matches!(first, Err(RuntimeError::Timeout(_))), "got: {first:?}");
+        assert!(
+            matches!(first, Err(RuntimeError::Timeout(_))),
+            "got: {first:?}"
+        );
 
         // Second dispatch — fresh deadline, fast handler, should succeed.
         hooks
-            .dispatch("notes", HookEvent::AfterCreate, &HookRequest::default(), &json!({}))
+            .dispatch(
+                "notes",
+                HookEvent::AfterCreate,
+                &HookRequest::default(),
+                &json!({}),
+            )
             .await
             .unwrap();
         assert_eq!(hooks.drain_logs().await.unwrap(), vec!["ok".to_string()]);
@@ -1167,11 +1196,13 @@ mod tests {
     async fn memory_limit_aborts_huge_allocation() {
         let limits = SandboxLimits {
             // 1 MiB cap is well below the 8 MiB string the hook tries to build.
-            memory_bytes: Some(1 * 1024 * 1024),
+            memory_bytes: Some(1024 * 1024),
             stack_bytes: None,
             cpu_time_ms: Some(2_000),
         };
-        let hooks = AppHooks::with_records_and_limits(None, limits).await.unwrap();
+        let hooks = AppHooks::with_records_and_limits(None, limits)
+            .await
+            .unwrap();
         hooks
             .eval(
                 r#"
@@ -1191,7 +1222,12 @@ mod tests {
         // stashed via __rb_record_error, so dispatch returns Ok; the
         // assertion is that the unreachable log line never ran.
         hooks
-            .dispatch("notes", HookEvent::AfterCreate, &HookRequest::default(), &json!({}))
+            .dispatch(
+                "notes",
+                HookEvent::AfterCreate,
+                &HookRequest::default(),
+                &json!({}),
+            )
             .await
             .unwrap();
         assert!(hooks.drain_logs().await.unwrap().is_empty());
@@ -1217,10 +1253,18 @@ mod tests {
             .await
             .unwrap();
         hooks
-            .dispatch("notes", HookEvent::AfterCreate, &HookRequest::default(), &json!({}))
+            .dispatch(
+                "notes",
+                HookEvent::AfterCreate,
+                &HookRequest::default(),
+                &json!({}),
+            )
             .await
             .unwrap();
-        assert_eq!(hooks.drain_logs().await.unwrap(), vec!["sum:4999950000".to_string()]);
+        assert_eq!(
+            hooks.drain_logs().await.unwrap(),
+            vec!["sum:4999950000".to_string()]
+        );
     }
 
     #[tokio::test]
@@ -1250,8 +1294,14 @@ mod tests {
         std::fs::write(dir.path().join("README.md"), "# notes").unwrap();
 
         let engine = HookEngine::new();
-        let n = engine.load_app("acme", "mobile", dir.path(), None).await.unwrap();
-        assert_eq!(n, 2, "expected typed.ts + plain.js to load (broken.ts skipped)");
+        let n = engine
+            .load_app("acme", "mobile", dir.path(), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            n, 2,
+            "expected typed.ts + plain.js to load (broken.ts skipped)"
+        );
 
         engine
             .dispatch(
@@ -1265,7 +1315,12 @@ mod tests {
             .await
             .unwrap();
 
-        let mut logs = engine.get("acme", "mobile").unwrap().drain_logs().await.unwrap();
+        let mut logs = engine
+            .get("acme", "mobile")
+            .unwrap()
+            .drain_logs()
+            .await
+            .unwrap();
         logs.sort();
         assert_eq!(logs, vec!["plain:abc".to_string(), "typed:abc".to_string()]);
     }
@@ -1280,7 +1335,10 @@ mod tests {
         )
         .unwrap();
         let engine = HookEngine::new();
-        let n = engine.load_app("acme", "mobile", dir.path(), None).await.unwrap();
+        let n = engine
+            .load_app("acme", "mobile", dir.path(), None)
+            .await
+            .unwrap();
         assert_eq!(n, 1);
 
         engine
@@ -1345,14 +1403,11 @@ mod tests {
                 .rows
                 .lock()
                 .iter()
-                .filter_map(|((c, _), v)| (c == collection).then(|| v.clone()))
+                .filter(|((c, _), _)| c == collection)
+                .map(|(_, v)| v.clone())
                 .collect())
         }
-        fn create(
-            &self,
-            collection: &str,
-            fields: BTreeMap<String, Json>,
-        ) -> Result<Json> {
+        fn create(&self, collection: &str, fields: BTreeMap<String, Json>) -> Result<Json> {
             self.creates
                 .lock()
                 .push((collection.to_string(), fields.clone()));
@@ -1534,7 +1589,12 @@ mod tests {
             .await
             .unwrap();
         hooks
-            .dispatch("notes", HookEvent::AfterCreate, &HookRequest::default(), &serde_json::json!({"id":"n42"}))
+            .dispatch(
+                "notes",
+                HookEvent::AfterCreate,
+                &HookRequest::default(),
+                &serde_json::json!({"id":"n42"}),
+            )
             .await
             .unwrap();
         let creates = mock.creates.lock();
@@ -1584,10 +1644,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(
-            hooks.drain_logs().await.unwrap(),
-            vec!["threw".to_string()]
-        );
+        assert_eq!(hooks.drain_logs().await.unwrap(), vec!["threw".to_string()]);
     }
 
     #[tokio::test]
@@ -1606,10 +1663,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(
-            hooks.drain_logs().await.unwrap(),
-            vec!["gone".to_string()]
-        );
+        assert_eq!(hooks.drain_logs().await.unwrap(), vec!["gone".to_string()]);
     }
 
     #[tokio::test]
@@ -1625,23 +1679,27 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(
-            hooks.drain_logs().await.unwrap(),
-            vec!["threw".to_string()]
-        );
+        assert_eq!(hooks.drain_logs().await.unwrap(), vec!["threw".to_string()]);
     }
 
     // ------------- before-hook tests -------------
 
     fn payload(pairs: &[(&str, Json)]) -> BTreeMap<String, Json> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect()
     }
 
     #[tokio::test]
     async fn before_create_no_hook_returns_input_unchanged() {
         let hooks = AppHooks::new().await.unwrap();
         let out = hooks
-            .dispatch_before_create("notes", &HookRequest::default(), payload(&[("title", serde_json::json!("x"))]))
+            .dispatch_before_create(
+                "notes",
+                &HookRequest::default(),
+                payload(&[("title", serde_json::json!("x"))]),
+            )
             .await
             .unwrap();
         assert_eq!(out.get("title"), Some(&serde_json::json!("x")));
@@ -1663,7 +1721,11 @@ mod tests {
             .await
             .unwrap();
         let out = hooks
-            .dispatch_before_create("notes", &HookRequest::default(), payload(&[("title", serde_json::json!("hello"))]))
+            .dispatch_before_create(
+                "notes",
+                &HookRequest::default(),
+                payload(&[("title", serde_json::json!("hello"))]),
+            )
             .await
             .unwrap();
         assert_eq!(out.get("title"), Some(&serde_json::json!("HELLO")));
@@ -1831,10 +1893,7 @@ mod tests {
     async fn app_request_is_cleared_after_dispatch() {
         let hooks = AppHooks::new().await.unwrap();
         hooks
-            .eval(
-                r#"$app.onRecordBeforeCreate("notes", () => {});"#,
-                "<t>",
-            )
+            .eval(r#"$app.onRecordBeforeCreate("notes", () => {});"#, "<t>")
             .await
             .unwrap();
         let req = HookRequest::system("acme", "mobile", "notes");
@@ -1898,7 +1957,11 @@ mod tests {
             .unwrap();
         // Dispatching on "notes" must not trip the posts hook.
         let out = hooks
-            .dispatch_before_create("notes", &HookRequest::default(), payload(&[("title", serde_json::json!("ok"))]))
+            .dispatch_before_create(
+                "notes",
+                &HookRequest::default(),
+                payload(&[("title", serde_json::json!("ok"))]),
+            )
             .await
             .unwrap();
         assert_eq!(out.get("title"), Some(&serde_json::json!("ok")));

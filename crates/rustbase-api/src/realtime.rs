@@ -10,8 +10,8 @@
 use axum::{
     extract::{Path, State},
     response::{
-        sse::{Event, KeepAlive, Sse},
         IntoResponse,
+        sse::{Event, KeepAlive, Sse},
     },
 };
 use futures::Stream;

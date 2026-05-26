@@ -3,8 +3,10 @@ use axum::{Router, routing::get};
 use rustbase_api::{AppState, build_router};
 use rustbase_auth::{RevocationSet, SigningKey};
 use rustbase_db::{
-    AppPoolManager, RealmPoolManager, SYSTEM_MIGRATIONS, SystemPool, admins::count_master_admins,
-    apply_migrations, realms::ensure_master_realm,
+    AppPoolManager, RealmPoolManager, SYSTEM_MIGRATIONS, SystemPool,
+    admins::count_master_admins,
+    apply_migrations,
+    realms::ensure_master_realm,
     secrets::{MASTER_SIGNING_KEY, get_or_init_secret},
 };
 use rustbase_realtime::RealtimeBroker;
@@ -38,12 +40,13 @@ async fn main() -> Result<()> {
     ensure_master_realm(system.pool()).await?;
     let already_initialized = count_master_admins(system.pool()).await? > 0;
     if !already_initialized {
-        tracing::warn!("no master admin found — only /healthz and POST /_/setup are reachable until setup completes");
+        tracing::warn!(
+            "no master admin found — only /healthz and POST /_/setup are reachable until setup completes"
+        );
     }
 
     let fresh = SigningKey::generate();
-    let key_bytes =
-        get_or_init_secret(system.pool(), MASTER_SIGNING_KEY, fresh.as_bytes()).await?;
+    let key_bytes = get_or_init_secret(system.pool(), MASTER_SIGNING_KEY, fresh.as_bytes()).await?;
     let master_key = Arc::new(SigningKey::from_secret(&key_bytes));
 
     // Optional: generate litestream.yml at boot when replication is enabled.
@@ -64,7 +67,10 @@ async fn main() -> Result<()> {
 
     let state = AppState {
         system: Arc::new(system),
-        realms: Arc::new(RealmPoolManager::new(cfg.data_dir.clone(), cfg.realm_pool_cap)),
+        realms: Arc::new(RealmPoolManager::new(
+            cfg.data_dir.clone(),
+            cfg.realm_pool_cap,
+        )),
         apps: Arc::new(AppPoolManager::new(cfg.data_dir.clone(), cfg.app_pool_cap)),
         revocations: RevocationSet::default(),
         master_key,

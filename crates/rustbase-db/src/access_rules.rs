@@ -37,6 +37,10 @@ impl AccessAction {
         }
     }
 
+    // Inherent constructor mirroring `as_str` above. Not an impl of
+    // std::str::FromStr — the optional return is more ergonomic for
+    // table-driven parsing than FromStr's Result+Err type.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         Some(match s {
             "list" => Self::List,
@@ -63,13 +67,12 @@ pub async fn get_rule(
 ) -> Result<Option<Option<String>>> {
     // The outer Option means "row exists in _access_rules"; the inner
     // Option carries the NULL-or-not state of the `filter` column.
-    let row: Option<(Option<String>,)> = sqlx::query_as(
-        "SELECT filter FROM _access_rules WHERE collection_id = ? AND action = ?",
-    )
-    .bind(collection)
-    .bind(action.as_str())
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT filter FROM _access_rules WHERE collection_id = ? AND action = ?")
+            .bind(collection)
+            .bind(action.as_str())
+            .fetch_optional(pool)
+            .await?;
     Ok(row.map(|(f,)| f))
 }
 
@@ -150,7 +153,9 @@ mod tests {
 
     async fn fresh_pool() -> SqlitePool {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(pool.clone(), APP_MIGRATIONS).await.unwrap();
+        apply_migrations(pool.clone(), APP_MIGRATIONS)
+            .await
+            .unwrap();
         // _access_rules has a FK to _collections; insert a stub.
         sqlx::query(
             "INSERT INTO _collections (id, name, kind, schema_json, created_at, updated_at) \
@@ -169,16 +174,20 @@ mod tests {
     #[tokio::test]
     async fn missing_row_returns_none() {
         let pool = fresh_pool().await;
-        assert!(get_rule(&pool, "notes", AccessAction::List)
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            get_rule(&pool, "notes", AccessAction::List)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
     async fn set_then_get_round_trips_open_rule() {
         let pool = fresh_pool().await;
-        set_rule(&pool, "notes", AccessAction::List, Some("")).await.unwrap();
+        set_rule(&pool, "notes", AccessAction::List, Some(""))
+            .await
+            .unwrap();
         let r = get_rule(&pool, "notes", AccessAction::List)
             .await
             .unwrap()
@@ -190,7 +199,9 @@ mod tests {
     #[tokio::test]
     async fn null_filter_locks_to_admins() {
         let pool = fresh_pool().await;
-        set_rule(&pool, "notes", AccessAction::List, None).await.unwrap();
+        set_rule(&pool, "notes", AccessAction::List, None)
+            .await
+            .unwrap();
         let r = get_rule(&pool, "notes", AccessAction::List).await.unwrap();
         // row exists with NULL filter
         assert_eq!(r, Some(None));
@@ -206,8 +217,12 @@ mod tests {
     #[tokio::test]
     async fn list_rules_returns_all_actions() {
         let pool = fresh_pool().await;
-        set_rule(&pool, "notes", AccessAction::List, Some("")).await.unwrap();
-        set_rule(&pool, "notes", AccessAction::Create, Some("true")).await.unwrap();
+        set_rule(&pool, "notes", AccessAction::List, Some(""))
+            .await
+            .unwrap();
+        set_rule(&pool, "notes", AccessAction::Create, Some("true"))
+            .await
+            .unwrap();
         let rules = list_rules(&pool, "notes").await.unwrap();
         assert_eq!(rules.len(), 2);
     }

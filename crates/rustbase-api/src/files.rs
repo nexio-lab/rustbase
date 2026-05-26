@@ -1,8 +1,8 @@
 //! File upload/download endpoints.
 //!
 //! - `POST   /api/realms/:realm/apps/:app/files`
-//!     Raw-body upload. Headers `X-Filename` (required) and
-//!     `Content-Type` (optional) are stored as metadata.
+//!   Raw-body upload. Headers `X-Filename` (required) and
+//!   `Content-Type` (optional) are stored as metadata.
 //! - `GET    /api/realms/:realm/apps/:app/files`            list metadata
 //! - `GET    /api/realms/:realm/apps/:app/files/:id`        download bytes
 //! - `GET    /api/realms/:realm/apps/:app/files/:id/meta`   just the row
@@ -67,9 +67,10 @@ pub async fn upload(
         .map(str::to_string);
 
     let meta = insert_file(&app_pool, &filename, mime.as_deref(), body.len() as i64).await?;
-    storage.put(&meta.id, body.to_vec()).await.map_err(|e| {
-        ApiError::Core(CoreError::Internal(format!("storage put: {e}")))
-    })?;
+    storage
+        .put(&meta.id, body.to_vec())
+        .await
+        .map_err(|e| ApiError::Core(CoreError::Internal(format!("storage put: {e}"))))?;
 
     tracing::info!(
         realm = %realm, app = %app, file = %meta.id, size = body.len(),
@@ -102,25 +103,23 @@ pub async fn download(
             collection: "file".into(),
             id: id.clone(),
         }))?;
-    let bytes = storage.get(&id).await.map_err(|e| {
-        ApiError::Core(CoreError::Internal(format!("storage get: {e}")))
-    })?;
+    let bytes = storage
+        .get(&id)
+        .await
+        .map_err(|e| ApiError::Core(CoreError::Internal(format!("storage get: {e}"))))?;
 
     let mut resp = bytes.into_response();
     if let Some(mime) = &meta.mime {
-        resp.headers_mut().insert(
-            header::CONTENT_TYPE,
-            mime.parse().unwrap_or_else(|_| {
-                "application/octet-stream".parse().unwrap()
-            }),
-        );
-    }
-    resp.headers_mut().insert(
-        "x-filename",
-        meta.filename
+        let v = mime
             .parse()
-            .unwrap_or_else(|_| "file".parse().unwrap()),
-    );
+            .unwrap_or_else(|_| header::HeaderValue::from_static("application/octet-stream"));
+        resp.headers_mut().insert(header::CONTENT_TYPE, v);
+    }
+    let filename = meta
+        .filename
+        .parse()
+        .unwrap_or_else(|_| header::HeaderValue::from_static("file"));
+    resp.headers_mut().insert("x-filename", filename);
     Ok(resp)
 }
 
@@ -183,8 +182,8 @@ async fn open_app_with_storage(
     let app_id = AppId::from(app.to_string());
     let app_pool = state.apps.pool_for(&realm_id, &app_id).await?;
     let storage_dir = paths::app_storage_dir(state.data_dir.as_ref(), &realm_id, &app_id);
-    let storage = Storage::local(&storage_dir).await.map_err(|e| {
-        ApiError::Core(CoreError::Internal(format!("storage open: {e}")))
-    })?;
+    let storage = Storage::local(&storage_dir)
+        .await
+        .map_err(|e| ApiError::Core(CoreError::Internal(format!("storage open: {e}"))))?;
     Ok((app_pool, storage))
 }

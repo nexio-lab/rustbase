@@ -118,10 +118,7 @@ mod tests {
     async fn subscriber_receives_published_event() {
         let broker = RealtimeBroker::default();
         let mut rx = broker.subscribe(&key());
-        let delivered = broker.publish(
-            &key(),
-            RealtimeEvent::RecordCreated { record: rec("r1") },
-        );
+        let delivered = broker.publish(&key(), RealtimeEvent::RecordCreated { record: rec("r1") });
         assert_eq!(delivered, 1);
         let ev = rx.recv().await.unwrap();
         assert!(matches!(ev, RealtimeEvent::RecordCreated { .. }));
@@ -130,10 +127,7 @@ mod tests {
     #[tokio::test]
     async fn publish_with_no_subscribers_returns_zero() {
         let broker = RealtimeBroker::default();
-        let n = broker.publish(
-            &key(),
-            RealtimeEvent::RecordDeleted { id: "x".into() },
-        );
+        let n = broker.publish(&key(), RealtimeEvent::RecordDeleted { id: "x".into() });
         assert_eq!(n, 0);
         assert_eq!(broker.channel_count(), 0);
     }
@@ -144,10 +138,7 @@ mod tests {
         let rx = broker.subscribe(&key());
         assert_eq!(broker.channel_count(), 1);
         drop(rx);
-        broker.publish(
-            &key(),
-            RealtimeEvent::RecordDeleted { id: "x".into() },
-        );
+        broker.publish(&key(), RealtimeEvent::RecordDeleted { id: "x".into() });
         assert_eq!(broker.channel_count(), 0);
     }
 

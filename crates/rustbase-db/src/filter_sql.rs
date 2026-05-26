@@ -93,11 +93,10 @@ fn compare(out: &mut SqlFragment, field: &str, op: &str, value: &Value) -> Resul
 /// `[A-Za-z_][A-Za-z0-9_]*` first. Dotted paths are rejected here
 /// because they imply a JOIN that this layer cannot synthesize yet.
 fn quote_ident(field: &str) -> Result<String> {
-    if field.is_empty() {
-        return Err(DbError::InvalidIdentifier(field.to_string()));
-    }
     let mut chars = field.chars();
-    let first = chars.next().unwrap();
+    let Some(first) = chars.next() else {
+        return Err(DbError::InvalidIdentifier(field.to_string()));
+    };
     if !(first.is_ascii_alphabetic() || first == '_') {
         return Err(DbError::InvalidIdentifier(field.to_string()));
     }
@@ -147,10 +146,7 @@ mod tests {
 
     #[test]
     fn in_emits_placeholder_per_value() {
-        let node = FilterNode::In(
-            "kind".into(),
-            vec![json!("a"), json!("b"), json!("c")],
-        );
+        let node = FilterNode::In("kind".into(), vec![json!("a"), json!("b"), json!("c")]);
         let frag = filter_to_sql(&node).unwrap();
         assert_eq!(frag.sql, r#"("kind" IN (?, ?, ?))"#);
         assert_eq!(frag.bindings, vec![json!("a"), json!("b"), json!("c")]);
