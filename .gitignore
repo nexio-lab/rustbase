@@ -23,6 +23,7 @@ rustbase.toml
 *.swo
 *~
 
-# Dashboard build artifacts (when developing locally)
-/dashboard/dist/
-/dashboard/node_modules/
+# Dashboard build artifacts. ui/.gitignore covers node_modules,
+# /build, and the .svelte-kit cache. The Rust build.rs in
+# rustbase-server runs `bun --cwd ui run build` to produce ui/build/
+# on demand, so the artifact lives only in target/.

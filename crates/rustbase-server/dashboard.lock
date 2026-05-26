@@ -1,7 +1,0 @@
-# Pinned version of the embedded dashboard build.
-# Until the real dashboard is published, this file just records that the
-# placeholder index in ./dashboard/ is what gets embedded by `include_dir!`.
-# A future build.rs will replace this with a download step that fetches a
-# versioned tarball from the dashboard repo and verifies it against this
-# checksum.
-placeholder = true

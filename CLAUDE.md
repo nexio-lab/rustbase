@@ -344,10 +344,15 @@ Sandbox limits (set per app, bounded by realm, bounded by master):
 
 ## Dashboard & client SDKs
 
-- **Dashboard**: SvelteKit app served at `/_/`, prebuilt artifact downloaded
-  at build time and pinned in `rustbase-server/dashboard.lock`. The dashboard
-  navigates `Realm → App → Collection`; master admins also see a "System" tab.
-  Dev override: `RUSTBASE_DASHBOARD_PATH` points to a local build directory.
+- **Dashboard**: SvelteKit SPA in `ui/` (same workspace, separate from
+  the Rust crates). Built with `bun --cwd ui run build` to `ui/build/`,
+  embedded into the `rustbase` binary via `include_dir!` in
+  `rustbase-server/src/dashboard.rs`. Served at `/_/` with index-fallback
+  for client-side routing. Navigates `Realm → App → Collection`; master
+  admins also see a "System" tab. Dev iteration: `bun --cwd ui run dev`
+  on :5173 with a vite proxy forwarding API paths to the Rust server on
+  :8080. Runtime override: `RUSTBASE_DASHBOARD_PATH` points to any built
+  directory and bypasses the embed.
 - **REST API shape**: `/api/realms/<realm>/apps/<app>/collections/<name>/records[?filter=...]`
 - **Client SDKs**: JS/TS first, then Dart, then Go. Idiomatic and ergonomic per language. Generated against an OpenAPI spec emitted by `rustbase-api`.
 
@@ -469,5 +474,5 @@ On server start, `rustbase-server` does the following in order:
 - First run: the dashboard prompts for the master admin credentials before anything else is accessible.
 - Configuration: `rustbase.toml` in the working directory, overridable by `RUSTBASE_*` env vars.
 - License: dual MIT + Apache-2.0 (`license = "MIT OR Apache-2.0"` in every `Cargo.toml`).
-- Dashboard: separate repo, prebuilt artifact downloaded at build time and pinned in `rustbase-server/dashboard.lock`. Dev override: set `RUSTBASE_DASHBOARD_PATH` to a local build directory.
+- Dashboard: SvelteKit SPA under `ui/`, built with `bun --cwd ui run build`. `rustbase-server/build.rs` runs the build automatically when needed; the static artifact is then embedded into the `rustbase` binary via `include_dir!`. Dev iteration: `bun --cwd ui run dev` on :5173 with a vite proxy to the Rust API on :8080. Runtime override: `RUSTBASE_DASHBOARD_PATH=<dir>` bypasses the embed.
 - Client SDKs: separate repos, generated against the OpenAPI spec emitted by `rustbase-api`.

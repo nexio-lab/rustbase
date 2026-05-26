@@ -1,12 +1,19 @@
 //! Embedded dashboard server.
 //!
-//! - In release builds, `include_dir!` walks `./dashboard/` at compile
-//!   time and bundles every file into the binary. In dev mode, setting
-//!   the `RUSTBASE_DASHBOARD_PATH` env var redirects reads to a
-//!   directory on disk so a SvelteKit dev server can iterate without
-//!   rebuilding the Rust binary.
+//! - In release builds, `include_dir!` walks `../../ui/build/` at
+//!   compile time and bundles every file into the binary. The SvelteKit
+//!   SPA's static artifact ships inside the single `rustbase`
+//!   executable — `bun --cwd ui run build` produces `ui/build/`, then
+//!   `cargo build --release` snapshots it.
+//! - Set `RUSTBASE_DASHBOARD_PATH=ui/build` (or any built dashboard
+//!   directory) to override the embed at runtime — useful when iterating
+//!   on the dashboard without recompiling Rust. For interactive
+//!   iteration, run `bun --cwd ui run dev` on :5173 instead — its
+//!   vite proxy forwards `/api`, `/_/setup`, `/_/auth/*`, `/healthz`
+//!   straight to the Rust server on :8080.
 //! - Mounted at `GET /_/...` so `POST /_/setup` etc. still reach the
-//!   API. Unknown paths fall back to `index.html` (SPA convention).
+//!   API. Unknown paths fall back to `index.html` so the SPA can
+//!   handle client-side routing.
 
 use axum::{
     extract::Path,
@@ -16,7 +23,7 @@ use axum::{
 use include_dir::{Dir, include_dir};
 use std::path::{Path as StdPath, PathBuf};
 
-static EMBEDDED: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/dashboard");
+static EMBEDDED: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../ui/build");
 
 fn dev_root() -> Option<PathBuf> {
     std::env::var("RUSTBASE_DASHBOARD_PATH")
