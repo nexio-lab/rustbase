@@ -30,6 +30,7 @@ sqlx.workspace = true
 tokio-stream = { version = "0.1", features = ["sync"] }
 futures = "0.3"
 async-trait.workspace = true
+lettre.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
