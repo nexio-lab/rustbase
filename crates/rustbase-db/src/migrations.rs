@@ -311,6 +311,26 @@ pub const REALM_MIGRATIONS: &[Migration] = &[
     CREATE INDEX email_otps_lookup ON _email_otps(email, consumed_at);
     "#,
     ),
+    Migration::new(
+        "20260526_000004_oauth_states",
+        MigrationScope::Realm,
+        r#"
+    -- CSRF state nonces for the OAuth2 authorization code flow.
+    -- Issued by /authorize, consumed at /callback. Tied to the
+    -- provider so a state for "google" can't redeem a code from
+    -- "github". TTL is short (5 min) — long enough for the user to
+    -- finish the upstream consent screen.
+    CREATE TABLE _oauth_states (
+        state TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        redirect_uri TEXT NOT NULL,
+        issued_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT
+    );
+    CREATE INDEX oauth_states_provider ON _oauth_states(provider, consumed_at);
+    "#,
+    ),
 ];
 
 pub const APP_MIGRATIONS: &[Migration] = &[

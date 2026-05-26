@@ -78,6 +78,14 @@ pub fn build_router(state: AppState) -> Router {
             post(crate::auth::email_otp::login),
         )
         .route(
+            "/api/realms/{realm}/auth/oauth/{provider}/authorize",
+            get(crate::auth::oauth::authorize),
+        )
+        .route(
+            "/api/realms/{realm}/auth/oauth/{provider}/callback",
+            post(crate::auth::oauth::callback),
+        )
+        .route(
             "/api/realms/{realm}/apps",
             get(apps::list).post(apps::create),
         )
@@ -2052,6 +2060,311 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(user.password_hash.is_some(), "OTP must not clear password");
+    }
+
+    // ------------- OAuth2 sign-in -------------
+
+    /// Spin up a localhost axum server that pretends to be an
+    /// OAuth2 provider's `/token` and `/userinfo` endpoints. Returns
+    /// the bound `http://127.0.0.1:PORT` URL prefix and a shutdown
+    /// handle. The body the stub returns is parameterised so a single
+    /// test can drive multiple provider responses.
+    async fn fake_oauth_provider(
+        userinfo_body: serde_json::Value,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        use axum::{Json, Router, routing::post};
+        // Token endpoint — accepts any form body, returns a fixed token.
+        async fn token() -> Json<serde_json::Value> {
+            Json(serde_json::json!({
+                "access_token": "fake-access-token",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+            }))
+        }
+        let body_for_handler = userinfo_body;
+        let userinfo_handler = move || {
+            let body = body_for_handler.clone();
+            async move { Json(body) }
+        };
+        let app: Router = Router::new()
+            .route("/token", post(token))
+            .route("/userinfo", axum::routing::get(userinfo_handler));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        // Give axum a tick to actually start accepting.
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        (format!("http://{addr}"), handle)
+    }
+
+    /// Seed a provider config in the realm DB pointing at the stub.
+    async fn seed_provider(state: &AppState, realm: &str, provider: &str, base_url: &str) {
+        let pool = state
+            .realms
+            .pool_for(&rustbase_core::RealmId::from(realm.to_string()))
+            .await
+            .unwrap();
+        rustbase_db::oauth_providers::upsert_provider(
+            &pool,
+            &rustbase_db::oauth_providers::OAuthProvider {
+                provider: provider.into(),
+                client_id: "test-client".into(),
+                client_secret: "test-secret".into(),
+                config: rustbase_db::oauth_providers::OAuthProviderConfig {
+                    auth_url: format!("{base_url}/authorize"),
+                    token_url: format!("{base_url}/token"),
+                    userinfo_url: format!("{base_url}/userinfo"),
+                    scopes: vec!["openid".into(), "email".into()],
+                    userinfo_id_field: "/sub".into(),
+                    userinfo_email_field: "/email".into(),
+                },
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn oauth_authorize_returns_url_with_state_and_scopes() {
+        let (base_url, _h) = fake_oauth_provider(serde_json::json!({})).await;
+        let (state, _dir, _, _) = state_with_realm_and_admin().await;
+        seed_provider(&state, "acme", "google", &base_url).await;
+
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/realms/acme/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
+                None,
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let j = json_body(resp).await;
+        let url = j["authorize_url"].as_str().unwrap();
+        // The stub's authorize URL gets baked in; we don't follow it,
+        // but every required query param has to be present.
+        assert!(url.contains("client_id=test-client"), "got: {url}");
+        assert!(url.contains("response_type=code"), "got: {url}");
+        assert!(url.contains("state="), "got: {url}");
+        assert!(url.contains("scope=openid+email"), "got: {url}");
+        assert!(j["state"].as_str().unwrap().len() == 64);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn oauth_authorize_unknown_provider_returns_404() {
+        let (state, _dir, _, _) = state_with_realm_and_admin().await;
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/realms/acme/auth/oauth/ghost/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
+                None,
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn oauth_callback_round_trips_signup_via_stubbed_provider() {
+        let (base_url, _h) = fake_oauth_provider(serde_json::json!({
+            "sub": "google-sub-42",
+            "email": "ada@google.test",
+        }))
+        .await;
+        let (state, _dir, _, _) = state_with_realm_and_admin().await;
+        seed_provider(&state, "acme", "google", &base_url).await;
+
+        // 1. /authorize → get a real state nonce.
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/realms/acme/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
+                None,
+                None,
+            ))
+            .await
+            .unwrap();
+        let nonce = json_body(resp).await["state"].as_str().unwrap().to_string();
+
+        // 2. /callback — the stub returns access_token + userinfo.
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/auth/oauth/google/callback",
+                None,
+                Some(&serde_json::json!({"code":"unused", "state": nonce})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let j = json_body(resp).await;
+        assert!(j["access_token"].as_str().unwrap().starts_with("ey"));
+        assert_eq!(j["user"]["email"], "ada@google.test");
+        assert_eq!(j["user"]["verified"], true);
+
+        // 3. The link row exists, and the user was created passwordless.
+        let pool = state
+            .realms
+            .pool_for(&rustbase_core::RealmId::from("acme".to_string()))
+            .await
+            .unwrap();
+        let link =
+            rustbase_db::oauth_links::find_by_provider_user(&pool, "google", "google-sub-42")
+                .await
+                .unwrap()
+                .unwrap();
+        let user = rustbase_db::users::find_user_by_id(&pool, &link.user_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            user.password_hash.is_none(),
+            "new OAuth signup is passwordless"
+        );
+        assert!(user.verified);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn oauth_callback_links_to_existing_password_user_by_email() {
+        // A user already exists with the same email (registered with
+        // a password). OAuth callback should link the provider account
+        // to the existing user, NOT create a duplicate.
+        let (base_url, _h) = fake_oauth_provider(serde_json::json!({
+            "sub": "google-sub-99",
+            "email": "u@acme.com",  // matches state_with_collection_and_user
+        }))
+        .await;
+        let (state, _dir, _, _) = state_with_collection_and_user().await;
+        seed_provider(&state, "acme", "google", &base_url).await;
+
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/realms/acme/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
+                None,
+                None,
+            ))
+            .await
+            .unwrap();
+        let nonce = json_body(resp).await["state"].as_str().unwrap().to_string();
+
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/auth/oauth/google/callback",
+                None,
+                Some(&serde_json::json!({"code":"unused", "state": nonce})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let pool = state
+            .realms
+            .pool_for(&rustbase_core::RealmId::from("acme".to_string()))
+            .await
+            .unwrap();
+        // Still exactly one user with that email.
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE email = ?")
+            .bind("u@acme.com")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 1);
+        // Password preserved.
+        let user = rustbase_db::users::find_user_by_email(&pool, "u@acme.com")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(user.password_hash.is_some());
+        // Link row exists pointing at the same user_id.
+        let link =
+            rustbase_db::oauth_links::find_by_provider_user(&pool, "google", "google-sub-99")
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(link.user_id, user.id);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn oauth_callback_replayed_state_returns_409() {
+        let (base_url, _h) = fake_oauth_provider(serde_json::json!({
+            "sub": "google-sub-1", "email": "a@x"
+        }))
+        .await;
+        let (state, _dir, _, _) = state_with_realm_and_admin().await;
+        seed_provider(&state, "acme", "google", &base_url).await;
+
+        let app = build_router(state.clone());
+        let nonce = json_body(
+            app.oneshot(req_with_auth(
+                "GET",
+                "/api/realms/acme/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
+                None,
+                None,
+            ))
+            .await
+            .unwrap(),
+        )
+        .await["state"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // First consume succeeds.
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/auth/oauth/google/callback",
+                None,
+                Some(&serde_json::json!({"code":"unused", "state": &nonce})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Replay must be rejected.
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/auth/oauth/google/callback",
+                None,
+                Some(&serde_json::json!({"code":"unused", "state": &nonce})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn oauth_callback_unknown_state_returns_401() {
+        let (base_url, _h) = fake_oauth_provider(serde_json::json!({})).await;
+        let (state, _dir, _, _) = state_with_realm_and_admin().await;
+        seed_provider(&state, "acme", "google", &base_url).await;
+
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/auth/oauth/google/callback",
+                None,
+                Some(&serde_json::json!({"code":"unused", "state":"forged-or-stale"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
