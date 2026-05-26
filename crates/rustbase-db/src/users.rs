@@ -39,6 +39,32 @@ pub async fn insert_user(pool: &SqlitePool, email: &str, password_hash: &str) ->
     })
 }
 
+/// Create a user with no password hash (NULL column) — e.g. for
+/// passwordless OTP signup. The user can only log in via OTP / OAuth
+/// until they explicitly set a password (which the password-reset
+/// flow already covers via `set_password_hash`).
+pub async fn insert_passwordless_user(pool: &SqlitePool, email: &str) -> Result<User> {
+    let id = Uuid::now_v7().to_string();
+    let now = Utc::now();
+    sqlx::query(
+        "INSERT INTO users (id, email, password_hash, verified, last_login, created_at) \
+         VALUES (?, ?, NULL, 0, NULL, ?)",
+    )
+    .bind(&id)
+    .bind(email)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(User {
+        id,
+        email: email.to_string(),
+        password_hash: None,
+        verified: false,
+        last_login: None,
+        created_at: now,
+    })
+}
+
 pub async fn find_user_by_email(pool: &SqlitePool, email: &str) -> Result<Option<User>> {
     let row: Option<User> = sqlx::query_as(
         "SELECT id, email, password_hash, CAST(verified AS BOOLEAN) AS verified, \

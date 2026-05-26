@@ -290,6 +290,27 @@ pub const REALM_MIGRATIONS: &[Migration] = &[
     CREATE INDEX password_resets_user ON _password_resets(user_id);
     "#,
     ),
+    Migration::new(
+        "20260526_000003_email_otps",
+        MigrationScope::Realm,
+        r#"
+    -- One-time numeric codes for passwordless / 2FA email login.
+    -- Keyed by email rather than user_id because OTP doubles as a
+    -- sign-up channel: the user row may not exist yet on first
+    -- request. New requests for the same email invalidate prior
+    -- unconsumed codes (single in-flight code per email).
+    CREATE TABLE _email_otps (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL,
+        email TEXT NOT NULL,
+        issued_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX email_otps_lookup ON _email_otps(email, consumed_at);
+    "#,
+    ),
 ];
 
 pub const APP_MIGRATIONS: &[Migration] = &[
