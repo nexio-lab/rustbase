@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+#
+# pre-push: heavier checks before code leaves the machine. Mirrors
+# what CI runs on a PR so failures show up here first, not in the
+# pipeline.
+#
+# To bypass: `git push --no-verify`. Same caveat as pre-commit.
+
+set -euo pipefail
+
+GREEN=$'\e[32m'
+RED=$'\e[31m'
+DIM=$'\e[2m'
+RESET=$'\e[0m'
+
+step() {
+    local label="$1"; shift
+    printf '%s▶%s  %s\n' "$DIM" "$RESET" "$label"
+    if "$@"; then
+        printf '%s✓ %s%s\n' "$GREEN" "$label" "$RESET"
+    else
+        printf '%s✗ %s%s\n' "$RED" "$label" "$RESET"
+        exit 1
+    fi
+}
+
+step "cargo test --workspace" \
+    cargo test --workspace --quiet
+
+# cargo-audit is optional: install with `cargo install cargo-audit`.
+# If absent, skip rather than fail — the same check runs in CI.
+if command -v cargo-audit >/dev/null 2>&1; then
+    step "cargo audit" \
+        cargo audit --quiet
+else
+    printf '%s⊘  cargo-audit not installed; skipping (CI will run it)%s\n' "$DIM" "$RESET"
+fi
+
+printf '\n%sall pre-push checks passed%s\n' "$GREEN" "$RESET"
