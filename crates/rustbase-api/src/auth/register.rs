@@ -57,6 +57,21 @@ pub async fn user_register(
 
     tracing::info!(realm = %realm, user_id = %user.id, email = %user.email, "user registered");
 
+    // Fire onUserAfterRegister across every app in the realm.
+    let public = serde_json::json!({
+        "id": user.id,
+        "email": user.email,
+        "verified": user.verified,
+    });
+    let hook_req = rustbase_runtime::HookRequest::system(&realm, "", "_user");
+    if let Err(e) = state
+        .hooks
+        .dispatch_user_after_register(&realm, &hook_req, &public)
+        .await
+    {
+        tracing::warn!(error = %e, realm = %realm, "user_after_register hook errored");
+    }
+
     Ok((
         StatusCode::CREATED,
         Json(RegisterResponse {

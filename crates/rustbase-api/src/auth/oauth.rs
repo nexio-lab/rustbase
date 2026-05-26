@@ -171,7 +171,37 @@ pub async fn callback(
         )),
     ))?;
 
-    let user = resolve_user(&pool, &provider, &provider_user_id, &email).await?;
+    let (user, just_signed_up) = resolve_user(&pool, &provider, &provider_user_id, &email).await?;
+
+    let public = serde_json::json!({
+        "id": &user.id,
+        "email": &user.email,
+        "verified": true,
+    });
+    let hook_req = rustbase_runtime::HookRequest::system(&realm, "", "_user");
+
+    if just_signed_up {
+        if let Err(e) = app_state
+            .hooks
+            .dispatch_user_after_register(&realm, &hook_req, &public)
+            .await
+        {
+            tracing::warn!(error = %e, %realm, %provider, "user_after_register hook errored");
+        }
+    }
+
+    app_state
+        .hooks
+        .dispatch_user_before_login(&realm, &hook_req, &public)
+        .await
+        .map_err(|e| match e {
+            rustbase_runtime::RuntimeError::Veto(msg) => {
+                tracing::info!(%realm, user_id = %user.id, %provider, %msg, "oauth login vetoed by hook");
+                ApiError::Core(CoreError::Forbidden)
+            }
+            other => ApiError::Core(CoreError::Internal(other.to_string())),
+        })?;
+
     record_last_login(&pool, &user.id).await?;
 
     let claims = build_claims(
@@ -198,6 +228,14 @@ pub async fn callback(
         "user signed in via OAuth"
     );
 
+    if let Err(e) = app_state
+        .hooks
+        .dispatch_user_after_login(&realm, &hook_req, &public)
+        .await
+    {
+        tracing::warn!(error = %e, %realm, %provider, "user_after_login hook errored");
+    }
+
     Ok(Json(CallbackResponse {
         access_token,
         refresh_token: refresh.token,
@@ -212,12 +250,14 @@ pub async fn callback(
 /// Three-way resolve: existing link → existing user (link) →
 /// brand-new passwordless signup. Marks verified=true in every
 /// branch since the provider proved email ownership.
+/// Returns the resolved user and `true` if this call inserted a
+/// fresh row (so the caller knows to fire `onUserAfterRegister`).
 async fn resolve_user(
     pool: &SqlitePool,
     provider: &str,
     provider_user_id: &str,
     email: &str,
-) -> Result<User, ApiError> {
+) -> Result<(User, bool), ApiError> {
     if let Some(link) = oauth_links::find_by_provider_user(pool, provider, provider_user_id).await?
     {
         let user = rustbase_db::users::find_user_by_id(pool, &link.user_id)
@@ -228,20 +268,20 @@ async fn resolve_user(
         if !user.verified {
             mark_verified(pool, &user.id).await?;
         }
-        return Ok(user);
+        return Ok((user, false));
     }
     if let Some(user) = find_user_by_email(pool, email).await? {
         oauth_links::upsert_link(pool, &user.id, provider, provider_user_id).await?;
         if !user.verified {
             mark_verified(pool, &user.id).await?;
         }
-        return Ok(user);
+        return Ok((user, false));
     }
     let fresh = insert_passwordless_user(pool, email).await?;
     mark_verified(pool, &fresh.id).await?;
     oauth_links::upsert_link(pool, &fresh.id, provider, provider_user_id).await?;
     tracing::info!(user_id = %fresh.id, %provider, "user signed up via OAuth");
-    Ok(fresh)
+    Ok((fresh, true))
 }
 
 /// Build the provider's authorize URL with our query params attached.
