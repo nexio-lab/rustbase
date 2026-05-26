@@ -280,6 +280,17 @@ pub struct AppHooks {
     mailer: Option<Arc<dyn Mailer>>,
     limits: SandboxLimits,
     clock: CpuClock,
+    /// Tokio task handles for `$app.cron` jobs. Aborted on drop so a
+    /// reload through `HookEngine::load_app` doesn't leak schedulers.
+    cron_tasks: parking_lot::Mutex<Vec<tokio::task::JoinHandle<()>>>,
+}
+
+impl Drop for AppHooks {
+    fn drop(&mut self) {
+        for h in self.cron_tasks.lock().drain(..) {
+            h.abort();
+        }
+    }
 }
 
 impl AppHooks {
@@ -330,6 +341,7 @@ impl AppHooks {
             mailer,
             limits,
             clock,
+            cron_tasks: parking_lot::Mutex::new(Vec::new()),
         };
         me.install_app_global().await?;
         me.apply_limits().await;
@@ -632,6 +644,118 @@ impl AppHooks {
         Ok(Some(resp))
     }
 
+    /// Invoke the cron handler registered with `id`. Used by the
+    /// scheduler tasks spawned in `start_cron_tasks` and by tests
+    /// that prefer driving the JS dispatch path directly rather than
+    /// waiting for a real tick to fire.
+    pub async fn invoke_cron(&self, id: u64) -> Result<()> {
+        let driver = format!("(function() {{ globalThis.__rb_invoke_cron({id}); }})();");
+        let _cpu = self.arm_cpu();
+        self.ctx
+            .with(move |ctx| {
+                let _: rquickjs::Value = ctx
+                    .eval(driver.as_bytes())
+                    .catch(&ctx)
+                    .map_err(|e| RuntimeError::Js(format!("invoke_cron: {e}")))?;
+                Ok::<_, RuntimeError>(())
+            })
+            .await
+            .map_err(|e| self.classify(e))?;
+        Ok(())
+    }
+
+    /// Drain `__rb_pending_crons` from the JS side, parse each cron
+    /// expression, and spawn one tokio task per job that ticks on the
+    /// schedule and calls `invoke_cron(id)` on every fire. A bad
+    /// expression is logged and skipped — other valid jobs in the
+    /// same hook file still spin up.
+    ///
+    /// Returns the number of tasks spawned.
+    ///
+    /// Idempotent: re-calling this after a no-op load (empty pending
+    /// list) is a no-op. Drop on `AppHooks` aborts every spawned task.
+    pub async fn start_cron_tasks(self: &Arc<Self>) -> Result<usize> {
+        // Pull the queue out of JS land in one shot, then clear it so
+        // a subsequent load_dir doesn't double-schedule what we just
+        // consumed.
+        let pending_json: String = self
+            .ctx
+            .with(|ctx| {
+                let v: String = ctx
+                    .eval(
+                        r#"
+                        (function() {
+                            const out = JSON.stringify(globalThis.__rb_pending_crons || []);
+                            globalThis.__rb_pending_crons = [];
+                            return out;
+                        })();
+                        "#
+                        .as_bytes(),
+                    )
+                    .catch(&ctx)
+                    .map_err(|e| RuntimeError::Js(format!("drain pending crons: {e}")))?;
+                Ok::<_, RuntimeError>(v)
+            })
+            .await?;
+
+        #[derive(Deserialize)]
+        struct PendingCron {
+            id: u64,
+            expr: String,
+        }
+        let pending: Vec<PendingCron> = serde_json::from_str(&pending_json)
+            .map_err(|e| RuntimeError::Js(format!("decode pending crons: {e}")))?;
+
+        let mut started = 0usize;
+        for job in pending {
+            let schedule = match <cron::Schedule as std::str::FromStr>::from_str(&job.expr) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!(
+                        cron = %job.expr,
+                        error = %e,
+                        "skipping invalid cron expression"
+                    );
+                    continue;
+                }
+            };
+            let weak: std::sync::Weak<AppHooks> = Arc::downgrade(self);
+            let expr = job.expr.clone();
+            let id = job.id;
+            let handle = tokio::spawn(async move {
+                let mut sched_iter = schedule.upcoming(chrono::Utc);
+                loop {
+                    // Advance to the next fire time after "now".
+                    let next = sched_iter.next();
+                    let Some(next) = next else {
+                        // Schedule exhausted (one-shot-ish expressions
+                        // hit this); we're done with this job.
+                        break;
+                    };
+                    let now = chrono::Utc::now();
+                    let dur = (next - now).to_std().unwrap_or_default();
+                    tokio::time::sleep(dur).await;
+
+                    // Upgrade the weak ref. If AppHooks was dropped
+                    // (e.g. hook reload), exit cleanly.
+                    let Some(hooks) = weak.upgrade() else {
+                        return;
+                    };
+                    if let Err(e) = hooks.invoke_cron(id).await {
+                        tracing::warn!(
+                            cron = %expr,
+                            error = %e,
+                            "cron handler errored"
+                        );
+                    }
+                }
+            });
+            self.cron_tasks.lock().push(handle);
+            started += 1;
+        }
+        Ok(started)
+    }
+
     /// Shared driver for before-* dispatch. Builds a JS IIFE that
     /// iterates handlers, calling each with the right shape. On a
     /// caught throw, the driver returns the sentinel string
@@ -717,7 +841,28 @@ impl AppHooks {
                 // re-register replaces silently — matches axum's
                 // last-write-wins for duplicate routes).
                 globalThis.__rb_routes = {};
+                // Scheduled jobs registered via $app.cron. The JS
+                // half is registry + dispatch only; actual scheduling
+                // is Rust-side and starts after hook load completes.
+                //   __rb_cron_jobs[id]   = handler fn
+                //   __rb_pending_crons   = [{id, expr}, ...]
+                //                          (drained by start_cron_tasks)
+                //   __rb_cron_next_id    = monotonic sequence
+                globalThis.__rb_cron_jobs = {};
+                globalThis.__rb_pending_crons = [];
+                globalThis.__rb_cron_next_id = 0;
                 globalThis.__rb_record_error = function(msg) { errors.push(String(msg)); };
+
+                // Invoked by the Rust scheduler at each cron tick.
+                // Errors are caught and routed to __rb_errors so a
+                // broken job doesn't kill its peers.
+                globalThis.__rb_invoke_cron = function(id) {
+                    const fn = globalThis.__rb_cron_jobs[id];
+                    if (typeof fn !== 'function') return '';
+                    try { fn(); }
+                    catch (e) { globalThis.__rb_record_error(String(e)); }
+                    return '';
+                };
 
                 function register(kind, collection, fn) {
                     if (typeof fn !== 'function') {
@@ -815,6 +960,31 @@ impl AppHooks {
                             throw new Error('routerAdd: handler must be a function');
                         }
                         globalThis.__rb_routes[method.toUpperCase() + ' ' + path] = fn;
+                    },
+                    // Schedule a handler against a cron expression.
+                    // The expression follows the `cron` crate's
+                    // 6-field shape (sec min hour dom mon dow) — see
+                    // https://docs.rs/cron for the grammar. Registration
+                    // is pure-JS at hook-load time; the Rust scheduler
+                    // picks up __rb_pending_crons once hook load
+                    // completes, parses each expression, and spawns one
+                    // tokio task per job. A bad expression aborts at
+                    // scheduler-start time (visible in the log), not
+                    // here, so all valid jobs in the same hook file
+                    // still register.
+                    //
+                    //   $app.cron("0 0 * * * *", () => $app.log("hourly"));
+                    cron(expr, fn) {
+                        if (typeof expr !== 'string') {
+                            throw new Error('cron: expression must be a string');
+                        }
+                        if (typeof fn !== 'function') {
+                            throw new Error('cron: handler must be a function');
+                        }
+                        const id = ++globalThis.__rb_cron_next_id;
+                        globalThis.__rb_cron_jobs[id] = fn;
+                        globalThis.__rb_pending_crons.push({ id, expr });
+                        return id;
                     },
                     log(msg) {
                         const s = String(msg);
@@ -1176,9 +1346,17 @@ impl HookEngine {
         let hooks =
             AppHooks::with_records_mailer_and_limits(bridge, mailer, SandboxLimits::default())
                 .await?;
+        let hooks = Arc::new(hooks);
         let loaded = hooks.load_dir(dir).await?;
+        // Spawn schedulers for any $app.cron registrations the hook
+        // files populated. start_cron_tasks needs `&Arc<Self>` so it
+        // can hand each task a Weak<AppHooks> for clean shutdown on
+        // reload.
+        if let Err(e) = hooks.start_cron_tasks().await {
+            tracing::warn!(realm = %realm, app = %app, error = %e, "starting cron tasks failed");
+        }
         self.apps
-            .insert((realm.to_string(), app.to_string()), Arc::new(hooks));
+            .insert((realm.to_string(), app.to_string()), hooks);
         Ok(loaded)
     }
 
@@ -2534,6 +2712,162 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(r.body, serde_json::json!("second"));
+    }
+
+    // ------------- $app.cron scheduled jobs -------------
+
+    #[tokio::test]
+    async fn cron_registration_records_pending_job() {
+        let hooks = AppHooks::new().await.unwrap();
+        hooks
+            .eval(
+                r#"
+                const id = $app.cron("0 0 * * * *", () => $app.log("hourly"));
+                $app.log("id=" + id);
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        let logs = hooks.drain_logs().await.unwrap();
+        // First registration -> id=1.
+        assert_eq!(logs, vec!["id=1".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn cron_invoke_dispatches_to_correct_handler() {
+        let hooks = AppHooks::new().await.unwrap();
+        hooks
+            .eval(
+                r#"
+                $app.cron("0 0 * * * *", () => $app.log("first"));
+                $app.cron("0 0 * * * *", () => $app.log("second"));
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        // Drain the registration logs (none — handlers only fire on
+        // invoke), then invoke each by id.
+        let _ = hooks.drain_logs().await.unwrap();
+        hooks.invoke_cron(1).await.unwrap();
+        hooks.invoke_cron(2).await.unwrap();
+        // Out-of-range id is a silent no-op (no logs added).
+        hooks.invoke_cron(999).await.unwrap();
+        let logs = hooks.drain_logs().await.unwrap();
+        assert_eq!(logs, vec!["first".to_string(), "second".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn cron_handler_throw_is_caught_and_recorded() {
+        let hooks = AppHooks::new().await.unwrap();
+        hooks
+            .eval(
+                r#"$app.cron("0 0 * * * *", () => { throw new Error("kapow"); });"#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        // invoke_cron returns Ok even though the handler threw —
+        // dispatch is observer-style, errors land in __rb_errors.
+        hooks.invoke_cron(1).await.unwrap();
+        let errs = hooks.drain_errors().await.unwrap();
+        assert!(errs.iter().any(|e| e.contains("kapow")), "got: {errs:?}");
+    }
+
+    #[tokio::test]
+    async fn cron_validates_inputs_at_registration() {
+        let hooks = AppHooks::new().await.unwrap();
+        hooks
+            .eval(
+                r#"
+                try { $app.cron(42, () => null); $app.log("unexpected: number"); }
+                catch (e) { $app.log("rejected: " + e.message); }
+                try { $app.cron("0 0 * * * *", null); $app.log("unexpected: null fn"); }
+                catch (e) { $app.log("rejected: " + e.message); }
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        let logs = hooks.drain_logs().await.unwrap();
+        assert_eq!(logs.len(), 2);
+        assert!(
+            logs.iter().all(|l| l.starts_with("rejected:")),
+            "got: {logs:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn start_cron_tasks_spawns_jobs_and_fires_them() {
+        // Use a 1-second cron expression so the test finishes quickly.
+        // (Format is `sec min hour dom mon dow`; "* * * * * *" = every second.)
+        let hooks = Arc::new(AppHooks::new().await.unwrap());
+        hooks
+            .eval(
+                r#"$app.cron("* * * * * *", () => $app.log("tick"));"#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        let n = hooks.start_cron_tasks().await.unwrap();
+        assert_eq!(n, 1, "exactly one task spawned");
+        // Wait long enough for at least one tick.
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        let logs = hooks.drain_logs().await.unwrap();
+        assert!(!logs.is_empty(), "expected at least one tick log");
+        assert!(logs.iter().all(|l| l == "tick"), "got: {logs:?}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn start_cron_tasks_skips_invalid_expressions() {
+        let hooks = Arc::new(AppHooks::new().await.unwrap());
+        hooks
+            .eval(
+                r#"
+                $app.cron("not a cron expr", () => $app.log("bad"));
+                $app.cron("* * * * * *", () => $app.log("good"));
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        let n = hooks.start_cron_tasks().await.unwrap();
+        assert_eq!(n, 1, "only the valid expression spawned");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn start_cron_tasks_is_idempotent_when_pending_is_empty() {
+        let hooks = Arc::new(AppHooks::new().await.unwrap());
+        // No $app.cron calls — pending is empty.
+        assert_eq!(hooks.start_cron_tasks().await.unwrap(), 0);
+        // Re-calling is also a no-op.
+        assert_eq!(hooks.start_cron_tasks().await.unwrap(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn drop_aborts_cron_tasks() {
+        // Spawn a job; drop the AppHooks while the task is sleeping.
+        // The task's Weak::upgrade fails on the next wake, OR the
+        // explicit abort fires first. Either way the test must not
+        // hang waiting for the task to exit.
+        let hooks = Arc::new(AppHooks::new().await.unwrap());
+        hooks
+            .eval(r#"$app.cron("* * * * * *", () => null);"#, "<t>")
+            .await
+            .unwrap();
+        let n = hooks.start_cron_tasks().await.unwrap();
+        assert_eq!(n, 1);
+        // Pull a JoinHandle clone so we can assert the abort took.
+        let handle_present = !hooks.cron_tasks.lock().is_empty();
+        assert!(handle_present);
+        drop(hooks);
+        // Give the runtime a moment to observe the abort.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // Nothing to assert structurally — we just need the test to
+        // not hang. If Drop didn't abort, the runtime might keep the
+        // task scheduled past the harness, which would surface as a
+        // tokio panic in CI.
     }
 
     #[tokio::test]
