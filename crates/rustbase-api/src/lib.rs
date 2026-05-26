@@ -8,6 +8,7 @@ pub mod access_rules;
 pub mod apps;
 pub mod auth;
 pub mod collections;
+pub mod custom_routes;
 pub mod error;
 pub mod files;
 pub mod health;

@@ -101,6 +101,41 @@ impl HookRequest {
     }
 }
 
+/// Request context handed to a `$app.routerAdd` handler at invocation
+/// time. Serialised to JSON, deserialised inside the JS runtime.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomRouteContext {
+    pub method: String,
+    pub path: String,
+    /// Flat query map. Repeated keys keep only the last value — the
+    /// usual axum convention. Empty when the path had no query string.
+    pub query: BTreeMap<String, String>,
+    /// Lowercased header names; values are the raw `&str` form.
+    pub headers: BTreeMap<String, String>,
+    /// Parsed JSON body when `Content-Type` was `application/json`
+    /// AND the body parsed cleanly. `null` otherwise (no body, wrong
+    /// content type, malformed JSON).
+    pub body: Json,
+}
+
+/// JSON response shape produced by a `routerAdd` handler. Defaults
+/// match the JS shim — `status` defaults to 200 inside the JS adapter
+/// before this struct is parsed on the Rust side, so the Option is
+/// here purely for malformed inputs we want to tolerate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomRouteResponse {
+    #[serde(default = "default_status")]
+    pub status: u16,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub body: Json,
+}
+
+fn default_status() -> u16 {
+    200
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HookEvent {
     AfterCreate,
@@ -553,6 +588,50 @@ impl AppHooks {
         Ok(())
     }
 
+    /// Look up + invoke a custom HTTP route registered via
+    /// `$app.routerAdd(method, path, fn)`. Returns `Ok(None)` when no
+    /// handler is registered for `(method, path)` so the API layer
+    /// can answer 404. Returns `Ok(Some(_))` with the JSON response
+    /// shape the handler produced. The CPU deadline is armed for the
+    /// duration of the call, same as for record/lifecycle dispatch.
+    pub async fn invoke_custom_route(
+        &self,
+        method: &str,
+        path: &str,
+        ctx: &CustomRouteContext,
+    ) -> Result<Option<CustomRouteResponse>> {
+        let ctx_json = serde_json::to_string(ctx)
+            .map_err(|e| RuntimeError::Js(format!("serialise ctx: {e}")))?;
+        let driver = format!(
+            r#"
+            (function() {{
+                return globalThis.__rb_invoke_route({method_lit}, {path_lit}, {ctx_lit});
+            }})();
+            "#,
+            method_lit = json_quote(method),
+            path_lit = json_quote(path),
+            ctx_lit = json_quote(&ctx_json),
+        );
+        let _cpu = self.arm_cpu();
+        let raw: String = self
+            .ctx
+            .with(move |ctx| {
+                let v: String = ctx
+                    .eval(driver.as_bytes())
+                    .catch(&ctx)
+                    .map_err(|e| RuntimeError::Js(format!("invoke_route: {e}")))?;
+                Ok::<_, RuntimeError>(v)
+            })
+            .await
+            .map_err(|e| self.classify(e))?;
+        if raw.is_empty() {
+            return Ok(None);
+        }
+        let resp: CustomRouteResponse = serde_json::from_str(&raw)
+            .map_err(|e| RuntimeError::Js(format!("invoke_route response: {e}")))?;
+        Ok(Some(resp))
+    }
+
     /// Shared driver for before-* dispatch. Builds a JS IIFE that
     /// iterates handlers, calling each with the right shape. On a
     /// caught throw, the driver returns the sentinel string
@@ -633,6 +712,11 @@ impl AppHooks {
                 const handlers = (globalThis.__rb_handlers = {});
                 const errors = (globalThis.__rb_errors = []);
                 globalThis.__rb_log = [];
+                // Custom HTTP routes registered via $app.routerAdd.
+                // Keyed by "METHOD /path". One handler per key (a
+                // re-register replaces silently — matches axum's
+                // last-write-wins for duplicate routes).
+                globalThis.__rb_routes = {};
                 globalThis.__rb_record_error = function(msg) { errors.push(String(msg)); };
 
                 function register(kind, collection, fn) {
@@ -642,6 +726,34 @@ impl AppHooks {
                     const key = collection + ':' + kind;
                     (handlers[key] = handlers[key] || []).push(fn);
                 }
+
+                // Invoked by the Rust catch-all when a custom-route
+                // request arrives. Returns a JSON string describing
+                // the response, or the empty string when no handler
+                // is registered for (method, path).
+                globalThis.__rb_invoke_route = function(method, path, ctxJson) {
+                    const key = method.toUpperCase() + ' ' + path;
+                    const fn = globalThis.__rb_routes[key];
+                    if (typeof fn !== 'function') return '';
+                    const ctx = JSON.parse(ctxJson);
+                    let res;
+                    try { res = fn(ctx); }
+                    catch (e) {
+                        globalThis.__rb_record_error(String(e));
+                        return JSON.stringify({
+                            status: 500,
+                            body: { error: String((e && e.message) || e) },
+                        });
+                    }
+                    if (res === undefined || res === null) {
+                        return JSON.stringify({ status: 204 });
+                    }
+                    if (typeof res !== 'object') {
+                        return JSON.stringify({ status: 200, body: res });
+                    }
+                    if (typeof res.status !== 'number') res.status = 200;
+                    return JSON.stringify(res);
+                };
 
                 globalThis.$app = {
                     // populated per-call by the dispatch driver; null
@@ -671,6 +783,39 @@ impl AppHooks {
                     // after_send is an observer (errors stashed).
                     onMailerBeforeSend(fn) { register('mailer_before_send', '_mail', fn); },
                     onMailerAfterSend(fn)  { register('mailer_after_send',  '_mail', fn); },
+                    // Custom HTTP endpoints. Mounted under
+                    //   /api/realms/<realm>/apps/<app>/custom<path>
+                    // so routerAdd("GET", "/hello", fn) becomes
+                    //   GET /api/realms/<realm>/apps/<app>/custom/hello.
+                    //
+                    // The handler receives an object with these fields:
+                    //   method   uppercased verb (string)
+                    //   path     the path it matched (no prefix)
+                    //   query    query string parsed as { [k]: string }
+                    //   headers  request header map { [k]: string }
+                    //   body     parsed JSON body or null on
+                    //            non-JSON / empty bodies
+                    //
+                    // Return shape:
+                    //   { status: 200, body: any, headers?: object }
+                    // Missing return / undefined -> 204 No Content.
+                    // Non-object return -> 200 with that value as body.
+                    // Throw -> 500 Internal Server Error; the error
+                    //          message is logged via __rb_record_error.
+                    //
+                    // Phase 1: exact path match. No `:param` or wildcard.
+                    routerAdd(method, path, fn) {
+                        if (typeof method !== 'string') {
+                            throw new Error('routerAdd: method must be a string');
+                        }
+                        if (typeof path !== 'string' || !path.startsWith('/')) {
+                            throw new Error('routerAdd: path must start with "/"');
+                        }
+                        if (typeof fn !== 'function') {
+                            throw new Error('routerAdd: handler must be a function');
+                        }
+                        globalThis.__rb_routes[method.toUpperCase() + ' ' + path] = fn;
+                    },
                     log(msg) {
                         const s = String(msg);
                         globalThis.__rb_log.push(s);
@@ -1188,6 +1333,24 @@ impl HookEngine {
                 .await?;
         }
         Ok(())
+    }
+
+    /// Dispatch a custom-route invocation to the `(realm, app)` hook
+    /// engine. Returns `Ok(None)` when no hooks are loaded for that
+    /// app OR when the app has no handler for `(method, path)`. The
+    /// API layer maps both cases to HTTP 404.
+    pub async fn invoke_custom_route(
+        &self,
+        realm: &str,
+        app: &str,
+        method: &str,
+        path: &str,
+        ctx: &CustomRouteContext,
+    ) -> Result<Option<CustomRouteResponse>> {
+        let Some(hooks) = self.get(realm, app) else {
+            return Ok(None);
+        };
+        hooks.invoke_custom_route(method, path, ctx).await
     }
 }
 
@@ -2201,6 +2364,176 @@ mod tests {
             vec!["first".to_string(), "caught:second blocks".to_string()]
         );
         assert!(mock.drain().is_empty());
+    }
+
+    // ------------- $app.routerAdd custom routes -------------
+
+    fn empty_ctx(method: &str, path: &str) -> CustomRouteContext {
+        CustomRouteContext {
+            method: method.into(),
+            path: path.into(),
+            query: BTreeMap::new(),
+            headers: BTreeMap::new(),
+            body: serde_json::Value::Null,
+        }
+    }
+
+    #[tokio::test]
+    async fn router_add_unregistered_path_returns_none() {
+        let hooks = AppHooks::new().await.unwrap();
+        let r = hooks
+            .invoke_custom_route("GET", "/missing", &empty_ctx("GET", "/missing"))
+            .await
+            .unwrap();
+        assert!(r.is_none());
+    }
+
+    #[tokio::test]
+    async fn router_add_returns_handler_result_as_response() {
+        let hooks = AppHooks::new().await.unwrap();
+        hooks
+            .eval(
+                r#"
+                $app.routerAdd("GET", "/hello", (ctx) => {
+                    return { status: 200, body: { method: ctx.method, who: ctx.query.who } };
+                });
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        let mut ctx = empty_ctx("GET", "/hello");
+        ctx.query.insert("who".into(), "ada".into());
+        let r = hooks
+            .invoke_custom_route("GET", "/hello", &ctx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(r.status, 200);
+        assert_eq!(r.body["method"], "GET");
+        assert_eq!(r.body["who"], "ada");
+    }
+
+    #[tokio::test]
+    async fn router_add_undefined_return_becomes_204() {
+        let hooks = AppHooks::new().await.unwrap();
+        hooks
+            .eval(r#"$app.routerAdd("DELETE", "/sink", (_ctx) => {});"#, "<t>")
+            .await
+            .unwrap();
+        let r = hooks
+            .invoke_custom_route("DELETE", "/sink", &empty_ctx("DELETE", "/sink"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(r.status, 204);
+        // serde_json::Value::default() is Null, which matches the JS
+        // "no body" semantics; just confirm we didn't manufacture one.
+        assert!(r.body.is_null());
+    }
+
+    #[tokio::test]
+    async fn router_add_non_object_return_wraps_as_200_body() {
+        let hooks = AppHooks::new().await.unwrap();
+        hooks
+            .eval(r#"$app.routerAdd("GET", "/n", () => 42);"#, "<t>")
+            .await
+            .unwrap();
+        let r = hooks
+            .invoke_custom_route("GET", "/n", &empty_ctx("GET", "/n"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(r.status, 200);
+        assert_eq!(r.body, serde_json::json!(42));
+    }
+
+    #[tokio::test]
+    async fn router_add_handler_throw_becomes_500_and_records_error() {
+        let hooks = AppHooks::new().await.unwrap();
+        hooks
+            .eval(
+                r#"$app.routerAdd("GET", "/boom", () => { throw new Error("kapow"); });"#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        let r = hooks
+            .invoke_custom_route("GET", "/boom", &empty_ctx("GET", "/boom"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(r.status, 500);
+        assert_eq!(r.body["error"], "kapow");
+        let errs = hooks.drain_errors().await.unwrap();
+        assert!(errs.iter().any(|e| e.contains("kapow")), "got: {errs:?}");
+    }
+
+    #[tokio::test]
+    async fn router_add_method_match_is_case_insensitive() {
+        let hooks = AppHooks::new().await.unwrap();
+        hooks
+            .eval(
+                r#"$app.routerAdd("get", "/foo", () => ({ status: 200, body: "ok" }));"#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        // Registered as "get"; uppercased internally — querying "GET"
+        // should match. Querying "POST" should miss.
+        assert!(
+            hooks
+                .invoke_custom_route("GET", "/foo", &empty_ctx("GET", "/foo"))
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            hooks
+                .invoke_custom_route("POST", "/foo", &empty_ctx("POST", "/foo"))
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn router_add_validates_inputs() {
+        let hooks = AppHooks::new().await.unwrap();
+        // Path without leading slash → throws at registration.
+        let res = hooks
+            .eval(
+                r#"
+                try { $app.routerAdd("GET", "no-slash", () => null); $app.log("unexpected"); }
+                catch (e) { $app.log("rejected: " + e.message); }
+                "#,
+                "<t>",
+            )
+            .await;
+        assert!(res.is_ok());
+        let logs = hooks.drain_logs().await.unwrap();
+        assert!(logs[0].starts_with("rejected:"), "got: {logs:?}");
+    }
+
+    #[tokio::test]
+    async fn router_add_reregister_replaces_handler() {
+        let hooks = AppHooks::new().await.unwrap();
+        hooks
+            .eval(
+                r#"
+                $app.routerAdd("GET", "/x", () => ({ body: "first" }));
+                $app.routerAdd("GET", "/x", () => ({ body: "second" }));
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        let r = hooks
+            .invoke_custom_route("GET", "/x", &empty_ctx("GET", "/x"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(r.body, serde_json::json!("second"));
     }
 
     #[tokio::test]
