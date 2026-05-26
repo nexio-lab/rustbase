@@ -101,3 +101,47 @@ export type Realm = {
 	name: string;
 	created_at: string;
 };
+
+export type App = {
+	id: string;
+	name: string;
+	created_at: string;
+};
+
+export type CollectionKind = 'base' | 'auth' | 'view';
+
+/**
+ * Tagged `FieldType` mirroring the Rust enum in `rustbase-core::schema`.
+ * The `kind` discriminator is what serde uses on the wire; per-variant
+ * options are flattened onto the same object.
+ */
+export type FieldType =
+	| { kind: 'text'; min?: number; max?: number }
+	| { kind: 'number'; min?: number; max?: number }
+	| { kind: 'bool' }
+	| { kind: 'email' }
+	| { kind: 'url' }
+	| { kind: 'date' }
+	| { kind: 'json' }
+	| { kind: 'relation'; target: string; cascade_delete?: boolean }
+	| { kind: 'file'; max_size?: number; mime_types?: string[] };
+
+export type Field = {
+	name: string;
+	required?: boolean;
+	unique?: boolean;
+} & FieldType;
+
+export type Schema = {
+	id: string;
+	kind: CollectionKind;
+	fields: Field[];
+};
+
+export type Collection = {
+	id: string;
+	kind: CollectionKind;
+	schema: Schema;
+	created_at: string;
+	updated_at: string;
+};
