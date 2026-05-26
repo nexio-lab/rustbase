@@ -33,6 +33,10 @@ use std::path::Path;
 use std::sync::Arc;
 use thiserror::Error;
 
+mod sandbox;
+pub use sandbox::SandboxLimits;
+use sandbox::CpuClock;
+
 mod ts;
 
 #[derive(Debug, Error)]
@@ -44,6 +48,11 @@ pub enum RuntimeError {
     /// A before-hook threw, vetoing the request.
     #[error("vetoed by hook: {0}")]
     Veto(String),
+    /// CPU deadline elapsed mid-execution. Raised when a JS entry
+    /// returns an error and the per-call deadline had been crossed —
+    /// the QuickJS interrupt handler aborted the running script.
+    #[error("hook exceeded cpu deadline ({0} ms)")]
+    Timeout(u64),
 }
 
 pub type Result<T> = std::result::Result<T, RuntimeError>;
@@ -233,6 +242,8 @@ pub struct AppHooks {
     #[allow(dead_code)]
     rt: AsyncRuntime,
     records: Option<Arc<dyn RecordsBridge>>,
+    limits: SandboxLimits,
+    clock: CpuClock,
 }
 
 impl AppHooks {
@@ -241,24 +252,76 @@ impl AppHooks {
     }
 
     pub async fn with_records(records: Option<Arc<dyn RecordsBridge>>) -> Result<Self> {
+        Self::with_records_and_limits(records, SandboxLimits::default()).await
+    }
+
+    /// Build an `AppHooks` with explicit sandbox limits. Bootstrap JS
+    /// (the `$app` global, the records shim) runs *before* the limits
+    /// take effect — under aggressive policy a future bootstrap step
+    /// might otherwise time out trying to install itself.
+    pub async fn with_records_and_limits(
+        records: Option<Arc<dyn RecordsBridge>>,
+        limits: SandboxLimits,
+    ) -> Result<Self> {
         let rt = AsyncRuntime::new()?;
         let ctx = AsyncContext::full(&rt).await?;
+        let clock = CpuClock::new();
         let me = Self {
             rt,
             ctx,
             records,
+            limits,
+            clock,
         };
         me.install_app_global().await?;
+        me.apply_limits().await;
         Ok(me)
+    }
+
+    /// Apply `self.limits` to the underlying QuickJS runtime. Called
+    /// once at the tail of construction, after bootstrap is in.
+    async fn apply_limits(&self) {
+        if let Some(b) = self.limits.memory_bytes {
+            self.rt.set_memory_limit(b).await;
+        }
+        if let Some(b) = self.limits.stack_bytes {
+            self.rt.set_max_stack_size(b).await;
+        }
+        // The interrupt handler is installed unconditionally — it reads
+        // `clock.deadline_ms`, and that field is `0` whenever no entry
+        // has armed a deadline, so the handler is a no-op until armed.
+        let clock = self.clock.clone();
+        self.rt
+            .set_interrupt_handler(Some(Box::new(move || clock.deadline_crossed())))
+            .await;
+    }
+
+    /// If `cpu_time_ms` is configured, arm a deadline guard. Returned
+    /// `Option<CpuGuard>` disarms on drop; if no CPU policy is set,
+    /// `None` is returned and execution runs uncapped.
+    fn arm_cpu(&self) -> Option<sandbox::CpuGuard<'_>> {
+        self.limits.cpu_time_ms.map(|ms| self.clock.arm(ms))
+    }
+
+    /// Convert a generic JS error into `Timeout` when the CPU deadline
+    /// was crossed during the call. Otherwise pass the error through.
+    fn classify(&self, e: RuntimeError) -> RuntimeError {
+        match (&e, self.limits.cpu_time_ms, self.clock.deadline_crossed()) {
+            (RuntimeError::Js(_), Some(ms), true) => RuntimeError::Timeout(ms),
+            _ => e,
+        }
     }
 
     /// Evaluate a single JS source. Errors are returned for visibility
     /// (the caller logs them); a failing file does not poison the
-    /// context — later hooks may still load and run.
+    /// context — later hooks may still load and run. CPU deadline is
+    /// armed for the duration of the call.
     pub async fn eval(&self, src: &str, label: &str) -> Result<()> {
         let src = src.to_string();
         let label = label.to_string();
-        self.ctx
+        let _cpu = self.arm_cpu();
+        let res = self
+            .ctx
             .with(move |ctx| {
                 let _: rquickjs::Value =
                     ctx.eval(src.as_bytes()).catch(&ctx).map_err(|e| {
@@ -266,8 +329,8 @@ impl AppHooks {
                     })?;
                 Ok::<_, RuntimeError>(())
             })
-            .await?;
-        Ok(())
+            .await;
+        res.map_err(|e| self.classify(e))
     }
 
     /// Walk `dir`, evaluating every `*.js` file. Failing files are
@@ -349,7 +412,9 @@ impl AppHooks {
             payload_lit = json_quote(&json),
             request_lit = json_quote(&request_json),
         );
-        self.ctx
+        let _cpu = self.arm_cpu();
+        let res = self
+            .ctx
             .with(move |ctx| {
                 let _: rquickjs::Value =
                     ctx.eval(driver.as_bytes()).catch(&ctx).map_err(|e| {
@@ -357,7 +422,8 @@ impl AppHooks {
                     })?;
                 Ok::<_, RuntimeError>(())
             })
-            .await?;
+            .await;
+        res.map_err(|e| self.classify(e))?;
         Ok(())
     }
 
@@ -492,6 +558,7 @@ impl AppHooks {
             request_lit = json_quote(&request_json),
         );
 
+        let _cpu = self.arm_cpu();
         let result: String = self
             .ctx
             .with(move |ctx| {
@@ -500,7 +567,8 @@ impl AppHooks {
                 })?;
                 Ok::<_, RuntimeError>(v)
             })
-            .await?;
+            .await
+            .map_err(|e| self.classify(e))?;
 
         if let Some(msg) = result.strip_prefix("__rb_veto:") {
             return Err(RuntimeError::Veto(msg.to_string()));
@@ -1019,6 +1087,140 @@ mod tests {
             )
             .await
             .unwrap();
+    }
+
+    // ------------- sandbox limits -------------
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cpu_deadline_aborts_infinite_loop_in_dispatch() {
+        let limits = SandboxLimits {
+            memory_bytes: None,
+            stack_bytes: None,
+            cpu_time_ms: Some(50),
+        };
+        let hooks = AppHooks::with_records_and_limits(None, limits).await.unwrap();
+        hooks
+            .eval(
+                r#"$app.onRecordAfterCreate("notes", () => { while (true) {} });"#,
+                "<infinite>",
+            )
+            .await
+            .unwrap();
+
+        let started = std::time::Instant::now();
+        let res = hooks
+            .dispatch(
+                "notes",
+                HookEvent::AfterCreate,
+                &HookRequest::default(),
+                &json!({"id": "n1"}),
+            )
+            .await;
+        let elapsed = started.elapsed();
+
+        match res {
+            Err(RuntimeError::Timeout(ms)) => assert_eq!(ms, 50),
+            other => panic!("expected Timeout(50), got: {other:?}"),
+        }
+        // 50 ms deadline; allow generous slack for CI but reject runaway.
+        assert!(elapsed < std::time::Duration::from_secs(2), "took {elapsed:?}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cpu_deadline_disarms_so_next_dispatch_runs_clean() {
+        // First call exhausts its budget; second call (with the same
+        // AppHooks) must not inherit a stale deadline.
+        let limits = SandboxLimits {
+            memory_bytes: None,
+            stack_bytes: None,
+            cpu_time_ms: Some(50),
+        };
+        let hooks = AppHooks::with_records_and_limits(None, limits).await.unwrap();
+        hooks
+            .eval(
+                r#"
+                let armed = false;
+                $app.onRecordAfterCreate("notes", () => {
+                    if (!armed) { armed = true; while (true) {} }
+                    $app.log("ok");
+                });
+                "#,
+                "<one-shot-loop>",
+            )
+            .await
+            .unwrap();
+
+        let first = hooks
+            .dispatch("notes", HookEvent::AfterCreate, &HookRequest::default(), &json!({}))
+            .await;
+        assert!(matches!(first, Err(RuntimeError::Timeout(_))), "got: {first:?}");
+
+        // Second dispatch — fresh deadline, fast handler, should succeed.
+        hooks
+            .dispatch("notes", HookEvent::AfterCreate, &HookRequest::default(), &json!({}))
+            .await
+            .unwrap();
+        assert_eq!(hooks.drain_logs().await.unwrap(), vec!["ok".to_string()]);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn memory_limit_aborts_huge_allocation() {
+        let limits = SandboxLimits {
+            // 1 MiB cap is well below the 8 MiB string the hook tries to build.
+            memory_bytes: Some(1 * 1024 * 1024),
+            stack_bytes: None,
+            cpu_time_ms: Some(2_000),
+        };
+        let hooks = AppHooks::with_records_and_limits(None, limits).await.unwrap();
+        hooks
+            .eval(
+                r#"
+                $app.onRecordAfterCreate("notes", () => {
+                    // Force a large allocation; the runtime must reject it.
+                    let s = "x";
+                    for (let i = 0; i < 23; i++) s = s + s; // ~8 MiB
+                    $app.log("unexpected: " + s.length);
+                });
+                "#,
+                "<bigalloc>",
+            )
+            .await
+            .unwrap();
+
+        // The handler error gets caught by the dispatch driver and
+        // stashed via __rb_record_error, so dispatch returns Ok; the
+        // assertion is that the unreachable log line never ran.
+        hooks
+            .dispatch("notes", HookEvent::AfterCreate, &HookRequest::default(), &json!({}))
+            .await
+            .unwrap();
+        assert!(hooks.drain_logs().await.unwrap().is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unlimited_sandbox_lets_long_hook_run() {
+        // Sanity check: opting out of limits really opts out.
+        let hooks = AppHooks::with_records_and_limits(None, SandboxLimits::unlimited())
+            .await
+            .unwrap();
+        hooks
+            .eval(
+                r#"
+                $app.onRecordAfterCreate("notes", () => {
+                    let n = 0;
+                    for (let i = 0; i < 100000; i++) n += i;
+                    $app.log("sum:" + n);
+                });
+                "#,
+                "<work>",
+            )
+            .await
+            .unwrap();
+        hooks
+            .dispatch("notes", HookEvent::AfterCreate, &HookRequest::default(), &json!({}))
+            .await
+            .unwrap();
+        assert_eq!(hooks.drain_logs().await.unwrap(), vec!["sum:4999950000".to_string()]);
     }
 
     #[tokio::test]
