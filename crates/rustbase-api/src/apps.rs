@@ -82,6 +82,16 @@ pub async fn create(
     let app_pool = state.apps.pool_for(&realm_id, &app_id).await?;
     apply_migrations(app_pool, APP_MIGRATIONS).await?;
 
+    // Pick up any JS hooks dropped on disk before the app was created.
+    let hooks_dir = state
+        .data_dir
+        .join("hooks")
+        .join(&realm)
+        .join(&req.id);
+    if let Err(e) = state.hooks.load_app(&realm, &req.id, &hooks_dir).await {
+        tracing::warn!(realm = %realm, app = %req.id, error = %e, "loading hooks failed");
+    }
+
     tracing::info!(realm = %realm, app = %req.id, "app created");
     Ok((StatusCode::CREATED, Json(app)))
 }

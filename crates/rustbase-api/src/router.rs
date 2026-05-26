@@ -145,6 +145,7 @@ mod tests {
         realms::ensure_master_realm,
     };
     use rustbase_realtime::RealtimeBroker;
+    use rustbase_runtime::HookEngine;
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
     use tempfile::tempdir;
@@ -163,6 +164,7 @@ mod tests {
             revocations: RevocationSet::default(),
             master_key: Arc::new(SigningKey::generate()),
             broker: RealtimeBroker::default(),
+            hooks: HookEngine::new(),
             data_dir: Arc::new(data_dir),
             initialized: Arc::new(AtomicBool::new(false)),
         };

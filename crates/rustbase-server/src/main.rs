@@ -8,6 +8,7 @@ use rustbase_db::{
     secrets::{MASTER_SIGNING_KEY, get_or_init_secret},
 };
 use rustbase_realtime::RealtimeBroker;
+use rustbase_runtime::HookEngine;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use tracing_subscriber::EnvFilter;
@@ -68,9 +69,15 @@ async fn main() -> Result<()> {
         revocations: RevocationSet::default(),
         master_key,
         broker: RealtimeBroker::default(),
+        hooks: HookEngine::new(),
         data_dir: Arc::new(cfg.data_dir.clone()),
         initialized: Arc::new(AtomicBool::new(already_initialized)),
     };
+
+    // Load JS hooks for every (realm, app) that exists on disk.
+    if let Err(e) = load_all_hooks(&state).await {
+        tracing::error!(error = %e, "loading hooks at boot failed; continuing without them");
+    }
 
     let dashboard_routes: Router<()> = Router::new()
         .route("/_/", get(dashboard::index))
@@ -79,5 +86,52 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(&cfg.listen).await?;
     tracing::info!(listen = %cfg.listen, "rustbase: ready");
     axum::serve(listener, app).await?;
+    Ok(())
+}
+
+/// Walk every realm + app that exists in `system.db`, and load JS
+/// hooks from `data/hooks/<realm>/<app>/` if that directory exists.
+/// Apps without a hooks directory are simply skipped.
+async fn load_all_hooks(state: &rustbase_api::AppState) -> Result<()> {
+    use rustbase_core::{AppId, RealmId};
+    use rustbase_db::{apps::list_apps as db_list_apps, paths, realms::list_realms};
+
+    let realms = list_realms(state.system.pool()).await?;
+    for realm in realms {
+        let realm_id = RealmId::from(realm.id.clone());
+        // A realm row exists in system.db before its realm.db has been
+        // initialized (master is created at boot, before any app).
+        // Skip rather than try to read a not-yet-migrated DB.
+        if !paths::realm_db(state.data_dir.as_ref(), &realm_id).exists() {
+            continue;
+        }
+        let realm_pool = state.realms.pool_for(&realm_id).await?;
+        let apps_in_realm = db_list_apps(&realm_pool).await?;
+        for app in apps_in_realm {
+            let app_id = AppId::from(app.id.clone());
+            let dir = state
+                .data_dir
+                .join("hooks")
+                .join(realm_id.as_str())
+                .join(app_id.as_str());
+            match state.hooks.load_app(&realm.id, &app.id, &dir).await {
+                Ok(n) if n > 0 => {
+                    tracing::info!(
+                        realm = %realm.id,
+                        app = %app.id,
+                        files = n,
+                        "loaded JS hooks"
+                    );
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!(
+                    realm = %realm.id,
+                    app = %app.id,
+                    error = %e,
+                    "failed to load JS hooks"
+                ),
+            }
+        }
+    }
     Ok(())
 }
