@@ -145,3 +145,24 @@ export type Collection = {
 	created_at: string;
 	updated_at: string;
 };
+
+/**
+ * Record shape on the wire — `id`, `collection`, the field map under
+ * `fields`, plus the two timestamp columns the records table always
+ * carries.
+ */
+export type RecordRow = {
+	id: string;
+	collection: string;
+	fields: Record<string, unknown>;
+	created_at: string;
+	updated_at: string;
+};
+
+export type RecordListResponse = {
+	items: RecordRow[];
+	page: number;
+	per_page: number;
+	total_items: number;
+	total_pages: number;
+};

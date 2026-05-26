@@ -163,6 +163,15 @@
 {:else if loadError}
 	<div class="error-banner">{loadError}</div>
 {:else if collection}
+	<div class="mb-2 flex gap-1 border-b border-slate-200 text-sm">
+		<span class="border-b-2 border-orange-500 px-3 py-1.5 font-medium text-slate-900">Schema</span>
+		<a
+			href="/realms/{realm}/apps/{app}/collections/{coll}/records"
+			class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
+		>
+			Records
+		</a>
+	</div>
 	<div class="mb-6 flex items-end justify-between">
 		<div>
 			<h1 class="text-2xl font-semibold tracking-tight text-slate-900">
