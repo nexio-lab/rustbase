@@ -13,6 +13,7 @@ pub mod oauth;
 pub mod password_reset;
 pub mod refresh;
 pub mod register;
+pub mod totp;
 pub mod verify_email;
 
 pub use extract::{AdminAuth, PrincipalAuth};

@@ -45,6 +45,11 @@ lettre = { version = "0.11", default-features = false, features = ["smtp-transpo
 # cron expressions for $app.cron scheduled jobs
 cron = "0.16"
 
+# RFC 6238 TOTP for 2FA / authenticator-app login.
+# - otpauth:    enables TOTP::new(..., issuer, account_name) + get_url()
+# - gen_secret: enables Secret::generate_secret()
+totp-rs = { version = "5", default-features = false, features = ["otpauth", "gen_secret"] }
+
 # OAuth2 — provider sign-in (Google / GitHub / generic OIDC)
 oauth2 = { version = "5", default-features = false }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }

@@ -45,11 +45,22 @@ pub struct UserPublic {
     pub verified: bool,
 }
 
+/// Two-shape response: full tokens for non-2FA users, or an
+/// `mfa_token` challenge when the user has TOTP enabled and must
+/// complete the second step. Clients disambiguate by presence of
+/// `mfa_required: true`.
 #[derive(Debug, Serialize)]
-pub struct UserLoginResponse {
-    pub access_token: String,
-    pub refresh_token: String,
-    pub user: UserPublic,
+#[serde(untagged)]
+pub enum UserLoginResponse {
+    Tokens {
+        access_token: String,
+        refresh_token: String,
+        user: UserPublic,
+    },
+    MfaRequired {
+        mfa_required: bool,
+        mfa_token: String,
+    },
 }
 
 pub async fn master_admin_login(
@@ -195,6 +206,24 @@ pub async fn user_login(
             other => ApiError::Core(CoreError::Internal(other.to_string())),
         })?;
 
+    // TOTP gate: if the user has 2FA enabled, don't issue tokens
+    // here. Mint a one-shot mfa_token and let the client complete the
+    // login via /auth/users/login/totp. The user-lifecycle
+    // `after_login` event waits for the second step too — semantically
+    // login isn't complete until both factors are accepted.
+    if crate::auth::totp::is_user_totp_enabled(&pool, &user.id).await? {
+        let mfa_token = crate::auth::totp::issue_mfa_challenge(&pool, &user.id).await?;
+        tracing::info!(
+            realm = %realm,
+            user_id = %user.id,
+            "password ok; awaiting TOTP second step"
+        );
+        return Ok(Json(UserLoginResponse::MfaRequired {
+            mfa_required: true,
+            mfa_token,
+        }));
+    }
+
     record_last_login(&pool, &user.id).await?;
 
     let claims = build_claims(
@@ -227,7 +256,7 @@ pub async fn user_login(
         tracing::warn!(error = %e, realm = %realm, "user_after_login hook errored");
     }
 
-    Ok(Json(UserLoginResponse {
+    Ok(Json(UserLoginResponse::Tokens {
         access_token,
         refresh_token: refresh.token,
         user: UserPublic {

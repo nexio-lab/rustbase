@@ -331,6 +331,38 @@ pub const REALM_MIGRATIONS: &[Migration] = &[
     CREATE INDEX oauth_states_provider ON _oauth_states(provider, consumed_at);
     "#,
     ),
+    Migration::new(
+        "20260526_000005_user_totp_and_mfa",
+        MigrationScope::Realm,
+        r#"
+    -- Per-user TOTP secret. Lifecycle:
+    --   enrolled_at NOT NULL, enabled = 0  -> pending (user must
+    --                                         confirm with a code)
+    --   enabled = 1                         -> active (second factor
+    --                                         required at login)
+    -- A user has at most one row here. Re-enrollment replaces it.
+    CREATE TABLE _user_totp (
+        user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        secret_b32 TEXT NOT NULL,
+        enrolled_at TEXT NOT NULL,
+        confirmed_at TEXT,
+        enabled INTEGER NOT NULL DEFAULT 0
+    );
+
+    -- MFA challenges issued by /auth/users/login when the user has
+    -- TOTP enabled. The first step returns a short-lived `mfa_token`
+    -- that the client exchanges, together with a TOTP code, at
+    -- /auth/users/login/totp for the real tokens.
+    CREATE TABLE _mfa_challenges (
+        token TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        issued_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT
+    );
+    CREATE INDEX mfa_challenges_user ON _mfa_challenges(user_id, consumed_at);
+    "#,
+    ),
 ];
 
 pub const APP_MIGRATIONS: &[Migration] = &[
