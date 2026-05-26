@@ -164,6 +164,7 @@ async fn issue_tokens_for(
     realm: &str,
     email: &str,
 ) -> Result<Json<OtpLoginResponse>, ApiError> {
+    let mut just_signed_up = false;
     let user: User = match find_user_by_email(pool, email).await? {
         Some(u) => {
             if !u.verified {
@@ -177,6 +178,7 @@ async fn issue_tokens_for(
             // until they explicitly set one.
             let fresh = insert_passwordless_user(pool, email).await?;
             mark_verified(pool, &fresh.id).await?;
+            just_signed_up = true;
             tracing::info!(
                 realm = %realm,
                 user_id = %fresh.id,
@@ -186,6 +188,35 @@ async fn issue_tokens_for(
             fresh
         }
     };
+
+    let public = serde_json::json!({
+        "id": &user.id,
+        "email": &user.email,
+        "verified": true,
+    });
+    let hook_req = rustbase_runtime::HookRequest::system(realm, "", "_user");
+
+    if just_signed_up {
+        if let Err(e) = state
+            .hooks
+            .dispatch_user_after_register(realm, &hook_req, &public)
+            .await
+        {
+            tracing::warn!(error = %e, %realm, "user_after_register hook errored");
+        }
+    }
+
+    state
+        .hooks
+        .dispatch_user_before_login(realm, &hook_req, &public)
+        .await
+        .map_err(|e| match e {
+            rustbase_runtime::RuntimeError::Veto(msg) => {
+                tracing::info!(%realm, user_id = %user.id, %msg, "login vetoed by hook");
+                ApiError::Core(CoreError::Forbidden)
+            }
+            other => ApiError::Core(CoreError::Internal(other.to_string())),
+        })?;
 
     record_last_login(pool, &user.id).await?;
 
@@ -207,6 +238,14 @@ async fn issue_tokens_for(
     .await?;
 
     tracing::info!(realm = %realm, user_id = %user.id, "user login via email OTP");
+
+    if let Err(e) = state
+        .hooks
+        .dispatch_user_after_login(realm, &hook_req, &public)
+        .await
+    {
+        tracing::warn!(error = %e, %realm, "user_after_login hook errored");
+    }
 
     Ok(Json(OtpLoginResponse {
         access_token,

@@ -174,6 +174,27 @@ pub async fn user_login(
         return Err(ApiError::Core(CoreError::Unauthorized));
     }
 
+    // Credential check passed. Fire onUserBeforeLogin — a hook may
+    // throw to abort issuance (e.g. ban-list, geo-fence). Public
+    // user shape only; never expose password_hash to hooks.
+    let public = serde_json::json!({
+        "id": &user.id,
+        "email": &user.email,
+        "verified": user.verified,
+    });
+    let hook_req = rustbase_runtime::HookRequest::system(&realm, "", "_user");
+    state
+        .hooks
+        .dispatch_user_before_login(&realm, &hook_req, &public)
+        .await
+        .map_err(|e| match e {
+            rustbase_runtime::RuntimeError::Veto(msg) => {
+                tracing::info!(realm = %realm, user_id = %user.id, %msg, "login vetoed by hook");
+                ApiError::Core(CoreError::Forbidden)
+            }
+            other => ApiError::Core(CoreError::Internal(other.to_string())),
+        })?;
+
     record_last_login(&pool, &user.id).await?;
 
     let claims = build_claims(
@@ -195,6 +216,16 @@ pub async fn user_login(
     .await?;
 
     tracing::info!(realm = %realm, user_id = %user.id, "user login");
+
+    // Best-effort observer fire; failures are logged but don't roll
+    // back the successful login.
+    if let Err(e) = state
+        .hooks
+        .dispatch_user_after_login(&realm, &hook_req, &public)
+        .await
+    {
+        tracing::warn!(error = %e, realm = %realm, "user_after_login hook errored");
+    }
 
     Ok(Json(UserLoginResponse {
         access_token,

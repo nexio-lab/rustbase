@@ -109,7 +109,24 @@ pub enum HookEvent {
     BeforeCreate,
     BeforeUpdate,
     BeforeDelete,
+    /// Fires after an authentication track has validated credentials
+    /// but before access/refresh tokens are issued. Vetoable: throwing
+    /// from this handler aborts the login. The "collection" passed at
+    /// dispatch is always the sentinel [`USER_HOOK_COLLECTION`].
+    UserBeforeLogin,
+    /// Fires after a user has been successfully logged in (any track:
+    /// password, OTP, OAuth). Observer only.
+    UserAfterLogin,
+    /// Fires after a fresh user row has been inserted (any signup
+    /// track: /register, OTP first-time, OAuth first-time). Observer
+    /// only.
+    UserAfterRegister,
 }
+
+/// Pseudo-collection name used as the routing key for realm-wide
+/// user-lifecycle hooks. Records can't use this name (the API
+/// already rejects identifiers starting with `_`).
+pub const USER_HOOK_COLLECTION: &str = "_user";
 
 impl HookEvent {
     fn as_str(&self) -> &'static str {
@@ -120,6 +137,9 @@ impl HookEvent {
             HookEvent::BeforeCreate => "before_create",
             HookEvent::BeforeUpdate => "before_update",
             HookEvent::BeforeDelete => "before_delete",
+            HookEvent::UserBeforeLogin => "user_before_login",
+            HookEvent::UserAfterLogin => "user_after_login",
+            HookEvent::UserAfterRegister => "user_after_register",
         }
     }
 }
@@ -508,6 +528,31 @@ impl AppHooks {
         Ok(())
     }
 
+    /// Run a "before-*" handler set keyed by the user-lifecycle event
+    /// against a JSON payload (the user). No mutation propagates back;
+    /// the return value of run_before is discarded. Returns `Err(Veto)`
+    /// if any handler threw, otherwise `Ok(())`.
+    pub async fn dispatch_before_user_event<U: Serialize>(
+        &self,
+        event: HookEvent,
+        request: &HookRequest,
+        user: &U,
+    ) -> Result<()> {
+        let user_json = serde_json::to_string(user)
+            .map_err(|e| RuntimeError::Js(format!("serialise user: {e}")))?;
+        let _ = self
+            .run_before(
+                &format!("{}:{}", USER_HOOK_COLLECTION, event.as_str()),
+                request,
+                &user_json,
+                "fn(user)",
+                "user",
+                None,
+            )
+            .await?;
+        Ok(())
+    }
+
     /// Shared driver for before-* dispatch. Builds a JS IIFE that
     /// iterates handlers, calling each with the right shape. On a
     /// caught throw, the driver returns the sentinel string
@@ -608,6 +653,15 @@ impl AppHooks {
                     onRecordBeforeCreate(collection, fn) { register('before_create', collection, fn); },
                     onRecordBeforeUpdate(collection, fn) { register('before_update', collection, fn); },
                     onRecordBeforeDelete(collection, fn) { register('before_delete', collection, fn); },
+                    // Realm-wide user-lifecycle hooks. No collection
+                    // argument; they fire on every authentication
+                    // track (password / OTP / OAuth) and signup path.
+                    // The handler receives `(user)` where user is
+                    // `{id, email, verified}` — never the password
+                    // hash. before_login can throw to veto.
+                    onUserBeforeLogin(fn)   { register('user_before_login',   '_user', fn); },
+                    onUserAfterLogin(fn)    { register('user_after_login',    '_user', fn); },
+                    onUserAfterRegister(fn) { register('user_after_register', '_user', fn); },
                     log(msg) {
                         const s = String(msg);
                         globalThis.__rb_log.push(s);
@@ -1029,6 +1083,80 @@ impl HookEngine {
             .dispatch_before_delete(collection, request, existing)
             .await
     }
+
+    /// Iterator over `(realm, app, AppHooks)` for every app whose
+    /// hooks have been loaded under `realm`. Used by the user-lifecycle
+    /// fan-out below.
+    fn apps_in_realm(&self, realm: &str) -> Vec<Arc<AppHooks>> {
+        self.apps
+            .iter()
+            .filter_map(|e| {
+                let ((r, _a), hooks) = (e.key(), e.value());
+                (r == realm).then(|| hooks.clone())
+            })
+            .collect()
+    }
+
+    /// Fire `onUserBeforeLogin` across every app's hooks in the realm.
+    /// Vetoable: if any app's hook throws, return `Err(Veto)` and the
+    /// caller should abort the login. Apps that aren't loaded yet
+    /// contribute no veto.
+    pub async fn dispatch_user_before_login<U: Serialize>(
+        &self,
+        realm: &str,
+        request: &HookRequest,
+        user: &U,
+    ) -> Result<()> {
+        for hooks in self.apps_in_realm(realm) {
+            hooks
+                .dispatch_before_user_event(HookEvent::UserBeforeLogin, request, user)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Observer fan-out: every app's `onUserAfterLogin` fires.
+    /// Per-app handler errors are caught by the dispatch driver and
+    /// never bubble; this method only errors if a JS context itself
+    /// blew up (which would have surfaced at load time).
+    pub async fn dispatch_user_after_login<U: Serialize>(
+        &self,
+        realm: &str,
+        request: &HookRequest,
+        user: &U,
+    ) -> Result<()> {
+        for hooks in self.apps_in_realm(realm) {
+            hooks
+                .dispatch(
+                    USER_HOOK_COLLECTION,
+                    HookEvent::UserAfterLogin,
+                    request,
+                    user,
+                )
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Observer fan-out for fresh signups (any track).
+    pub async fn dispatch_user_after_register<U: Serialize>(
+        &self,
+        realm: &str,
+        request: &HookRequest,
+        user: &U,
+    ) -> Result<()> {
+        for hooks in self.apps_in_realm(realm) {
+            hooks
+                .dispatch(
+                    USER_HOOK_COLLECTION,
+                    HookEvent::UserAfterRegister,
+                    request,
+                    user,
+                )
+                .await?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1153,6 +1281,142 @@ mod tests {
         assert_eq!(logs, vec!["survived".to_string()]);
         let errs = hooks.drain_errors().await.unwrap();
         assert!(errs.iter().any(|e| e.contains("boom")));
+    }
+
+    // ------------- user-lifecycle hooks -------------
+
+    #[tokio::test]
+    async fn user_after_register_fires_across_every_app_in_realm() {
+        let engine = HookEngine::new();
+        // Two apps in the same realm; each registers an
+        // onUserAfterRegister that logs the user id.
+        for app in ["mobile", "web"] {
+            let dir = tempdir().unwrap();
+            std::fs::write(
+                dir.path().join("hook.js"),
+                format!(r#"$app.onUserAfterRegister((u) => $app.log("{app} saw " + u.id));"#),
+            )
+            .unwrap();
+            engine
+                .load_app("acme", app, dir.path(), None, None)
+                .await
+                .unwrap();
+        }
+        // Also load an unrelated realm — must NOT fire.
+        let other = tempdir().unwrap();
+        std::fs::write(
+            other.path().join("hook.js"),
+            r#"$app.onUserAfterRegister(() => $app.log("widgets-realm"));"#,
+        )
+        .unwrap();
+        engine
+            .load_app("widgets", "mobile", other.path(), None, None)
+            .await
+            .unwrap();
+
+        engine
+            .dispatch_user_after_register(
+                "acme",
+                &HookRequest::default(),
+                &json!({"id":"u-1","email":"u@x","verified":true}),
+            )
+            .await
+            .unwrap();
+
+        let mut acme_mobile = engine
+            .get("acme", "mobile")
+            .unwrap()
+            .drain_logs()
+            .await
+            .unwrap();
+        let mut acme_web = engine
+            .get("acme", "web")
+            .unwrap()
+            .drain_logs()
+            .await
+            .unwrap();
+        let widgets = engine
+            .get("widgets", "mobile")
+            .unwrap()
+            .drain_logs()
+            .await
+            .unwrap();
+        acme_mobile.sort();
+        acme_web.sort();
+        assert_eq!(acme_mobile, vec!["mobile saw u-1".to_string()]);
+        assert_eq!(acme_web, vec!["web saw u-1".to_string()]);
+        assert!(widgets.is_empty(), "unrelated realm must not fire");
+    }
+
+    #[tokio::test]
+    async fn user_before_login_veto_from_any_app_aborts() {
+        let engine = HookEngine::new();
+        // app A is silent, app B vetoes any login.
+        let a = tempdir().unwrap();
+        std::fs::write(
+            a.path().join("hook.js"),
+            r#"$app.onUserBeforeLogin(() => $app.log("a saw"));"#,
+        )
+        .unwrap();
+        engine
+            .load_app("acme", "a", a.path(), None, None)
+            .await
+            .unwrap();
+
+        let b = tempdir().unwrap();
+        std::fs::write(
+            b.path().join("hook.js"),
+            r#"$app.onUserBeforeLogin((u) => { throw new Error("banned: " + u.email); });"#,
+        )
+        .unwrap();
+        engine
+            .load_app("acme", "b", b.path(), None, None)
+            .await
+            .unwrap();
+
+        let res = engine
+            .dispatch_user_before_login(
+                "acme",
+                &HookRequest::default(),
+                &json!({"id":"u-1","email":"banned@x","verified":true}),
+            )
+            .await;
+        match res {
+            Err(RuntimeError::Veto(msg)) => assert!(msg.contains("banned@x"), "got: {msg}"),
+            other => panic!("expected Veto, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn user_after_login_is_an_observer_handler_errors_dont_propagate() {
+        let engine = HookEngine::new();
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("hook.js"),
+            r#"$app.onUserAfterLogin(() => { throw new Error("oops"); });"#,
+        )
+        .unwrap();
+        engine
+            .load_app("acme", "mobile", dir.path(), None, None)
+            .await
+            .unwrap();
+        // Must NOT bubble — observer dispatch swallows handler throws.
+        engine
+            .dispatch_user_after_login(
+                "acme",
+                &HookRequest::default(),
+                &json!({"id":"u-1","email":"a@x","verified":true}),
+            )
+            .await
+            .unwrap();
+        // The error landed in __rb_errors for observability.
+        let errs = engine
+            .get("acme", "mobile")
+            .unwrap()
+            .drain_errors()
+            .await
+            .unwrap();
+        assert!(errs.iter().any(|e| e.contains("oops")), "got: {errs:?}");
     }
 
     #[tokio::test]
