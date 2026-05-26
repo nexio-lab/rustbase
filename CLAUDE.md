@@ -382,6 +382,22 @@ The same checks run on every PR via `.github/workflows/ci.yml`. The `release-bui
 
 `cargo audit`'s ignore list lives in `.cargo/audit.toml` — every entry carries a one-line rationale and must be re-evaluated on every dependency bump.
 
+### Shared dev services
+
+Local infrastructure that's reusable across apps — currently just MailHog — lives in `infra/docker-compose.yml`. Bring it up with:
+
+```sh
+docker compose -f infra/docker-compose.yml up -d
+```
+
+MailHog binds host ports `localhost:1025` (SMTP) and `localhost:8025` (web UI), and also joins the named `dev-shared` Docker network so other compose-managed apps can attach. See `infra/README.md` for the cross-app wiring recipe.
+
+To exercise the `SmtpMailer` end-to-end against MailHog, opt into the ignored test:
+
+```sh
+cargo test -p rustbase-api smtp_mailer_delivers_to_mailhog -- --ignored --nocapture
+```
+
 ---
 
 ## Technology choices (locked — do not change without updating this file)

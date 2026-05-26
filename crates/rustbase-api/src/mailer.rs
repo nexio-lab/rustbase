@@ -211,6 +211,43 @@ mod tests {
         SmtpMailer::new(&cfg).expect("anonymous relay should build");
     }
 
+    /// Live SMTP send against the MailHog container from
+    /// `infra/docker-compose.yml`. Skipped by default — opt in with:
+    ///
+    ///     docker compose -f infra/docker-compose.yml up -d
+    ///     cargo test -p rustbase-api smtp_mailer_delivers_to_mailhog \
+    ///         -- --ignored --nocapture
+    ///
+    /// A successful `transport.send().await` means MailHog accepted
+    /// the DATA segment with a 250 OK — i.e. the message is in the
+    /// inbox, browsable at http://localhost:8025. We don't poll the
+    /// HTTP API for it; the SMTP transaction itself is the proof.
+    #[tokio::test]
+    #[ignore = "requires MailHog at localhost:1025 (infra/docker-compose.yml)"]
+    async fn smtp_mailer_delivers_to_mailhog() {
+        let cfg = SmtpConfig {
+            host: "localhost".into(),
+            port: 1025,
+            username: None,
+            password: None,
+            tls: SmtpTls::None,
+        };
+        let mailer = SmtpMailer::new(&cfg).expect("build SmtpMailer");
+
+        let stamp = chrono::Utc::now().timestamp_micros();
+        let subject = format!("rustbase mailer smoke {stamp}");
+
+        mailer
+            .send(EmailMessage::new(
+                "no-reply@rustbase.local",
+                "ada@example.com",
+                subject,
+                "live SMTP send via MailHog",
+            ))
+            .await
+            .expect("MailHog must accept the message");
+    }
+
     #[tokio::test]
     async fn smtp_mailer_rejects_malformed_addresses_without_network() {
         // Pointed at a sink that will never accept; reaching transport

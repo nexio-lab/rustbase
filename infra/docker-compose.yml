@@ -1,0 +1,44 @@
+# Shared local-dev services.
+#
+# Brought up with:  docker compose -f infra/docker-compose.yml up -d
+# Brought down with: docker compose -f infra/docker-compose.yml down
+#
+# Why this lives here rather than in a separate repo: MailHog (and any
+# follow-up dev services — MinIO, redis-for-tests, etc.) need to be
+# reachable from *any* app you're hacking on, not only RustBase.
+# Other apps reach this service two ways:
+#
+#   1. localhost ports — `localhost:1025` SMTP, `http://localhost:8025`
+#      web UI. Works regardless of what container runtime the other
+#      app uses (or no container at all).
+#
+#   2. The shared external network `dev-shared`. Other compose files
+#      that declare it as `external: true` can address the SMTP relay
+#      as `mailhog:1025` from inside their containers.
+
+name: rustbase-dev-infra
+
+services:
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"   # SMTP relay (apps point [mail.smtp] here)
+      - "8025:8025"   # Web UI — open http://localhost:8025
+    networks:
+      - dev-shared
+    # MailHog stores messages in memory by default; restart wipes the
+    # inbox, which is what you want for a dev capture.
+
+networks:
+  # External so other apps' compose files can attach with:
+  #   networks:
+  #     dev-shared:
+  #       external: true
+  # Create it once with: docker network create dev-shared
+  # (compose creates it on first `up` if missing, since `external: true`
+  # is not set here — promote to external once you have a second app.)
+  dev-shared:
+    name: dev-shared
+    driver: bridge
