@@ -11,6 +11,8 @@ description = "Embedded JS/TS hook runtime for RustBase (rquickjs + swc)."
 [dependencies]
 rustbase-core.workspace = true
 tokio.workspace = true
+chrono.workspace = true
+cron.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
