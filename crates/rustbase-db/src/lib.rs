@@ -14,6 +14,7 @@ pub mod admins;
 pub mod apps;
 pub mod audit;
 pub mod collections;
+pub mod email_verifications;
 pub mod error;
 pub mod files;
 pub mod filter_sql;

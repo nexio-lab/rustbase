@@ -2091,6 +2091,7 @@ dependencies = [
 name = "rustbase-core"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "nom 8.0.0",
  "serde",

@@ -72,6 +72,9 @@ async fn main() -> Result<()> {
         hooks: HookEngine::new(),
         data_dir: Arc::new(cfg.data_dir.clone()),
         initialized: Arc::new(AtomicBool::new(already_initialized)),
+        // No SMTP yet — boot with a capturing mailer that logs every
+        // message. Production SMTP support lands as a follow-up.
+        mailer: Arc::new(rustbase_api::mailer::LogMailer::new()),
     };
 
     // Load JS hooks for every (realm, app) that exists on disk.

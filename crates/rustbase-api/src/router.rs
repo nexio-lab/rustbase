@@ -43,6 +43,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/realms/{realm}/auth/users/login", post(user_login))
         .route("/api/realms/{realm}/auth/users/refresh", post(user_refresh))
         .route(
+            "/api/realms/{realm}/auth/verify-email/request",
+            post(crate::auth::verify_email::request),
+        )
+        .route(
+            "/api/realms/{realm}/auth/verify-email/confirm",
+            post(crate::auth::verify_email::confirm),
+        )
+        .route(
             "/api/realms/{realm}/apps",
             get(apps::list).post(apps::create),
         )
@@ -169,6 +177,7 @@ mod tests {
             hooks: HookEngine::new(),
             data_dir: Arc::new(data_dir),
             initialized: Arc::new(AtomicBool::new(false)),
+            mailer: Arc::new(crate::mailer::LogMailer::new()),
         };
         (state, dir)
     }
@@ -1480,6 +1489,151 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // ------------- email verification flow -------------
+
+    /// Pull the token straight from the realm DB. Avoids needing to
+    /// downcast `Arc<dyn Mailer>` from AppState to read the body of
+    /// the captured LogMailer message — the row that backs the email
+    /// is the same string.
+    async fn read_pending_verification_token(state: &AppState, realm: &str, user_email: &str) -> String {
+        let pool = state
+            .realms
+            .pool_for(&rustbase_core::RealmId::from(realm.to_string()))
+            .await
+            .unwrap();
+        let row: (String,) = sqlx::query_as(
+            "SELECT ev.token FROM _email_verifications ev \
+             JOIN users u ON u.id = ev.user_id \
+             WHERE u.email = ? AND ev.consumed_at IS NULL \
+             ORDER BY ev.issued_at DESC LIMIT 1",
+        )
+        .bind(user_email)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        row.0
+    }
+
+    #[tokio::test]
+    async fn verify_email_request_then_confirm_marks_user_verified() {
+        let (state, _dir, _, user_tok) = state_with_collection_and_user().await;
+
+        // Step 1: user asks for a verification email.
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/auth/verify-email/request",
+                Some(&user_tok),
+                Some(&serde_json::json!({})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+        // Step 2: pull the token, confirm it.
+        let token = read_pending_verification_token(&state, "acme", "u@acme.com").await;
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/auth/verify-email/confirm",
+                None,
+                Some(&serde_json::json!({"token": token})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let j = json_body(resp).await;
+        assert_eq!(j["verified"], true);
+
+        // Step 3: user is now flagged verified.
+        let pool = state
+            .realms
+            .pool_for(&rustbase_core::RealmId::from("acme".to_string()))
+            .await
+            .unwrap();
+        let user = rustbase_db::users::find_user_by_email(&pool, "u@acme.com")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(user.verified);
+    }
+
+    #[tokio::test]
+    async fn verify_email_confirm_with_unknown_token_returns_404() {
+        let (state, _dir, _, _) = state_with_collection_and_user().await;
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/auth/verify-email/confirm",
+                None,
+                Some(&serde_json::json!({"token": "deadbeef".repeat(8)})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn verify_email_confirm_twice_second_call_409() {
+        let (state, _dir, _, user_tok) = state_with_collection_and_user().await;
+
+        // Issue and consume.
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "POST",
+            "/api/realms/acme/auth/verify-email/request",
+            Some(&user_tok),
+            Some(&serde_json::json!({})),
+        ))
+        .await
+        .unwrap();
+        let token = read_pending_verification_token(&state, "acme", "u@acme.com").await;
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "POST",
+            "/api/realms/acme/auth/verify-email/confirm",
+            None,
+            Some(&serde_json::json!({"token": &token})),
+        ))
+        .await
+        .unwrap();
+
+        // Replay must fail with 409 Conflict.
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/auth/verify-email/confirm",
+                None,
+                Some(&serde_json::json!({"token": &token})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn verify_email_request_rejects_admin_tokens() {
+        // A realm-admin token isn't tied to an end user, so /request
+        // must reject it rather than try to mail a non-existent user.
+        let (state, _dir, _, realm_admin_id) = state_with_realm_and_admin().await;
+        let admin_tok = realm_token(&state, "acme", &realm_admin_id);
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/auth/verify-email/request",
+                Some(&admin_tok),
+                Some(&serde_json::json!({})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
