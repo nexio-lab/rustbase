@@ -33,6 +33,8 @@ use std::path::Path;
 use std::sync::Arc;
 use thiserror::Error;
 
+mod ts;
+
 #[derive(Debug, Error)]
 pub enum RuntimeError {
     #[error("io error: {0}")]
@@ -278,11 +280,27 @@ impl AppHooks {
         let mut loaded = 0usize;
         for entry in std::fs::read_dir(dir)? {
             let path = entry?.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("js") {
+            let ext = path.extension().and_then(|s| s.to_str());
+            let is_ts = ext == Some("ts");
+            let is_js = ext == Some("js");
+            if !is_ts && !is_js {
                 continue;
             }
             let label = path.display().to_string();
-            let src = std::fs::read_to_string(&path)?;
+            let raw = std::fs::read_to_string(&path)?;
+            // .ts files run through swc's TypeScript strip first; the
+            // emitted JS is what the QuickJS context evaluates.
+            let src = if is_ts {
+                match ts::transpile(&raw) {
+                    Ok(js) => js,
+                    Err(e) => {
+                        tracing::error!(file = %label, error = %e, "ts transpile failed");
+                        continue;
+                    }
+                }
+            } else {
+                raw
+            };
             if let Err(e) = self.eval(&src, &label).await {
                 tracing::error!(file = %label, error = %e, "hook load failed");
             } else {
@@ -1001,6 +1019,53 @@ mod tests {
             )
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn engine_load_app_strips_ts_and_runs_alongside_js() {
+        let dir = tempdir().unwrap();
+        // A real TS file with annotations, interface, `as`-cast: should strip + load.
+        std::fs::write(
+            dir.path().join("typed.ts"),
+            r#"
+            interface Note { id: string }
+            $app.onRecordAfterCreate("notes", (r: Note): void => {
+                const id = (r as any).id as string;
+                $app.log("typed:" + id);
+            });
+            "#,
+        )
+        .unwrap();
+        // A plain JS file in the same directory should keep working.
+        std::fs::write(
+            dir.path().join("plain.js"),
+            r#"$app.onRecordAfterCreate("notes", (r) => $app.log("plain:" + r.id));"#,
+        )
+        .unwrap();
+        // A syntactically broken TS file must be skipped without poisoning siblings.
+        std::fs::write(dir.path().join("broken.ts"), "function (: { ").unwrap();
+        // Non-script files stay ignored.
+        std::fs::write(dir.path().join("README.md"), "# notes").unwrap();
+
+        let engine = HookEngine::new();
+        let n = engine.load_app("acme", "mobile", dir.path(), None).await.unwrap();
+        assert_eq!(n, 2, "expected typed.ts + plain.js to load (broken.ts skipped)");
+
+        engine
+            .dispatch(
+                "acme",
+                "mobile",
+                "notes",
+                HookEvent::AfterCreate,
+                &HookRequest::default(),
+                &json!({"id": "abc"}),
+            )
+            .await
+            .unwrap();
+
+        let mut logs = engine.get("acme", "mobile").unwrap().drain_logs().await.unwrap();
+        logs.sort();
+        assert_eq!(logs, vec!["plain:abc".to_string(), "typed:abc".to_string()]);
     }
 
     #[tokio::test]

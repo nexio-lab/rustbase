@@ -58,6 +58,15 @@ mime_guess = "2"
 # embedded JS runtime
 rquickjs = { version = "0.9", features = ["futures", "macro", "parallel"] }
 
+# TypeScript → JavaScript stripping for hook files
+swc_common = "22"
+swc_ecma_ast = "24"
+swc_ecma_codegen = "27"
+swc_ecma_parser = { version = "40", features = ["typescript"] }
+swc_ecma_transforms_base = "43"
+swc_ecma_transforms_typescript = "48"
+swc_ecma_visit = "24"
+
 # observability
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
