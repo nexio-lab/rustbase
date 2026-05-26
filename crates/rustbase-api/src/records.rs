@@ -195,7 +195,14 @@ pub async fn create(
     if rule_filter.is_some() {
         return Err(ApiError::Core(CoreError::Forbidden));
     }
-    let rec = create_record(&app_pool, &schema, req.fields).await?;
+
+    // before-hook: may mutate fields, throw to veto.
+    let fields = state
+        .hooks
+        .dispatch_before_create(&realm, &app, &coll, req.fields)
+        .await?;
+
+    let rec = create_record(&app_pool, &schema, fields).await?;
     state.broker.publish(
         &SubscriptionKey::new(&realm, &app, &coll),
         RealtimeEvent::RecordCreated { record: rec.clone() },
@@ -261,30 +268,35 @@ pub async fn update(
     )
     .await?;
 
-    // For template rules, gate the update by first checking the
-    // existing row matches the rule (id-scoped). Race condition is
-    // acceptable for v1 — a later branch can wrap this in a tx.
-    if let Some(rule) = rule_filter {
-        let id_filter = FilterNode::Eq("id".into(), serde_json::Value::String(id.clone()));
-        let combined = FilterNode::and(id_filter, rule);
-        let listed = list_records(
-            &app_pool,
-            &schema,
-            ListPage { page: 1, per_page: 1 },
-            Some(&combined),
-        )
-        .await?;
-        if listed.items.is_empty() {
-            // Either the row doesn't exist or the rule rejects it.
-            // Returning 404 avoids leaking which.
-            return Err(ApiError::Core(CoreError::NotFound {
-                collection: coll,
-                id,
-            }));
-        }
-    }
+    // Fetch the existing row, applying the access rule if any. Empty
+    // result = either no such row OR the rule rejects it; report 404
+    // either way to avoid leaking existence.
+    let id_filter = FilterNode::Eq("id".into(), serde_json::Value::String(id.clone()));
+    let lookup_filter = match rule_filter {
+        Some(r) => FilterNode::and(id_filter, r),
+        None => id_filter,
+    };
+    let listed = list_records(
+        &app_pool,
+        &schema,
+        ListPage { page: 1, per_page: 1 },
+        Some(&lookup_filter),
+    )
+    .await?;
+    let Some(existing) = listed.items.into_iter().next() else {
+        return Err(ApiError::Core(CoreError::NotFound {
+            collection: coll,
+            id,
+        }));
+    };
 
-    let rec = update_record(&app_pool, &schema, &id, req.fields)
+    // before-hook: may mutate the patch or throw to veto.
+    let patch = state
+        .hooks
+        .dispatch_before_update(&realm, &app, &coll, &existing, req.fields)
+        .await?;
+
+    let rec = update_record(&app_pool, &schema, &id, patch)
         .await
         .map_err(|e| match e {
             DbError::Sqlx(sqlx::Error::RowNotFound) => ApiError::Core(CoreError::NotFound {
@@ -318,23 +330,31 @@ pub async fn delete(
     )
     .await?;
 
-    if let Some(rule) = rule_filter {
-        let id_filter = FilterNode::Eq("id".into(), serde_json::Value::String(id.clone()));
-        let combined = FilterNode::and(id_filter, rule);
-        let listed = list_records(
-            &app_pool,
-            &schema,
-            ListPage { page: 1, per_page: 1 },
-            Some(&combined),
-        )
+    // Same fetch-then-act shape as update so before-hooks get the row.
+    let id_filter = FilterNode::Eq("id".into(), serde_json::Value::String(id.clone()));
+    let lookup_filter = match rule_filter {
+        Some(r) => FilterNode::and(id_filter, r),
+        None => id_filter,
+    };
+    let listed = list_records(
+        &app_pool,
+        &schema,
+        ListPage { page: 1, per_page: 1 },
+        Some(&lookup_filter),
+    )
+    .await?;
+    let Some(existing) = listed.items.into_iter().next() else {
+        return Err(ApiError::Core(CoreError::NotFound {
+            collection: coll,
+            id,
+        }));
+    };
+
+    // before-hook: may throw to veto.
+    state
+        .hooks
+        .dispatch_before_delete(&realm, &app, &coll, &existing)
         .await?;
-        if listed.items.is_empty() {
-            return Err(ApiError::Core(CoreError::NotFound {
-                collection: coll,
-                id,
-            }));
-        }
-    }
 
     delete_record(&app_pool, &schema, &id)
         .await
