@@ -33,6 +33,7 @@ use rustbase_db::{
     records::{create_record, delete_record, find_record, list_records, update_record},
 };
 use rustbase_realtime::{RealtimeEvent, SubscriptionKey};
+use rustbase_runtime::HookEvent;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json_;
 use std::collections::BTreeMap;
@@ -199,6 +200,13 @@ pub async fn create(
         &SubscriptionKey::new(&realm, &app, &coll),
         RealtimeEvent::RecordCreated { record: rec.clone() },
     );
+    if let Err(e) = state
+        .hooks
+        .dispatch(&realm, &app, &coll, HookEvent::AfterCreate, &rec)
+        .await
+    {
+        tracing::error!(error = %e, "hook dispatch (after_create) failed");
+    }
     Ok((StatusCode::CREATED, Json(rec)))
 }
 
@@ -289,6 +297,13 @@ pub async fn update(
         &SubscriptionKey::new(&realm, &app, &coll),
         RealtimeEvent::RecordUpdated { record: rec.clone() },
     );
+    if let Err(e) = state
+        .hooks
+        .dispatch(&realm, &app, &coll, HookEvent::AfterUpdate, &rec)
+        .await
+    {
+        tracing::error!(error = %e, "hook dispatch (after_update) failed");
+    }
     Ok(Json(rec))
 }
 
@@ -334,6 +349,19 @@ pub async fn delete(
         &SubscriptionKey::new(&realm, &app, &coll),
         RealtimeEvent::RecordDeleted { id: id.clone() },
     );
+    if let Err(e) = state
+        .hooks
+        .dispatch(
+            &realm,
+            &app,
+            &coll,
+            HookEvent::AfterDelete,
+            &serde_json::json!({ "id": id }),
+        )
+        .await
+    {
+        tracing::error!(error = %e, "hook dispatch (after_delete) failed");
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
