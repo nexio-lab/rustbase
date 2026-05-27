@@ -15,8 +15,9 @@ use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::FromRow)]
 pub struct MasterAdmin {
     pub id: String,
-    pub email: String,
-    pub password_hash: String,
+    pub username: String,
+    pub email: Option<String>,
+    pub password_hash: Option<String>,
     pub name: Option<String>,
     pub created_at: DateTime<Utc>,
 }
@@ -42,20 +43,48 @@ pub struct AppAdmin {
 
 // ---- master admins (system.db) ---------------------------------------------
 
+const SELECT_MASTER: &str =
+    "SELECT id, username, email, password_hash, name, created_at FROM master_admins";
+
+/// Insert the default `admin` master admin row on first boot if it
+/// doesn't exist yet. `password_hash` is left NULL; the setup wizard
+/// promotes the row to "initialized" by writing a real hash.
+pub async fn ensure_seed_master_admin(pool: &SqlitePool) -> Result<()> {
+    let n = count_master_admins(pool).await?;
+    if n > 0 {
+        return Ok(());
+    }
+    let id = Uuid::now_v7().to_string();
+    let now = Utc::now();
+    sqlx::query(
+        "INSERT INTO master_admins (id, username, email, password_hash, name, created_at) \
+         VALUES (?, ?, NULL, NULL, ?, ?)",
+    )
+    .bind(&id)
+    .bind("admin")
+    .bind("admin")
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Test / migration helper. Inserts a fully-formed admin row. The
+/// production path uses `ensure_seed_master_admin` + `set_master_admin_password`.
 pub async fn insert_master_admin(
     pool: &SqlitePool,
-    email: &str,
+    username: &str,
     password_hash: &str,
     name: Option<&str>,
 ) -> Result<MasterAdmin> {
     let id = Uuid::now_v7().to_string();
     let now = Utc::now();
     sqlx::query(
-        "INSERT INTO master_admins (id, email, password_hash, name, created_at) \
-         VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO master_admins (id, username, email, password_hash, name, created_at) \
+         VALUES (?, ?, NULL, ?, ?, ?)",
     )
     .bind(&id)
-    .bind(email)
+    .bind(username)
     .bind(password_hash)
     .bind(name)
     .bind(now)
@@ -63,24 +92,61 @@ pub async fn insert_master_admin(
     .await?;
     Ok(MasterAdmin {
         id,
-        email: email.to_string(),
-        password_hash: password_hash.to_string(),
+        username: username.to_string(),
+        email: None,
+        password_hash: Some(password_hash.to_string()),
         name: name.map(str::to_string),
         created_at: now,
     })
 }
 
-pub async fn find_master_admin_by_email(
+pub async fn find_master_admin_by_username(
     pool: &SqlitePool,
-    email: &str,
+    username: &str,
 ) -> Result<Option<MasterAdmin>> {
-    let row: Option<MasterAdmin> = sqlx::query_as(
-        "SELECT id, email, password_hash, name, created_at FROM master_admins WHERE email = ?",
-    )
-    .bind(email)
-    .fetch_optional(pool)
-    .await?;
+    let sql = format!("{SELECT_MASTER} WHERE username = ?");
+    let row: Option<MasterAdmin> = sqlx::query_as(&sql)
+        .bind(username)
+        .fetch_optional(pool)
+        .await?;
     Ok(row)
+}
+
+pub async fn find_master_admin_by_id(
+    pool: &SqlitePool,
+    id: &str,
+) -> Result<Option<MasterAdmin>> {
+    let sql = format!("{SELECT_MASTER} WHERE id = ?");
+    let row: Option<MasterAdmin> = sqlx::query_as(&sql).bind(id).fetch_optional(pool).await?;
+    Ok(row)
+}
+
+/// Setup-time helper. Sets the password hash on an existing admin row.
+/// Errors with RowNotFound if no such id.
+pub async fn set_master_admin_password(
+    pool: &SqlitePool,
+    id: &str,
+    password_hash: &str,
+) -> Result<()> {
+    let res = sqlx::query("UPDATE master_admins SET password_hash = ? WHERE id = ?")
+        .bind(password_hash)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(DbError::Sqlx(sqlx::Error::RowNotFound));
+    }
+    Ok(())
+}
+
+/// Server is "initialized" once at least one master admin has a
+/// non-NULL password_hash — i.e. the setup wizard has been completed.
+pub async fn master_admin_is_initialized(pool: &SqlitePool) -> Result<bool> {
+    let n: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM master_admins WHERE password_hash IS NOT NULL")
+            .fetch_one(pool)
+            .await?;
+    Ok(n > 0)
 }
 
 pub async fn count_master_admins(pool: &SqlitePool) -> Result<i64> {
@@ -218,11 +284,10 @@ mod tests {
     #[tokio::test]
     async fn master_admin_insert_then_find() {
         let pool = system_pool().await;
-        let inserted =
-            insert_master_admin(&pool, "ada@example.com", "$argon2id$..hash..", Some("Ada"))
-                .await
-                .unwrap();
-        let found = find_master_admin_by_email(&pool, "ada@example.com")
+        let inserted = insert_master_admin(&pool, "admin", "$argon2id$..hash..", Some("Ada"))
+            .await
+            .unwrap();
+        let found = find_master_admin_by_username(&pool, "admin")
             .await
             .unwrap()
             .unwrap();
@@ -231,15 +296,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn master_admin_email_is_unique() {
+    async fn master_admin_username_is_unique() {
         let pool = system_pool().await;
-        insert_master_admin(&pool, "a@example.com", "h", None)
+        insert_master_admin(&pool, "admin", "h", None)
             .await
             .unwrap();
-        let err = insert_master_admin(&pool, "a@example.com", "h2", None)
+        let err = insert_master_admin(&pool, "admin", "h2", None)
             .await
             .unwrap_err();
         assert!(matches!(err, DbError::Sqlx(_)));
+    }
+
+    #[tokio::test]
+    async fn seed_master_admin_is_idempotent_and_uninitialized() {
+        let pool = system_pool().await;
+        ensure_seed_master_admin(&pool).await.unwrap();
+        ensure_seed_master_admin(&pool).await.unwrap();
+        assert_eq!(count_master_admins(&pool).await.unwrap(), 1);
+        assert!(!master_admin_is_initialized(&pool).await.unwrap());
+
+        // Look up the seeded row, set its password, and confirm
+        // initialization flips.
+        let seed = find_master_admin_by_username(&pool, "admin")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(seed.password_hash.is_none());
+        set_master_admin_password(&pool, &seed.id, "$argon2id$..")
+            .await
+            .unwrap();
+        assert!(master_admin_is_initialized(&pool).await.unwrap());
     }
 
     #[tokio::test]

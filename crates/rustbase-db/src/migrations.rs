@@ -134,10 +134,15 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
         );
         CREATE UNIQUE INDEX realms_one_master ON realms(is_master) WHERE is_master = 1;
 
+        -- Master admin identity. On first boot, exactly one row is
+        -- auto-seeded with username='admin' and password_hash=NULL —
+        -- the setup wizard then sets the password. Email is optional;
+        -- only the username is the login identity.
         CREATE TABLE master_admins (
             id TEXT PRIMARY KEY,
-            email TEXT NOT NULL UNIQUE,
-            password_hash TEXT NOT NULL,
+            username TEXT NOT NULL UNIQUE,
+            email TEXT,
+            password_hash TEXT,
             name TEXT,
             created_at TEXT NOT NULL
         );
@@ -212,29 +217,9 @@ pub const REALM_MIGRATIONS: &[Migration] = &[
         UNIQUE(app_id, email)
     );
 
-    CREATE TABLE users (
-        id TEXT PRIMARY KEY,
-        email TEXT NOT NULL UNIQUE,
-        password_hash TEXT,
-        verified INTEGER NOT NULL DEFAULT 0,
-        last_login TEXT,
-        created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE oauth_providers (
-        provider TEXT PRIMARY KEY,
-        client_id TEXT NOT NULL,
-        client_secret_enc TEXT NOT NULL,
-        config_json TEXT
-    );
-
-    CREATE TABLE user_oauth_links (
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        provider TEXT NOT NULL,
-        provider_user_id TEXT NOT NULL,
-        PRIMARY KEY (user_id, provider)
-    );
-
+    -- Refresh tokens for realm-scope subjects: realm_admin / app_admin.
+    -- End-user refresh tokens moved to the per-app data.db along with
+    -- the users table itself.
     CREATE TABLE _refresh_tokens (
         token TEXT PRIMARY KEY,
         subject_kind TEXT NOT NULL,
@@ -260,107 +245,6 @@ pub const REALM_MIGRATIONS: &[Migration] = &[
         details_json TEXT
     );
     CREATE INDEX audit_log_ts ON audit_log(ts);
-    "#,
-    ),
-    Migration::new(
-        "20260526_000001_email_verifications",
-        MigrationScope::Realm,
-        r#"
-    CREATE TABLE _email_verifications (
-        token TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        issued_at TEXT NOT NULL,
-        expires_at TEXT NOT NULL,
-        consumed_at TEXT
-    );
-    CREATE INDEX email_verifications_user ON _email_verifications(user_id);
-    "#,
-    ),
-    Migration::new(
-        "20260526_000002_password_resets",
-        MigrationScope::Realm,
-        r#"
-    CREATE TABLE _password_resets (
-        token TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        issued_at TEXT NOT NULL,
-        expires_at TEXT NOT NULL,
-        consumed_at TEXT
-    );
-    CREATE INDEX password_resets_user ON _password_resets(user_id);
-    "#,
-    ),
-    Migration::new(
-        "20260526_000003_email_otps",
-        MigrationScope::Realm,
-        r#"
-    -- One-time numeric codes for passwordless / 2FA email login.
-    -- Keyed by email rather than user_id because OTP doubles as a
-    -- sign-up channel: the user row may not exist yet on first
-    -- request. New requests for the same email invalidate prior
-    -- unconsumed codes (single in-flight code per email).
-    CREATE TABLE _email_otps (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        code TEXT NOT NULL,
-        email TEXT NOT NULL,
-        issued_at TEXT NOT NULL,
-        expires_at TEXT NOT NULL,
-        consumed_at TEXT,
-        attempts INTEGER NOT NULL DEFAULT 0
-    );
-    CREATE INDEX email_otps_lookup ON _email_otps(email, consumed_at);
-    "#,
-    ),
-    Migration::new(
-        "20260526_000004_oauth_states",
-        MigrationScope::Realm,
-        r#"
-    -- CSRF state nonces for the OAuth2 authorization code flow.
-    -- Issued by /authorize, consumed at /callback. Tied to the
-    -- provider so a state for "google" can't redeem a code from
-    -- "github". TTL is short (5 min) — long enough for the user to
-    -- finish the upstream consent screen.
-    CREATE TABLE _oauth_states (
-        state TEXT PRIMARY KEY,
-        provider TEXT NOT NULL,
-        redirect_uri TEXT NOT NULL,
-        issued_at TEXT NOT NULL,
-        expires_at TEXT NOT NULL,
-        consumed_at TEXT
-    );
-    CREATE INDEX oauth_states_provider ON _oauth_states(provider, consumed_at);
-    "#,
-    ),
-    Migration::new(
-        "20260526_000005_user_totp_and_mfa",
-        MigrationScope::Realm,
-        r#"
-    -- Per-user TOTP secret. Lifecycle:
-    --   enrolled_at NOT NULL, enabled = 0  -> pending (user must
-    --                                         confirm with a code)
-    --   enabled = 1                         -> active (second factor
-    --                                         required at login)
-    -- A user has at most one row here. Re-enrollment replaces it.
-    CREATE TABLE _user_totp (
-        user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-        secret_b32 TEXT NOT NULL,
-        enrolled_at TEXT NOT NULL,
-        confirmed_at TEXT,
-        enabled INTEGER NOT NULL DEFAULT 0
-    );
-
-    -- MFA challenges issued by /auth/users/login when the user has
-    -- TOTP enabled. The first step returns a short-lived `mfa_token`
-    -- that the client exchanges, together with a TOTP code, at
-    -- /auth/users/login/totp for the real tokens.
-    CREATE TABLE _mfa_challenges (
-        token TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        issued_at TEXT NOT NULL,
-        expires_at TEXT NOT NULL,
-        consumed_at TEXT
-    );
-    CREATE INDEX mfa_challenges_user ON _mfa_challenges(user_id, consumed_at);
     "#,
     ),
 ];
@@ -415,6 +299,114 @@ pub const APP_MIGRATIONS: &[Migration] = &[
             created_at TEXT NOT NULL
         );
         CREATE INDEX files_created_at ON _files(created_at);
+        "#,
+    ),
+    // End-user identity moved out of the realm into the app. Each app
+    // gets its own users table, OAuth provider config, and auxiliary
+    // auth tables. Realms still own the admin tiers (realm/app admins);
+    // they no longer own end-users.
+    Migration::new(
+        "20260601_000001_app_users",
+        MigrationScope::App,
+        r#"
+        CREATE TABLE users (
+            id TEXT PRIMARY KEY,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT,
+            verified INTEGER NOT NULL DEFAULT 0,
+            last_login TEXT,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE oauth_providers (
+            provider TEXT PRIMARY KEY,
+            client_id TEXT NOT NULL,
+            client_secret_enc TEXT NOT NULL,
+            config_json TEXT
+        );
+
+        CREATE TABLE user_oauth_links (
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            provider TEXT NOT NULL,
+            provider_user_id TEXT NOT NULL,
+            PRIMARY KEY (user_id, provider)
+        );
+
+        -- Refresh tokens for end-user subjects. Admin refresh tokens
+        -- stay in the realm.db _refresh_tokens table.
+        CREATE TABLE _refresh_tokens (
+            token TEXT PRIMARY KEY,
+            subject_kind TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            issued_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            revoked INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX refresh_tokens_subject ON _refresh_tokens(subject_kind, subject_id);
+
+        CREATE TABLE _email_verifications (
+            token TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            issued_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            consumed_at TEXT
+        );
+        CREATE INDEX email_verifications_user ON _email_verifications(user_id);
+
+        CREATE TABLE _password_resets (
+            token TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            issued_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            consumed_at TEXT
+        );
+        CREATE INDEX password_resets_user ON _password_resets(user_id);
+
+        -- One-time numeric codes for passwordless / 2FA email login.
+        -- Keyed by email rather than user_id because OTP doubles as a
+        -- sign-up channel: the user row may not exist yet on first
+        -- request. New requests for the same email invalidate prior
+        -- unconsumed codes (single in-flight code per email).
+        CREATE TABLE _email_otps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL,
+            email TEXT NOT NULL,
+            issued_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            consumed_at TEXT,
+            attempts INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX email_otps_lookup ON _email_otps(email, consumed_at);
+
+        -- CSRF state nonces for the OAuth2 authorization code flow.
+        -- Issued by /authorize, consumed at /callback.
+        CREATE TABLE _oauth_states (
+            state TEXT PRIMARY KEY,
+            provider TEXT NOT NULL,
+            redirect_uri TEXT NOT NULL,
+            issued_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            consumed_at TEXT
+        );
+        CREATE INDEX oauth_states_provider ON _oauth_states(provider, consumed_at);
+
+        -- Per-user TOTP secret + MFA challenges.
+        CREATE TABLE _user_totp (
+            user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            secret_b32 TEXT NOT NULL,
+            enrolled_at TEXT NOT NULL,
+            confirmed_at TEXT,
+            enabled INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE _mfa_challenges (
+            token TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            issued_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            consumed_at TEXT
+        );
+        CREATE INDEX mfa_challenges_user ON _mfa_challenges(user_id, consumed_at);
         "#,
     ),
 ];

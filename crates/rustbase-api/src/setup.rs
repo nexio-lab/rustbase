@@ -1,15 +1,19 @@
-//! `POST /_/setup` — one-shot creation of the first master admin.
+//! `POST /_/setup` — set the password on the auto-seeded `admin` master admin.
 //!
-//! While `AppState::is_initialized()` is `false`, the [`crate::middleware`]
-//! gate blocks every route except `/healthz` and `/_/setup`. The first
-//! successful call here creates the master admin, flips the flag, and
-//! every other endpoint becomes reachable. Subsequent calls return 409.
+//! On first boot, `rustbase-server` calls `ensure_seed_master_admin` to
+//! insert a row with `username = "admin"` and `password_hash = NULL`.
+//! While that hash is still NULL, the [`crate::middleware`] setup gate
+//! blocks every route except `/healthz` and `/_/setup`. This handler
+//! consumes a single password, hashes it onto the seeded row, and flips
+//! the server into the "initialized" state. Subsequent calls return 409.
 
 use axum::{Json, extract::State, http::StatusCode};
 use chrono::{DateTime, Utc};
 use rustbase_auth::hash_password;
 use rustbase_core::CoreError;
-use rustbase_db::admins::{count_master_admins, insert_master_admin};
+use rustbase_db::admins::{
+    find_master_admin_by_username, master_admin_is_initialized, set_master_admin_password,
+};
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
@@ -18,20 +22,14 @@ use crate::state::AppState;
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct SetupRequest {
-    #[validate(email)]
-    pub email: String,
     #[validate(length(min = 8, max = 256))]
     pub password: String,
-    #[validate(length(max = 100))]
-    #[serde(default)]
-    pub name: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct SetupResponse {
     pub id: String,
-    pub email: String,
-    pub name: Option<String>,
+    pub username: String,
     pub created_at: DateTime<Utc>,
 }
 
@@ -42,28 +40,35 @@ pub async fn setup(
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
 
-    // Idempotency guard — once a master admin exists, refuse politely.
-    // We re-check the DB rather than just the atomic so a racing setup
-    // call against a freshly-restored DB still loses cleanly.
-    if count_master_admins(state.system.pool()).await? > 0 {
+    // Idempotency guard — once the seed admin has a password, refuse.
+    if master_admin_is_initialized(state.system.pool()).await? {
         return Err(ApiError::Core(CoreError::Conflict(
             "server already initialized".into(),
         )));
     }
 
+    // The seed row was inserted on boot. Look it up by username so we
+    // can target it precisely; a stale DB without the seed gets a
+    // graceful 500 rather than a silent UPDATE-touched-nothing.
+    let admin = find_master_admin_by_username(state.system.pool(), "admin")
+        .await?
+        .ok_or_else(|| {
+            ApiError::Core(CoreError::Internal(
+                "seed admin row missing; restart the server".into(),
+            ))
+        })?;
+
     let hash = hash_password(&req.password)?;
-    let admin =
-        insert_master_admin(state.system.pool(), &req.email, &hash, req.name.as_deref()).await?;
+    set_master_admin_password(state.system.pool(), &admin.id, &hash).await?;
 
     state.mark_initialized();
-    tracing::info!(admin_id = %admin.id, email = %admin.email, "master admin created via setup wizard");
+    tracing::info!(admin_id = %admin.id, "master admin password set via setup wizard");
 
     Ok((
         StatusCode::CREATED,
         Json(SetupResponse {
             id: admin.id,
-            email: admin.email,
-            name: admin.name,
+            username: admin.username,
             created_at: admin.created_at,
         }),
     ))

@@ -3,9 +3,11 @@ use axum::{
     extract::{Path, State},
 };
 use rustbase_auth::{TokenRole, build_claims, encode_token, verify_password};
-use rustbase_core::{CoreError, RealmId};
+use rustbase_core::{AppId, CoreError, RealmId};
 use rustbase_db::{
-    admins::{find_master_admin_by_email, find_realm_admin_by_email},
+    admins::{find_master_admin_by_username, find_realm_admin_by_email},
+    apps::find_app,
+    realms::find_realm,
     tokens::{SubjectKind, insert_refresh_token},
     users::{find_user_by_email, record_last_login},
 };
@@ -16,6 +18,16 @@ use super::{default_access_ttl, default_refresh_ttl, new_refresh_token};
 use crate::error::ApiError;
 use crate::state::AppState;
 
+/// Master admin login takes a username (default `admin`); email is optional.
+#[derive(Debug, Deserialize, Validate)]
+pub struct MasterLoginRequest {
+    #[validate(length(min = 1, max = 100))]
+    pub username: String,
+    #[validate(length(min = 1))]
+    pub password: String,
+}
+
+/// Realm-admin and end-user logins still use email.
 #[derive(Debug, Deserialize, Validate)]
 pub struct LoginRequest {
     #[validate(email)]
@@ -25,10 +37,25 @@ pub struct LoginRequest {
 }
 
 #[derive(Debug, Serialize)]
+pub struct MasterAdminPublic {
+    pub id: String,
+    pub username: String,
+    pub email: Option<String>,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct AdminPublic {
     pub id: String,
     pub email: String,
     pub name: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MasterLoginResponse {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub admin: MasterAdminPublic,
 }
 
 #[derive(Debug, Serialize)]
@@ -65,16 +92,25 @@ pub enum UserLoginResponse {
 
 pub async fn master_admin_login(
     State(state): State<AppState>,
-    Json(req): Json<LoginRequest>,
-) -> Result<Json<LoginResponse>, ApiError> {
+    Json(req): Json<MasterLoginRequest>,
+) -> Result<Json<MasterLoginResponse>, ApiError> {
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
 
-    let admin = find_master_admin_by_email(state.system.pool(), &req.email)
+    let admin = find_master_admin_by_username(state.system.pool(), &req.username)
         .await?
         .ok_or(ApiError::Core(CoreError::Unauthorized))?;
 
-    if !verify_password(&req.password, &admin.password_hash)? {
+    // The setup wizard hasn't run yet — surface this as Unauthorized so
+    // we don't leak the existence of the seed row. The setup gate
+    // already kept this handler unreachable in the uninitialized state,
+    // but defense-in-depth keeps the message uniform.
+    let hash = admin
+        .password_hash
+        .as_deref()
+        .ok_or(ApiError::Core(CoreError::Unauthorized))?;
+
+    if !verify_password(&req.password, hash)? {
         return Err(ApiError::Core(CoreError::Unauthorized));
     }
 
@@ -96,13 +132,14 @@ pub async fn master_admin_login(
     )
     .await?;
 
-    tracing::info!(admin_id = %admin.id, email = %admin.email, "master admin login");
+    tracing::info!(admin_id = %admin.id, username = %admin.username, "master admin login");
 
-    Ok(Json(LoginResponse {
+    Ok(Json(MasterLoginResponse {
         access_token,
         refresh_token: refresh.token,
-        admin: AdminPublic {
+        admin: MasterAdminPublic {
             id: admin.id,
+            username: admin.username,
             email: admin.email,
             name: admin.name,
         },
