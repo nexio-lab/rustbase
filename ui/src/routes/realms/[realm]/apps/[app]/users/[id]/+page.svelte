@@ -5,6 +5,7 @@
 	import Breadcrumbs from '$lib/Breadcrumbs.svelte';
 
 	const realm = $derived(page.params.realm);
+	const app = $derived(page.params.app);
 	const id = $derived(page.params.id);
 
 	let user = $state<AdminUserDetail | null>(null);
@@ -16,7 +17,7 @@
 		loading = true;
 		loadError = null;
 		try {
-			user = await api.get<AdminUserDetail>(`/api/realms/${realm}/users/${id}`);
+			user = await api.get<AdminUserDetail>(`/api/realms/${realm}/apps/${app}/users/${id}`);
 		} catch (e) {
 			loadError = e instanceof ApiError ? e.message : String(e);
 		} finally {
@@ -26,6 +27,7 @@
 
 	$effect(() => {
 		realm;
+		app;
 		id;
 		load();
 	});
@@ -34,7 +36,7 @@
 		if (!user) return;
 		busy = true;
 		try {
-			await api.patch(`/api/realms/${realm}/users/${id}/verify`, {});
+			await api.patch(`/api/realms/${realm}/apps/${app}/users/${id}/verify`, {});
 			await load();
 		} catch (e) {
 			alert(e instanceof ApiError ? e.message : String(e));
@@ -47,7 +49,7 @@
 		if (!confirm('Remove TOTP enrolment for this user?\n\nThey will be able to log in without the second factor until they re-enroll.')) return;
 		busy = true;
 		try {
-			await api.delete(`/api/realms/${realm}/users/${id}/totp`);
+			await api.delete(`/api/realms/${realm}/apps/${app}/users/${id}/totp`);
 			await load();
 		} catch (e) {
 			alert(e instanceof ApiError ? e.message : String(e));
@@ -66,8 +68,8 @@
 			return;
 		busy = true;
 		try {
-			await api.delete(`/api/realms/${realm}/users/${id}`);
-			await goto(`/realms/${realm}/users`);
+			await api.delete(`/api/realms/${realm}/apps/${app}/users/${id}`);
+			await goto(`/realms/${realm}/apps/${app}/users`);
 		} catch (e) {
 			alert(e instanceof ApiError ? e.message : String(e));
 			busy = false;
@@ -79,7 +81,8 @@
 	items={[
 		{ label: 'Realms', href: '/realms' },
 		{ label: realm, href: `/realms/${realm}` },
-		{ label: 'Users', href: `/realms/${realm}/users` },
+		{ label: app, href: `/realms/${realm}/apps/${app}` },
+		{ label: 'Users', href: `/realms/${realm}/apps/${app}/users` },
 		{ label: user?.email ?? id.slice(0, 8) }
 	]}
 />

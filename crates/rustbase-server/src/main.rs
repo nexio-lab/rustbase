@@ -4,7 +4,7 @@ use rustbase_api::{AppState, build_router};
 use rustbase_auth::{RevocationSet, SigningKey};
 use rustbase_db::{
     AppPoolManager, RealmPoolManager, SYSTEM_MIGRATIONS, SystemPool,
-    admins::count_master_admins,
+    admins::{ensure_seed_master_admin, master_admin_is_initialized},
     apply_migrations,
     realms::ensure_master_realm,
     secrets::{MASTER_SIGNING_KEY, get_or_init_secret},
@@ -38,10 +38,15 @@ async fn main() -> Result<()> {
         tracing::info!(applied, "system migrations applied");
     }
     ensure_master_realm(system.pool()).await?;
-    let already_initialized = count_master_admins(system.pool()).await? > 0;
+    // Auto-seed the canonical `admin` master admin row (NULL password)
+    // on first boot. Setup gate keys off the password being set, not
+    // the row existing — so this is safe to call on every boot.
+    ensure_seed_master_admin(system.pool()).await?;
+    let already_initialized = master_admin_is_initialized(system.pool()).await?;
     if !already_initialized {
         tracing::warn!(
-            "no master admin found — only /healthz and POST /_/setup are reachable until setup completes"
+            "setup wizard not yet completed — only /healthz and POST /_/setup are reachable; \
+             POST {{\"password\":\"...\"}} to /_/setup to finish bootstrap"
         );
     }
 

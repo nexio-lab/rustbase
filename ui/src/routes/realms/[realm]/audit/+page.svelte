@@ -22,18 +22,6 @@
 		Apps
 	</a>
 	<a
-		href="/realms/{realm}/users"
-		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
-	>
-		Users
-	</a>
-	<a
-		href="/realms/{realm}/oauth"
-		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
-	>
-		OAuth providers
-	</a>
-	<a
 		href="/realms/{realm}/policies"
 		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
 	>

@@ -2,14 +2,14 @@
 //!
 //! Two endpoints, both anonymous:
 //!
-//! - `GET  /api/realms/:realm/auth/oauth/:provider/authorize?redirect_uri=...`
+//! - `GET  /api/realms/:realm/apps/:app/auth/oauth/:provider/authorize?redirect_uri=...`
 //!   Mints a fresh CSRF state nonce, persists it bound to the
 //!   provider + caller-supplied `redirect_uri`, and returns the
 //!   provider's authorize URL with `client_id`, `redirect_uri`,
 //!   `scope`, `response_type=code`, and `state` query parameters
 //!   baked in. The client redirects the user's browser there.
 //!
-//! - `POST /api/realms/:realm/auth/oauth/:provider/callback`
+//! - `POST /api/realms/:realm/apps/:app/auth/oauth/:provider/callback`
 //!   Body: `{ code, state }`. The endpoint atomically consumes the
 //!   state nonce (rejecting mismatched provider, replay, or
 //!   expiry), exchanges the code for an access token at the
@@ -22,9 +22,8 @@
 //!       (OAuth proved email ownership), link it, and log it in.
 //!
 //! Provider configuration (auth URL, token URL, userinfo URL, scopes,
-//! id/email JSON pointers) is per-realm and currently seeded by tests
-//! or operators via direct DB writes; an admin-facing CRUD endpoint
-//! is deferred to a follow-up.
+//! id/email JSON pointers) is per-app — each app gets its own
+//! `oauth_providers` table in its `data.db`.
 
 use axum::{
     Json,
@@ -33,12 +32,11 @@ use axum::{
 use chrono::Duration;
 use rand_core::{OsRng, RngCore};
 use rustbase_auth::{TokenRole, build_claims, encode_token};
-use rustbase_core::{CoreError, RealmId};
+use rustbase_core::{AppId, CoreError, RealmId};
 use rustbase_db::{
     oauth_links,
     oauth_providers::{self, OAuthProvider},
     oauth_states::{self, ConsumeOutcome},
-    realms::find_realm,
     tokens::{SubjectKind, insert_refresh_token},
     users::{User, find_user_by_email, insert_passwordless_user, mark_verified, record_last_login},
 };
@@ -46,7 +44,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
 use crate::auth::login::UserPublic;
-use crate::auth::{default_access_ttl, default_refresh_ttl, new_refresh_token};
+use crate::auth::{default_access_ttl, default_refresh_ttl, new_refresh_token, require_app_exists};
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -79,16 +77,16 @@ pub struct CallbackResponse {
     pub user: UserPublic,
 }
 
-/// `GET /api/realms/:realm/auth/oauth/:provider/authorize`.
+/// `GET /api/realms/:realm/apps/:app/auth/oauth/:provider/authorize`.
 pub async fn authorize(
     State(state): State<AppState>,
-    Path((realm, provider)): Path<(String, String)>,
+    Path((realm, app, provider)): Path<(String, String, String)>,
     Query(q): Query<AuthorizeQuery>,
 ) -> Result<Json<AuthorizeResponse>, ApiError> {
-    find_realm(state.system.pool(), &realm)
-        .await?
-        .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.clone())))?;
-    let pool = state.realms.pool_for(&RealmId::from(realm.clone())).await?;
+    require_app_exists(&state, &realm, &app).await?;
+    let realm_id = RealmId::from(realm.clone());
+    let app_id = AppId::from(app.clone());
+    let pool = state.apps.pool_for(&realm_id, &app_id).await?;
 
     let cfg = oauth_providers::find_provider(&pool, &provider)
         .await?
@@ -114,19 +112,16 @@ pub async fn authorize(
     }))
 }
 
-/// `POST /api/realms/:realm/auth/oauth/:provider/callback`.
+/// `POST /api/realms/:realm/apps/:app/auth/oauth/:provider/callback`.
 pub async fn callback(
     State(app_state): State<AppState>,
-    Path((realm, provider)): Path<(String, String)>,
+    Path((realm, app, provider)): Path<(String, String, String)>,
     Json(body): Json<CallbackBody>,
 ) -> Result<Json<CallbackResponse>, ApiError> {
-    find_realm(app_state.system.pool(), &realm)
-        .await?
-        .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.clone())))?;
-    let pool = app_state
-        .realms
-        .pool_for(&RealmId::from(realm.clone()))
-        .await?;
+    require_app_exists(&app_state, &realm, &app).await?;
+    let realm_id = RealmId::from(realm.clone());
+    let app_id = AppId::from(app.clone());
+    let pool = app_state.apps.pool_for(&realm_id, &app_id).await?;
 
     let redirect_uri = match oauth_states::consume(&pool, &body.state, &provider).await? {
         ConsumeOutcome::Ok { redirect_uri } => redirect_uri,
@@ -184,25 +179,25 @@ pub async fn callback(
         "email": &user.email,
         "verified": true,
     });
-    let hook_req = rustbase_runtime::HookRequest::system(&realm, "", "_user");
+    let hook_req = rustbase_runtime::HookRequest::system(&realm, &app, "_user");
 
     if just_signed_up {
         if let Err(e) = app_state
             .hooks
-            .dispatch_user_after_register(&realm, &hook_req, &public)
+            .dispatch_user_after_register(&realm, &app, &hook_req, &public)
             .await
         {
-            tracing::warn!(error = %e, %realm, %provider, "user_after_register hook errored");
+            tracing::warn!(error = %e, %realm, %app, %provider, "user_after_register hook errored");
         }
     }
 
     app_state
         .hooks
-        .dispatch_user_before_login(&realm, &hook_req, &public)
+        .dispatch_user_before_login(&realm, &app, &hook_req, &public)
         .await
         .map_err(|e| match e {
             rustbase_runtime::RuntimeError::Veto(msg) => {
-                tracing::info!(%realm, user_id = %user.id, %provider, %msg, "oauth login vetoed by hook");
+                tracing::info!(%realm, %app, user_id = %user.id, %provider, %msg, "oauth login vetoed by hook");
                 ApiError::Core(CoreError::Forbidden)
             }
             other => ApiError::Core(CoreError::Internal(other.to_string())),
@@ -214,7 +209,7 @@ pub async fn callback(
         user.id.clone(),
         TokenRole::User,
         Some(realm.clone()),
-        None,
+        Some(app.clone()),
         default_access_ttl(),
     );
     let access_token = encode_token(&claims, &app_state.master_key)?;
@@ -229,6 +224,7 @@ pub async fn callback(
 
     tracing::info!(
         realm = %realm,
+        app = %app,
         user_id = %user.id,
         provider = %provider,
         "user signed in via OAuth"
@@ -236,10 +232,10 @@ pub async fn callback(
 
     if let Err(e) = app_state
         .hooks
-        .dispatch_user_after_login(&realm, &hook_req, &public)
+        .dispatch_user_after_login(&realm, &app, &hook_req, &public)
         .await
     {
-        tracing::warn!(error = %e, %realm, %provider, "user_after_login hook errored");
+        tracing::warn!(error = %e, %realm, %app, %provider, "user_after_login hook errored");
     }
 
     Ok(Json(CallbackResponse {

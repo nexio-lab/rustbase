@@ -11,6 +11,7 @@
 	import Breadcrumbs from '$lib/Breadcrumbs.svelte';
 
 	const realm = $derived(page.params.realm);
+	const app = $derived(page.params.app);
 	const slug = $derived(page.params.provider);
 	const isNew = $derived(slug === 'new');
 
@@ -88,7 +89,7 @@
 				return;
 			}
 			const got = await api.get<OAuthProvider>(
-				`/api/realms/${realm}/auth/oauth/providers/${slug}`
+				`/api/realms/${realm}/apps/${app}/auth/oauth/providers/${slug}`
 			);
 			providerSlug = got.provider;
 			clientId = got.client_id;
@@ -103,6 +104,7 @@
 
 	$effect(() => {
 		realm;
+		app;
 		slug;
 		load();
 	});
@@ -141,10 +143,10 @@
 				return;
 			}
 			await api.put<OAuthProvider>(
-				`/api/realms/${realm}/auth/oauth/providers/${finalSlug}`,
+				`/api/realms/${realm}/apps/${app}/auth/oauth/providers/${finalSlug}`,
 				body
 			);
-			await goto(`/realms/${realm}/oauth`);
+			await goto(`/realms/${realm}/apps/${app}/oauth`);
 		} catch (e) {
 			formError = e instanceof ApiError ? e.message : String(e);
 		} finally {
@@ -158,8 +160,8 @@
 		busy = true;
 		formError = null;
 		try {
-			await api.delete(`/api/realms/${realm}/auth/oauth/providers/${slug}`);
-			await goto(`/realms/${realm}/oauth`);
+			await api.delete(`/api/realms/${realm}/apps/${app}/auth/oauth/providers/${slug}`);
+			await goto(`/realms/${realm}/apps/${app}/oauth`);
 		} catch (e) {
 			formError = e instanceof ApiError ? e.message : String(e);
 			busy = false;
@@ -171,7 +173,8 @@
 	items={[
 		{ label: 'Realms', href: '/realms' },
 		{ label: realm, href: `/realms/${realm}` },
-		{ label: 'OAuth providers', href: `/realms/${realm}/oauth` },
+		{ label: app, href: `/realms/${realm}/apps/${app}` },
+		{ label: 'OAuth providers', href: `/realms/${realm}/apps/${app}/oauth` },
 		{ label: isNew ? 'New' : slug }
 	]}
 />
@@ -347,7 +350,7 @@
 			<button type="submit" class="btn-primary" disabled={busy}>
 				{busy ? 'Saving…' : isNew ? 'Create provider' : 'Save changes'}
 			</button>
-			<a href="/realms/{realm}/oauth" class="btn-secondary">Cancel</a>
+			<a href="/realms/{realm}/apps/{app}/oauth" class="btn-secondary">Cancel</a>
 		</div>
 	</form>
 {/if}

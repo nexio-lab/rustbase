@@ -1459,30 +1459,17 @@ impl HookEngine {
             .await
     }
 
-    /// Iterator over `(realm, app, AppHooks)` for every app whose
-    /// hooks have been loaded under `realm`. Used by the user-lifecycle
-    /// fan-out below.
-    fn apps_in_realm(&self, realm: &str) -> Vec<Arc<AppHooks>> {
-        self.apps
-            .iter()
-            .filter_map(|e| {
-                let ((r, _a), hooks) = (e.key(), e.value());
-                (r == realm).then(|| hooks.clone())
-            })
-            .collect()
-    }
-
-    /// Fire `onUserBeforeLogin` across every app's hooks in the realm.
-    /// Vetoable: if any app's hook throws, return `Err(Veto)` and the
-    /// caller should abort the login. Apps that aren't loaded yet
-    /// contribute no veto.
+    /// Fire `onUserBeforeLogin` for one app's hooks. Vetoable: if the
+    /// app's hook throws, return `Err(Veto)` and the caller should abort
+    /// the login. If the app's hooks aren't loaded yet, no veto fires.
     pub async fn dispatch_user_before_login<U: Serialize>(
         &self,
         realm: &str,
+        app: &str,
         request: &HookRequest,
         user: &U,
     ) -> Result<()> {
-        for hooks in self.apps_in_realm(realm) {
+        if let Some(hooks) = self.get(realm, app) {
             hooks
                 .dispatch_before_user_event(HookEvent::UserBeforeLogin, request, user)
                 .await?;
@@ -1490,17 +1477,18 @@ impl HookEngine {
         Ok(())
     }
 
-    /// Observer fan-out: every app's `onUserAfterLogin` fires.
-    /// Per-app handler errors are caught by the dispatch driver and
-    /// never bubble; this method only errors if a JS context itself
-    /// blew up (which would have surfaced at load time).
+    /// Observer fan-out for the specific app's `onUserAfterLogin`. Per-
+    /// handler errors are caught by the dispatch driver and never bubble;
+    /// this method only errors if a JS context itself blew up (which
+    /// would have surfaced at load time).
     pub async fn dispatch_user_after_login<U: Serialize>(
         &self,
         realm: &str,
+        app: &str,
         request: &HookRequest,
         user: &U,
     ) -> Result<()> {
-        for hooks in self.apps_in_realm(realm) {
+        if let Some(hooks) = self.get(realm, app) {
             hooks
                 .dispatch(
                     USER_HOOK_COLLECTION,
@@ -1513,14 +1501,15 @@ impl HookEngine {
         Ok(())
     }
 
-    /// Observer fan-out for fresh signups (any track).
+    /// Observer fan-out for fresh signups (any track), for one app.
     pub async fn dispatch_user_after_register<U: Serialize>(
         &self,
         realm: &str,
+        app: &str,
         request: &HookRequest,
         user: &U,
     ) -> Result<()> {
-        for hooks in self.apps_in_realm(realm) {
+        if let Some(hooks) = self.get(realm, app) {
             hooks
                 .dispatch(
                     USER_HOOK_COLLECTION,
@@ -1679,10 +1668,11 @@ mod tests {
     // ------------- user-lifecycle hooks -------------
 
     #[tokio::test]
-    async fn user_after_register_fires_across_every_app_in_realm() {
+    async fn user_after_register_fires_only_on_target_app() {
         let engine = HookEngine::new();
         // Two apps in the same realm; each registers an
-        // onUserAfterRegister that logs the user id.
+        // onUserAfterRegister that logs the user id. Only the
+        // dispatched app should fire — users live per-app now.
         for app in ["mobile", "web"] {
             let dir = tempdir().unwrap();
             std::fs::write(
@@ -1695,7 +1685,6 @@ mod tests {
                 .await
                 .unwrap();
         }
-        // Also load an unrelated realm — must NOT fire.
         let other = tempdir().unwrap();
         std::fs::write(
             other.path().join("hook.js"),
@@ -1710,19 +1699,20 @@ mod tests {
         engine
             .dispatch_user_after_register(
                 "acme",
+                "mobile",
                 &HookRequest::default(),
                 &json!({"id":"u-1","email":"u@x","verified":true}),
             )
             .await
             .unwrap();
 
-        let mut acme_mobile = engine
+        let acme_mobile = engine
             .get("acme", "mobile")
             .unwrap()
             .drain_logs()
             .await
             .unwrap();
-        let mut acme_web = engine
+        let acme_web = engine
             .get("acme", "web")
             .unwrap()
             .drain_logs()
@@ -1734,28 +1724,16 @@ mod tests {
             .drain_logs()
             .await
             .unwrap();
-        acme_mobile.sort();
-        acme_web.sort();
         assert_eq!(acme_mobile, vec!["mobile saw u-1".to_string()]);
-        assert_eq!(acme_web, vec!["web saw u-1".to_string()]);
+        assert!(acme_web.is_empty(), "sibling app must not fire");
         assert!(widgets.is_empty(), "unrelated realm must not fire");
     }
 
     #[tokio::test]
-    async fn user_before_login_veto_from_any_app_aborts() {
+    async fn user_before_login_veto_aborts_target_app() {
         let engine = HookEngine::new();
-        // app A is silent, app B vetoes any login.
-        let a = tempdir().unwrap();
-        std::fs::write(
-            a.path().join("hook.js"),
-            r#"$app.onUserBeforeLogin(() => $app.log("a saw"));"#,
-        )
-        .unwrap();
-        engine
-            .load_app("acme", "a", a.path(), None, None)
-            .await
-            .unwrap();
-
+        // The dispatched app vetoes any login. A sibling app's veto
+        // hook must not be consulted — login is scoped to one app.
         let b = tempdir().unwrap();
         std::fs::write(
             b.path().join("hook.js"),
@@ -1770,6 +1748,7 @@ mod tests {
         let res = engine
             .dispatch_user_before_login(
                 "acme",
+                "b",
                 &HookRequest::default(),
                 &json!({"id":"u-1","email":"banned@x","verified":true}),
             )
@@ -1797,6 +1776,7 @@ mod tests {
         engine
             .dispatch_user_after_login(
                 "acme",
+                "mobile",
                 &HookRequest::default(),
                 &json!({"id":"u-1","email":"a@x","verified":true}),
             )

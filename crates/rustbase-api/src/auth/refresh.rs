@@ -3,13 +3,13 @@ use axum::{
     extract::{Path, State},
 };
 use rustbase_auth::{TokenRole, build_claims, encode_token};
-use rustbase_core::{CoreError, RealmId};
+use rustbase_core::{AppId, CoreError, RealmId};
 use rustbase_db::tokens::{
     SubjectKind, find_active_refresh_token, insert_refresh_token, revoke_refresh_token,
 };
 use serde::{Deserialize, Serialize};
 
-use super::{default_access_ttl, default_refresh_ttl, new_refresh_token};
+use super::{default_access_ttl, default_refresh_ttl, new_refresh_token, require_app_exists};
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -66,11 +66,14 @@ pub async fn master_admin_refresh(
 
 pub async fn user_refresh(
     State(state): State<AppState>,
-    Path(realm): Path<String>,
+    Path((realm, app)): Path<(String, String)>,
     Json(req): Json<RefreshRequest>,
 ) -> Result<Json<RefreshResponse>, ApiError> {
+    require_app_exists(&state, &realm, &app).await?;
+
     let realm_id = RealmId::from(realm.clone());
-    let pool = state.realms.pool_for(&realm_id).await?;
+    let app_id = AppId::from(app.clone());
+    let pool = state.apps.pool_for(&realm_id, &app_id).await?;
 
     let existing = find_active_refresh_token(&pool, &req.refresh_token, SubjectKind::User)
         .await?
@@ -91,7 +94,7 @@ pub async fn user_refresh(
         existing.subject_id,
         TokenRole::User,
         Some(realm),
-        None,
+        Some(app),
         default_access_ttl(),
     );
     let access_token = encode_token(&claims, &state.master_key)?;

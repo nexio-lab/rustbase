@@ -6,8 +6,8 @@ RustBaas is a **Backend-as-a-Service** packaged as a single statically-linked bi
 
 Out of the box, every RustBaas instance ships with:
 
-- **Realms** — identity / organization boundaries. Each realm has its own user pool, OAuth providers, branding, and policies.
-- **Apps** — data products. Each app has its own schema (collections), records, files, hooks, and access rules.
+- **Realms** — organization boundaries. Each realm groups its apps under one set of administrators, branding, and policies.
+- **Apps** — data products. Each app has its own schema (collections), records, files, hooks, access rules, **end-user pool**, and OAuth provider configuration.
 - **Authentication** — email + password, email OTP, TOTP second factor, OAuth2 (Google, GitHub, any OIDC).
 - **Three admin tiers** — master, realm, and app admins, each scoped exactly to what they manage.
 - **REST API** — typed JSON, filterable lists, generated OpenAPI spec.

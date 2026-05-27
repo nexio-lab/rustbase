@@ -4,12 +4,12 @@ This walkthrough builds a tiny note-taking backend entirely through `curl`. By t
 
 ## Sign in as master admin
 
-Assuming you ran the setup wizard with `ada@example.com` / `hunter22`:
+Assuming you ran the setup wizard and set the password to `hunter22` (the master admin username is fixed at boot to `admin`):
 
 ```sh
 TOKEN=$(curl -s http://localhost:8080/_/auth/admin/login \
   -H "content-type: application/json" \
-  -d '{"email":"ada@example.com","password":"hunter22"}' \
+  -d '{"username":"admin","password":"hunter22"}' \
   | jq -r .access_token)
 ```
 
@@ -52,14 +52,14 @@ curl -s http://localhost:8080/api/realms/acme/apps/notes/collections \
 
 ## Register and log in as an end-user
 
-End-users live in the realm (not the app), so they sign in once and the token works for every app in the realm.
+End-users live per-app: register against the specific `(realm, app)` you want to authenticate into.
 
 ```sh
-curl -s http://localhost:8080/api/realms/acme/auth/users/register \
+curl -s http://localhost:8080/api/realms/acme/apps/notes/auth/users/register \
   -H "content-type: application/json" \
   -d '{"email":"user@acme.com","password":"userpass1"}'
 
-UTOKEN=$(curl -s http://localhost:8080/api/realms/acme/auth/users/login \
+UTOKEN=$(curl -s http://localhost:8080/api/realms/acme/apps/notes/auth/users/login \
   -H "content-type: application/json" \
   -d '{"email":"user@acme.com","password":"userpass1"}' \
   | jq -r .access_token)

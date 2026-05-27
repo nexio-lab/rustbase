@@ -3,13 +3,12 @@
 	import { api, ApiError, type MasterLoginResponse } from '$lib/api';
 	import { auth } from '$lib/auth.svelte';
 
-	// First-run wizard. Mirrors the `POST /_/setup` contract:
-	// one-shot creation of the first master admin. If the server has
+	// First-run wizard. The server has already auto-seeded the master
+	// admin row (username `admin`, NULL password) on first boot; the
+	// wizard's only job is to set that password. If the server has
 	// already been initialized, the endpoint returns 409 conflict and
 	// we redirect the user back to /login.
-	let email = $state('');
 	let password = $state('');
-	let name = $state('');
 	let submitting = $state(false);
 	let error: string | null = $state(null);
 
@@ -18,13 +17,13 @@
 		submitting = true;
 		error = null;
 		try {
-			// 1. Create the master admin.
-			await api.post('/_/setup', { email, password, name: name || null }, { auth: false });
-			// 2. Immediately log in with the same credentials so the user
-			//    lands on /realms without retyping anything.
+			// 1. Set the master admin password.
+			await api.post('/_/setup', { password }, { auth: false });
+			// 2. Immediately log in with the canonical "admin" username so
+			//    the user lands on /realms without retyping anything.
 			const login = await api.post<MasterLoginResponse>(
 				'/_/auth/admin/login',
-				{ email, password },
+				{ username: 'admin', password },
 				{ auth: false }
 			);
 			auth.setMasterSession(login);
@@ -32,7 +31,7 @@
 		} catch (e) {
 			if (e instanceof ApiError) {
 				if (e.code === 'conflict' || e.status === 409) {
-					error = 'A master admin already exists. Use the login form.';
+					error = 'Setup has already been completed. Use the login form.';
 				} else {
 					error = e.message;
 				}
@@ -49,7 +48,9 @@
 	<div class="mb-8 text-center">
 		<div class="mx-auto mb-2 inline-block h-3 w-3 rounded-sm bg-orange-500"></div>
 		<h1 class="text-2xl font-semibold tracking-tight text-slate-900">Set up RustBaas</h1>
-		<p class="mt-1 text-sm text-slate-500">Create the first master admin</p>
+		<p class="mt-1 text-sm text-slate-500">
+			Set the password for the master <code>admin</code> account
+		</p>
 	</div>
 
 	<form onsubmit={submit} class="card space-y-4">
@@ -58,28 +59,18 @@
 		{/if}
 
 		<div>
-			<label class="field-label" for="email">Email</label>
+			<label class="field-label" for="username">Username</label>
 			<input
-				id="email"
-				type="email"
-				class="input"
-				autocomplete="email"
-				bind:value={email}
-				required
-				disabled={submitting}
-			/>
-		</div>
-
-		<div>
-			<label class="field-label" for="name">Name (optional)</label>
-			<input
-				id="name"
+				id="username"
 				type="text"
-				class="input"
-				autocomplete="name"
-				bind:value={name}
-				disabled={submitting}
+				class="input bg-slate-50 text-slate-500"
+				value="admin"
+				disabled
+				readonly
 			/>
+			<p class="mt-1 text-xs text-slate-500">
+				Fixed at boot. Use this name to sign in afterwards.
+			</p>
 		</div>
 
 		<div>
@@ -98,7 +89,7 @@
 		</div>
 
 		<button type="submit" class="btn-primary w-full" disabled={submitting}>
-			{submitting ? 'Creating…' : 'Create master admin'}
+			{submitting ? 'Saving…' : 'Set master password'}
 		</button>
 	</form>
 

@@ -1,14 +1,14 @@
 //! Passwordless email-OTP login.
 //!
-//! - `POST /api/realms/:realm/auth/otp/request` body `{ email }`
+//! - `POST /api/realms/:realm/apps/:app/auth/otp/request` body `{ email }`
 //!   Anonymous. Always returns 202 with the same generic message
 //!   regardless of whether the email maps to an existing user — same
 //!   enumeration-resistance posture as `password-reset/request`.
 //!   On a syntactically valid email, a fresh 6-digit code is issued
 //!   (invalidating any prior pending one) and mailed.
 //!
-//! - `POST /api/realms/:realm/auth/otp/login` body `{ email, code }`
-//!   Anonymous. Atomically consumes the code:
+//! - `POST /api/realms/:realm/apps/:app/auth/otp/login` body
+//!   `{ email, code }`. Anonymous. Atomically consumes the code:
 //!     * Right code → find-or-create user, mark verified=true (the
 //!       OTP delivery proved control of the address), issue access +
 //!       refresh tokens.
@@ -23,10 +23,9 @@ use axum::{
 };
 use rand_core::{OsRng, RngCore};
 use rustbase_auth::{TokenRole, build_claims, encode_token};
-use rustbase_core::{CoreError, EmailMessage, RealmId};
+use rustbase_core::{AppId, CoreError, EmailMessage, RealmId};
 use rustbase_db::{
     email_otps::{self, ConsumeOutcome},
-    realms::find_realm,
     tokens::{SubjectKind, insert_refresh_token},
     users::{User, find_user_by_email, insert_passwordless_user, mark_verified, record_last_login},
 };
@@ -35,7 +34,7 @@ use sqlx::SqlitePool;
 use validator::Validate;
 
 use crate::auth::login::UserPublic;
-use crate::auth::{default_access_ttl, default_refresh_ttl, new_refresh_token};
+use crate::auth::{default_access_ttl, default_refresh_ttl, new_refresh_token, require_app_exists};
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -80,16 +79,16 @@ pub struct OtpLoginError {
 /// Anonymous code-request endpoint. Always 202 — no enumeration signal.
 pub async fn request(
     State(state): State<AppState>,
-    Path(realm): Path<String>,
+    Path((realm, app)): Path<(String, String)>,
     Json(req): Json<OtpRequest>,
 ) -> Result<(StatusCode, Json<OtpRequestResponse>), ApiError> {
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
-    find_realm(state.system.pool(), &realm)
-        .await?
-        .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.clone())))?;
+    require_app_exists(&state, &realm, &app).await?;
 
-    let pool = state.realms.pool_for(&RealmId::from(realm.clone())).await?;
+    let realm_id = RealmId::from(realm.clone());
+    let app_id = AppId::from(app.clone());
+    let pool = state.apps.pool_for(&realm_id, &app_id).await?;
 
     let code = fresh_otp_code();
     email_otps::issue(
@@ -100,9 +99,6 @@ pub async fn request(
     )
     .await?;
 
-    // Mail it. A transport failure is logged but does not change the
-    // response shape — the address may not even exist, and either way
-    // we keep the enumeration signal flat.
     let body = format!(
         "Hello,\n\nYour one-time login code is:\n\n  {code}\n\n\
          This code is valid for {OTP_TTL_MINUTES} minutes. If you didn't \
@@ -111,11 +107,14 @@ pub async fn request(
     let msg = EmailMessage::new(
         SYSTEM_FROM_ADDRESS,
         &req.email,
-        format!("Your login code for realm {realm}"),
+        format!("Your login code for {realm}/{app}"),
         body,
     );
     if let Err(e) = state.mailer.send(msg).await {
-        tracing::error!(error = %e, realm = %realm, email = %req.email, "mailer dropped OTP");
+        tracing::error!(
+            error = %e, realm = %realm, app = %app, email = %req.email,
+            "mailer dropped OTP"
+        );
     }
 
     Ok((
@@ -129,18 +128,18 @@ pub async fn request(
 /// Code-redemption endpoint. Issues login tokens on success.
 pub async fn login(
     State(state): State<AppState>,
-    Path(realm): Path<String>,
+    Path((realm, app)): Path<(String, String)>,
     Json(req): Json<OtpLoginRequest>,
 ) -> Result<Json<OtpLoginResponse>, ApiError> {
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
-    find_realm(state.system.pool(), &realm)
-        .await?
-        .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.clone())))?;
-    let pool = state.realms.pool_for(&RealmId::from(realm.clone())).await?;
+    require_app_exists(&state, &realm, &app).await?;
+    let realm_id = RealmId::from(realm.clone());
+    let app_id = AppId::from(app.clone());
+    let pool = state.apps.pool_for(&realm_id, &app_id).await?;
 
     match email_otps::consume(&pool, &req.email, &req.code).await? {
-        ConsumeOutcome::Ok { email } => issue_tokens_for(&state, &pool, &realm, &email).await,
+        ConsumeOutcome::Ok { email } => issue_tokens_for(&state, &pool, &realm, &app, &email).await,
         ConsumeOutcome::WrongCode { attempts_left } => Err(ApiError::Core(CoreError::Validation(
             format!("wrong code ({attempts_left} attempts left)"),
         ))),
@@ -162,6 +161,7 @@ async fn issue_tokens_for(
     state: &AppState,
     pool: &SqlitePool,
     realm: &str,
+    app: &str,
     email: &str,
 ) -> Result<Json<OtpLoginResponse>, ApiError> {
     let mut just_signed_up = false;
@@ -173,14 +173,12 @@ async fn issue_tokens_for(
             u
         }
         None => {
-            // Passwordless signup. password_hash stays NULL — this
-            // user can only ever log in via OTP (or, later, OAuth)
-            // until they explicitly set one.
             let fresh = insert_passwordless_user(pool, email).await?;
             mark_verified(pool, &fresh.id).await?;
             just_signed_up = true;
             tracing::info!(
                 realm = %realm,
+                app = %app,
                 user_id = %fresh.id,
                 email = %email,
                 "user signed up via email OTP"
@@ -194,25 +192,25 @@ async fn issue_tokens_for(
         "email": &user.email,
         "verified": true,
     });
-    let hook_req = rustbase_runtime::HookRequest::system(realm, "", "_user");
+    let hook_req = rustbase_runtime::HookRequest::system(realm, app, "_user");
 
     if just_signed_up {
         if let Err(e) = state
             .hooks
-            .dispatch_user_after_register(realm, &hook_req, &public)
+            .dispatch_user_after_register(realm, app, &hook_req, &public)
             .await
         {
-            tracing::warn!(error = %e, %realm, "user_after_register hook errored");
+            tracing::warn!(error = %e, %realm, %app, "user_after_register hook errored");
         }
     }
 
     state
         .hooks
-        .dispatch_user_before_login(realm, &hook_req, &public)
+        .dispatch_user_before_login(realm, app, &hook_req, &public)
         .await
         .map_err(|e| match e {
             rustbase_runtime::RuntimeError::Veto(msg) => {
-                tracing::info!(%realm, user_id = %user.id, %msg, "login vetoed by hook");
+                tracing::info!(%realm, %app, user_id = %user.id, %msg, "login vetoed by hook");
                 ApiError::Core(CoreError::Forbidden)
             }
             other => ApiError::Core(CoreError::Internal(other.to_string())),
@@ -224,7 +222,7 @@ async fn issue_tokens_for(
         user.id.clone(),
         TokenRole::User,
         Some(realm.to_string()),
-        None,
+        Some(app.to_string()),
         default_access_ttl(),
     );
     let access_token = encode_token(&claims, &state.master_key)?;
@@ -237,14 +235,14 @@ async fn issue_tokens_for(
     )
     .await?;
 
-    tracing::info!(realm = %realm, user_id = %user.id, "user login via email OTP");
+    tracing::info!(realm = %realm, app = %app, user_id = %user.id, "user login via email OTP");
 
     if let Err(e) = state
         .hooks
-        .dispatch_user_after_login(realm, &hook_req, &public)
+        .dispatch_user_after_login(realm, app, &hook_req, &public)
         .await
     {
-        tracing::warn!(error = %e, %realm, "user_after_login hook errored");
+        tracing::warn!(error = %e, %realm, %app, "user_after_login hook errored");
     }
 
     Ok(Json(OtpLoginResponse {
@@ -253,8 +251,6 @@ async fn issue_tokens_for(
         user: UserPublic {
             id: user.id,
             email: user.email,
-            // mark_verified ran above; refresh the flag on the response
-            // so the client doesn't see a stale `false`.
             verified: true,
         },
     }))

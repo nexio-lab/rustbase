@@ -108,12 +108,12 @@ pub async fn consume(pool: &SqlitePool, state: &str, provider: &str) -> Result<C
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::migrations::{REALM_MIGRATIONS, apply_migrations};
+    use crate::migrations::{APP_MIGRATIONS, apply_migrations};
     use crate::pool::open_memory_pool;
 
     async fn fresh() -> SqlitePool {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(pool.clone(), REALM_MIGRATIONS)
+        apply_migrations(pool.clone(), APP_MIGRATIONS)
             .await
             .unwrap();
         pool

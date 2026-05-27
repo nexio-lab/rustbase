@@ -1,14 +1,14 @@
 //! Password-reset endpoints.
 //!
-//! - `POST /api/realms/:realm/auth/password-reset/request`
+//! - `POST /api/realms/:realm/apps/:app/auth/password-reset/request`
 //!   Anonymous. Body: `{ "email": "..." }`. Always answers
 //!   `202 Accepted` with the same generic message so the response
 //!   can't be used to enumerate which addresses are registered. A
 //!   reset token is issued and mailed *only* when the email
-//!   actually resolves to a user in this realm; the no-match case
+//!   actually resolves to a user in this app; the no-match case
 //!   is silent.
 //!
-//! - `POST /api/realms/:realm/auth/password-reset/confirm`
+//! - `POST /api/realms/:realm/apps/:app/auth/password-reset/confirm`
 //!   Anonymous. Body: `{ "token": "...", "new_password": "..." }`.
 //!   Consumes the token atomically, rehashes the new password, and
 //!   replaces the stored hash. On success, every other pending
@@ -25,15 +25,15 @@ use axum::{
 };
 use rand_core::{OsRng, RngCore};
 use rustbase_auth::hash_password;
-use rustbase_core::{CoreError, EmailMessage, RealmId};
+use rustbase_core::{AppId, CoreError, EmailMessage, RealmId};
 use rustbase_db::{
     password_resets::{self, ConsumeOutcome},
-    realms::find_realm,
     users::{find_user_by_email, set_password_hash},
 };
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
+use crate::auth::require_app_exists;
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -69,16 +69,16 @@ pub struct ResetConfirmResponse {
 /// happens but the caller can't tell the difference.
 pub async fn request(
     State(state): State<AppState>,
-    Path(realm): Path<String>,
+    Path((realm, app)): Path<(String, String)>,
     Json(req): Json<ResetRequest>,
 ) -> Result<(StatusCode, Json<ResetRequestResponse>), ApiError> {
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
-    find_realm(state.system.pool(), &realm)
-        .await?
-        .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.clone())))?;
+    require_app_exists(&state, &realm, &app).await?;
 
-    let pool = state.realms.pool_for(&RealmId::from(realm.clone())).await?;
+    let realm_id = RealmId::from(realm.clone());
+    let app_id = AppId::from(app.clone());
+    let pool = state.apps.pool_for(&realm_id, &app_id).await?;
 
     let generic_response = (
         StatusCode::ACCEPTED,
@@ -89,7 +89,12 @@ pub async fn request(
 
     let Some(user) = find_user_by_email(&pool, &req.email).await? else {
         // Don't leak the absence of the email — same response shape.
-        tracing::info!(realm = %realm, email = %req.email, "password reset requested for unknown email");
+        tracing::info!(
+            realm = %realm,
+            app = %app,
+            email = %req.email,
+            "password reset requested for unknown email"
+        );
         return Ok(generic_response);
     };
 
@@ -110,15 +115,19 @@ pub async fn request(
     let msg = EmailMessage::new(
         SYSTEM_FROM_ADDRESS,
         &user.email,
-        format!("Reset your password for realm {realm}"),
+        format!("Reset your password for {realm}/{app}"),
         body,
     );
-    // A mailer failure shouldn't tell the caller the email was valid;
-    // log it and still answer with the generic 202. The user can retry.
     if let Err(e) = state.mailer.send(msg).await {
-        tracing::error!(error = %e, realm = %realm, user_id = %user.id, "mailer dropped reset email");
+        tracing::error!(
+            error = %e, realm = %realm, app = %app, user_id = %user.id,
+            "mailer dropped reset email"
+        );
     } else {
-        tracing::info!(realm = %realm, user_id = %user.id, "password reset token issued + mailed");
+        tracing::info!(
+            realm = %realm, app = %app, user_id = %user.id,
+            "password reset token issued + mailed"
+        );
     }
 
     Ok(generic_response)
@@ -126,15 +135,15 @@ pub async fn request(
 
 pub async fn confirm(
     State(state): State<AppState>,
-    Path(realm): Path<String>,
+    Path((realm, app)): Path<(String, String)>,
     Json(req): Json<ResetConfirm>,
 ) -> Result<Json<ResetConfirmResponse>, ApiError> {
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
-    find_realm(state.system.pool(), &realm)
-        .await?
-        .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.clone())))?;
-    let pool = state.realms.pool_for(&RealmId::from(realm.clone())).await?;
+    require_app_exists(&state, &realm, &app).await?;
+    let realm_id = RealmId::from(realm.clone());
+    let app_id = AppId::from(app.clone());
+    let pool = state.apps.pool_for(&realm_id, &app_id).await?;
 
     let user_id = match password_resets::consume(&pool, &req.token).await? {
         ConsumeOutcome::Ok { user_id } => user_id,
@@ -159,11 +168,10 @@ pub async fn confirm(
     let hash = hash_password(&req.new_password)?;
     set_password_hash(&pool, &user_id, &hash).await?;
 
-    // Burn any other in-flight reset tokens for this user — only the
-    // freshly-confirmed flow gets to set the password.
     let invalidated = password_resets::invalidate_all_for_user(&pool, &user_id).await?;
     tracing::info!(
         realm = %realm,
+        app = %app,
         user_id = %user_id,
         invalidated_siblings = invalidated,
         "password reset confirmed"

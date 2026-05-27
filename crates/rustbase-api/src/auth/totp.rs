@@ -1,6 +1,7 @@
 //! TOTP second-factor: enrolment, confirmation, disable.
 //!
-//! Three user-authenticated endpoints under `/api/realms/:realm/auth/totp/`.
+//! Three user-authenticated endpoints under
+//! `/api/realms/:realm/apps/:app/auth/totp/`.
 //!
 //! `POST /enroll` starts (or restarts) enrolment. A fresh secret is
 //! stored in `_user_totp` in pending state. The response carries
@@ -30,10 +31,9 @@ use axum::{
 use chrono::Duration;
 use rand_core::{OsRng, RngCore};
 use rustbase_auth::{TokenRole, build_claims, encode_token};
-use rustbase_core::{CoreError, RealmId};
+use rustbase_core::{AppId, CoreError, RealmId};
 use rustbase_db::{
     mfa_challenges::{self, ConsumeOutcome as MfaConsume},
-    realms::find_realm,
     tokens::{SubjectKind, insert_refresh_token},
     user_totp,
     users::{find_user_by_email, find_user_by_id, record_last_login},
@@ -43,7 +43,7 @@ use totp_rs::{Algorithm, Secret, TOTP};
 
 use crate::auth::PrincipalAuth;
 use crate::auth::login::UserPublic;
-use crate::auth::{default_access_ttl, default_refresh_ttl, new_refresh_token};
+use crate::auth::{default_access_ttl, default_refresh_ttl, new_refresh_token, require_app_exists};
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -78,15 +78,13 @@ pub struct StatusResponse {
 pub async fn enroll(
     auth: PrincipalAuth,
     State(state): State<AppState>,
-    Path(realm): Path<String>,
+    Path((realm, app)): Path<(String, String)>,
 ) -> Result<Json<EnrollResponse>, ApiError> {
-    if auth.user_realm() != Some(realm.as_str()) {
-        return Err(ApiError::Core(CoreError::Forbidden));
-    }
-    find_realm(state.system.pool(), &realm)
-        .await?
-        .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.clone())))?;
-    let pool = state.realms.pool_for(&RealmId::from(realm.clone())).await?;
+    auth.require_user_in_app(&realm, &app)?;
+    require_app_exists(&state, &realm, &app).await?;
+    let realm_id = RealmId::from(realm.clone());
+    let app_id = AppId::from(app.clone());
+    let pool = state.apps.pool_for(&realm_id, &app_id).await?;
 
     let user = find_user_by_id(&pool, &auth.subject_id)
         .await?
@@ -100,11 +98,11 @@ pub async fn enroll(
     let secret = Secret::generate_secret();
     let secret_b32 = secret.to_encoded().to_string();
 
-    let totp = build_totp(&secret_b32, &realm, &user.email)?;
+    let totp = build_totp(&secret_b32, &realm, &app, &user.email)?;
     let otpauth_url = totp.get_url();
 
     user_totp::enroll(&pool, &user.id, &secret_b32).await?;
-    tracing::info!(realm = %realm, user_id = %user.id, "TOTP enrolment started");
+    tracing::info!(realm = %realm, app = %app, user_id = %user.id, "TOTP enrolment started");
 
     Ok(Json(EnrollResponse {
         secret_b32,
@@ -112,20 +110,18 @@ pub async fn enroll(
     }))
 }
 
-/// `POST /api/realms/:realm/auth/totp/confirm`.
+/// `POST /api/realms/:realm/apps/:app/auth/totp/confirm`.
 pub async fn confirm(
     auth: PrincipalAuth,
     State(state): State<AppState>,
-    Path(realm): Path<String>,
+    Path((realm, app)): Path<(String, String)>,
     Json(body): Json<CodeBody>,
 ) -> Result<Json<StatusResponse>, ApiError> {
-    if auth.user_realm() != Some(realm.as_str()) {
-        return Err(ApiError::Core(CoreError::Forbidden));
-    }
-    find_realm(state.system.pool(), &realm)
-        .await?
-        .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.clone())))?;
-    let pool = state.realms.pool_for(&RealmId::from(realm.clone())).await?;
+    auth.require_user_in_app(&realm, &app)?;
+    require_app_exists(&state, &realm, &app).await?;
+    let realm_id = RealmId::from(realm.clone());
+    let app_id = AppId::from(app.clone());
+    let pool = state.apps.pool_for(&realm_id, &app_id).await?;
 
     let row = user_totp::find(&pool, &auth.subject_id)
         .await?
@@ -136,33 +132,30 @@ pub async fn confirm(
         .await?
         .ok_or(ApiError::Core(CoreError::Unauthorized))?;
 
-    let totp = build_totp(&row.secret_b32, &realm, &user.email)?;
+    let totp = build_totp(&row.secret_b32, &realm, &app, &user.email)?;
     if !check_code(&totp, &body.code)? {
         return Err(ApiError::Core(CoreError::Unauthorized));
     }
     let n = user_totp::confirm_enabled(&pool, &auth.subject_id).await?;
     if n == 0 {
-        // Already enabled (or row vanished mid-request); treat as ok.
         return Ok(Json(StatusResponse { status: "enabled" }));
     }
-    tracing::info!(realm = %realm, user_id = %auth.subject_id, "TOTP confirmed");
+    tracing::info!(realm = %realm, app = %app, user_id = %auth.subject_id, "TOTP confirmed");
     Ok(Json(StatusResponse { status: "enabled" }))
 }
 
-/// `POST /api/realms/:realm/auth/totp/disable`.
+/// `POST /api/realms/:realm/apps/:app/auth/totp/disable`.
 pub async fn disable(
     auth: PrincipalAuth,
     State(state): State<AppState>,
-    Path(realm): Path<String>,
+    Path((realm, app)): Path<(String, String)>,
     Json(body): Json<CodeBody>,
 ) -> Result<Json<StatusResponse>, ApiError> {
-    if auth.user_realm() != Some(realm.as_str()) {
-        return Err(ApiError::Core(CoreError::Forbidden));
-    }
-    find_realm(state.system.pool(), &realm)
-        .await?
-        .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.clone())))?;
-    let pool = state.realms.pool_for(&RealmId::from(realm.clone())).await?;
+    auth.require_user_in_app(&realm, &app)?;
+    require_app_exists(&state, &realm, &app).await?;
+    let realm_id = RealmId::from(realm.clone());
+    let app_id = AppId::from(app.clone());
+    let pool = state.apps.pool_for(&realm_id, &app_id).await?;
 
     let row = user_totp::find(&pool, &auth.subject_id)
         .await?
@@ -174,12 +167,12 @@ pub async fn disable(
         .await?
         .ok_or(ApiError::Core(CoreError::Unauthorized))?;
 
-    let totp = build_totp(&row.secret_b32, &realm, &user.email)?;
+    let totp = build_totp(&row.secret_b32, &realm, &app, &user.email)?;
     if !check_code(&totp, &body.code)? {
         return Err(ApiError::Core(CoreError::Unauthorized));
     }
     user_totp::disable(&pool, &auth.subject_id).await?;
-    tracing::info!(realm = %realm, user_id = %auth.subject_id, "TOTP disabled");
+    tracing::info!(realm = %realm, app = %app, user_id = %auth.subject_id, "TOTP disabled");
     Ok(Json(StatusResponse { status: "disabled" }))
 }
 
@@ -198,20 +191,20 @@ pub struct LoginTotpResponse {
     pub user: UserPublic,
 }
 
-/// `POST /api/realms/:realm/auth/users/login/totp`.
+/// `POST /api/realms/:realm/apps/:app/auth/users/login/totp`.
 ///
 /// Second step of the 2FA login. Consumes the `mfa_token` issued by
 /// `user_login`, verifies the TOTP code against the user's secret,
 /// and returns full access/refresh tokens on success.
 pub async fn login_totp(
     State(state): State<AppState>,
-    Path(realm): Path<String>,
+    Path((realm, app)): Path<(String, String)>,
     Json(body): Json<LoginTotpBody>,
 ) -> Result<Json<LoginTotpResponse>, ApiError> {
-    find_realm(state.system.pool(), &realm)
-        .await?
-        .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.clone())))?;
-    let pool = state.realms.pool_for(&RealmId::from(realm.clone())).await?;
+    require_app_exists(&state, &realm, &app).await?;
+    let realm_id = RealmId::from(realm.clone());
+    let app_id = AppId::from(app.clone());
+    let pool = state.apps.pool_for(&realm_id, &app_id).await?;
 
     let user_id = match mfa_challenges::consume(&pool, &body.mfa_token).await? {
         MfaConsume::Ok { user_id } => user_id,
@@ -229,7 +222,6 @@ pub async fn login_totp(
         .await?
         .ok_or(ApiError::Core(CoreError::Unauthorized))?;
     if !row.enabled {
-        // Edge case: user disabled TOTP between step 1 and step 2.
         return Err(ApiError::Core(CoreError::Conflict(
             "TOTP not enabled — restart login".into(),
         )));
@@ -237,7 +229,7 @@ pub async fn login_totp(
     let user = find_user_by_id(&pool, &user_id)
         .await?
         .ok_or(ApiError::Core(CoreError::Unauthorized))?;
-    let totp = build_totp(&row.secret_b32, &realm, &user.email)?;
+    let totp = build_totp(&row.secret_b32, &realm, &app, &user.email)?;
     if !check_code(&totp, &body.code)? {
         return Err(ApiError::Core(CoreError::Unauthorized));
     }
@@ -248,7 +240,7 @@ pub async fn login_totp(
         user.id.clone(),
         TokenRole::User,
         Some(realm.clone()),
-        None,
+        Some(app.clone()),
         default_access_ttl(),
     );
     let access_token = encode_token(&claims, &state.master_key)?;
@@ -260,7 +252,7 @@ pub async fn login_totp(
         default_refresh_ttl(),
     )
     .await?;
-    tracing::info!(realm = %realm, user_id = %user.id, "user login (TOTP second step)");
+    tracing::info!(realm = %realm, app = %app, user_id = %user.id, "user login (TOTP second step)");
 
     Ok(Json(LoginTotpResponse {
         access_token,
@@ -318,7 +310,7 @@ pub async fn user_id_for_email_with_totp(
     Ok(Some((u.id, enabled)))
 }
 
-fn build_totp(secret_b32: &str, realm: &str, account: &str) -> Result<TOTP, ApiError> {
+fn build_totp(secret_b32: &str, realm: &str, app: &str, account: &str) -> Result<TOTP, ApiError> {
     let bytes = Secret::Encoded(secret_b32.to_string())
         .to_bytes()
         .map_err(|e| ApiError::Core(CoreError::Internal(format!("decode totp secret: {e:?}"))))?;
@@ -328,7 +320,7 @@ fn build_totp(secret_b32: &str, realm: &str, account: &str) -> Result<TOTP, ApiE
         SKEW,
         STEP_SECONDS,
         bytes,
-        Some(format!("{ISSUER} ({realm})")),
+        Some(format!("{ISSUER} ({realm}/{app})")),
         account.to_string(),
     )
     .map_err(|e| ApiError::Core(CoreError::Internal(format!("build totp: {e:?}"))))

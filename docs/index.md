@@ -22,7 +22,7 @@ features:
     details: SQLite under the hood. Drop one executable on a server, run the setup wizard, and you have a working backend. No services to install, no migrations to run by hand.
   - icon: 🏢
     title: Multi-tenant by design
-    details: System → realm → app. Realms isolate user pools; apps isolate data. SSO across apps in the same realm is automatic.
+    details: System → realm → app. Each app owns its end-user pool, OAuth config, and data; realms group apps under one administrative tenant.
   - icon: 🔐
     title: Auth that fits
     details: Email + password, email OTP, TOTP, OAuth2 (Google, GitHub, any OIDC). Refresh tokens with rotation. Three layers of admins.

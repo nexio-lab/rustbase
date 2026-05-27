@@ -5,6 +5,7 @@
 	import Breadcrumbs from '$lib/Breadcrumbs.svelte';
 
 	const realm = $derived(page.params.realm);
+	const app = $derived(page.params.app);
 
 	let items = $state<AdminUser[]>([]);
 	let total = $state(0);
@@ -28,7 +29,7 @@
 			params.set('per_page', String(perPage));
 			if (appliedQ) params.set('q', appliedQ);
 			const resp = await api.get<AdminUserListResponse>(
-				`/api/realms/${realm}/users?${params}`
+				`/api/realms/${realm}/apps/${app}/users?${params}`
 			);
 			items = resp.items;
 			total = resp.total_items;
@@ -42,6 +43,7 @@
 
 	$effect(() => {
 		realm;
+		app;
 		curPage = 1;
 		load();
 	});
@@ -67,7 +69,7 @@
 	}
 
 	function openUser(u: AdminUser) {
-		goto(`/realms/${realm}/users/${u.id}`);
+		goto(`/realms/${realm}/apps/${app}/users/${u.id}`);
 	}
 </script>
 
@@ -75,32 +77,45 @@
 	items={[
 		{ label: 'Realms', href: '/realms' },
 		{ label: realm, href: `/realms/${realm}` },
+		{ label: app, href: `/realms/${realm}/apps/${app}` },
 		{ label: 'Users' }
 	]}
 />
 
 <div class="mb-2 flex gap-1 border-b border-slate-200 text-sm">
 	<a
-		href="/realms/{realm}"
+		href="/realms/{realm}/apps/{app}"
 		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
 	>
-		Apps
+		Collections
 	</a>
 	<span class="border-b-2 border-orange-500 px-3 py-1.5 font-medium text-slate-900">Users</span>
 	<a
-		href="/realms/{realm}/oauth"
+		href="/realms/{realm}/apps/{app}/oauth"
 		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
 	>
 		OAuth providers
 	</a>
 	<a
-		href="/realms/{realm}/policies"
+		href="/realms/{realm}/apps/{app}/policies"
 		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
 	>
 		Policies
 	</a>
 	<a
-		href="/realms/{realm}/audit"
+		href="/realms/{realm}/apps/{app}/hooks"
+		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
+	>
+		Hooks
+	</a>
+	<a
+		href="/realms/{realm}/apps/{app}/files"
+		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
+	>
+		Files
+	</a>
+	<a
+		href="/realms/{realm}/apps/{app}/audit"
 		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
 	>
 		Audit
@@ -110,7 +125,7 @@
 <div class="mb-4">
 	<h1 class="text-2xl font-semibold tracking-tight text-slate-900">Users</h1>
 	<p class="mt-1 text-sm text-slate-500">
-		{total} user{total === 1 ? '' : 's'} in this realm{#if appliedQ}
+		{total} user{total === 1 ? '' : 's'} in this app{#if appliedQ}
 			· matching <code>{appliedQ}</code>
 		{/if}
 	</p>

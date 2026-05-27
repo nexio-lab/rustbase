@@ -51,7 +51,7 @@
 				</a>
 				{#if auth.admin}
 					<span class="ml-3 text-xs text-slate-500">
-						{auth.admin.email}
+						{auth.admin.username}
 					</span>
 				{/if}
 				<button onclick={logout} class="nav-link ml-2 cursor-pointer">Sign out</button>
