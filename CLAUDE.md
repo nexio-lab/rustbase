@@ -1,9 +1,9 @@
 # RustBaas
 
-A single-binary, single-file Backend-as-a-Service in Rust. PocketBase-style:
-drop one executable on a server, run the setup wizard, and you have realms,
-apps, collections, auth, realtime, file storage, a dashboard, and a REST API.
-SQLite under the hood for maximum operational simplicity.
+A multi-tenant Backend-as-a-Service in Rust. Drop one executable on a server,
+run the setup wizard, and you have realms, apps, collections, auth, realtime,
+file storage, a dashboard, and a REST API. SQLite under the hood (one file per
+scope, all under `data/`) for maximum operational simplicity.
 
 ---
 
@@ -13,8 +13,8 @@ RustBaas organizes everything under a three-level hierarchy:
 
 ```
 System
-  └── Realm (identity / organization boundary; users live here)
-        └── App (data product; collections + records + files live here)
+  └── Realm (organization boundary; admins + branding live here)
+        └── App (data product; collections, records, files, end-users, OAuth live here)
 ```
 
 ### Master realm
@@ -27,8 +27,9 @@ realm**. Its rules:
 - Is the only place from which other realms can be created, edited, or deleted.
 - A cascade-delete of a non-master realm removes every app, user, file, and
   audit record under that realm in one transaction.
-- The master admin is created on first dashboard visit via a setup wizard
-  (PocketBase-style).
+- The master admin row is auto-seeded at first boot with username `admin`
+  and a NULL password; the setup wizard (`POST /_/setup`) takes a single
+  `{password}` body on first dashboard visit to finalize the bootstrap.
 
 ### Realms
 
@@ -324,7 +325,7 @@ each app, app migrations.
 (QuickJS bindings, no Node.js needed). Hooks live in `data/hooks/<realm>/<app>/`
 as `.js` or `.ts` files (TS is transpiled at load time via `swc`).
 
-Hook entry points (PocketBase parity):
+Hook entry points:
 - Record lifecycle: `onRecordBeforeCreate`, `onRecordAfterCreate`, `onRecordBeforeUpdate`, `onRecordAfterUpdate`, `onRecordBeforeDelete`, `onRecordAfterDelete`
 - Auth lifecycle: `onUserBeforeLogin`, `onUserAfterLogin`, `onUserAfterRegister`
 - HTTP: `routerAdd("GET", "/custom-route", handler)` for custom endpoints

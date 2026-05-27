@@ -8,7 +8,7 @@ export default defineConfig({
 	base,
 	title: 'RustBaas',
 	description:
-		'A single-binary, single-file Backend-as-a-Service in Rust — realms, apps, collections, auth, hooks, files, realtime.',
+		'A multi-tenant Backend-as-a-Service in Rust — realms, apps, collections, auth, hooks, files, realtime.',
 	cleanUrls: true,
 	lastUpdated: true,
 	// localhost links in examples shouldn't fail the build.

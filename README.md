@@ -1,10 +1,11 @@
 # RustBaas
 
-A single-binary, single-file Backend-as-a-Service in Rust.
+A multi-tenant Backend-as-a-Service in Rust. One binary, one `data/` folder.
 
-Drop one executable on a server, run the setup wizard, and you have realms,
+Drop the executable on a server, run the setup wizard, and you have realms,
 apps, collections, auth, realtime, file storage, a dashboard, and a REST API.
-SQLite under the hood for maximum operational simplicity.
+SQLite under the hood (one file per scope, all under `data/`) for maximum
+operational simplicity.
 
 ## Status
 

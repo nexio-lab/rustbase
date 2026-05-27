@@ -1,6 +1,6 @@
 # Introduction
 
-RustBaas is a **Backend-as-a-Service** packaged as a single statically-linked binary backed by a single SQLite file per scope. Think PocketBase, but in Rust, with multi-tenant realms and an embedded JS/TS hook runtime.
+RustBaas is a **multi-tenant Backend-as-a-Service** packaged as a single statically-linked Rust binary that operates against a `data/` directory of SQLite files — one per scope — plus an embedded JS/TS hook runtime.
 
 ## What you get
 
@@ -26,7 +26,7 @@ What RustBaas **is** great at:
 
 - Small-to-medium SaaS where you want operational simplicity.
 - Internal tools and side projects.
-- On-prem deployments where you ship the whole product as one file.
+- On-prem deployments where you ship the whole product as one binary plus a data folder.
 - Anything where "drop one binary on a server" beats "manage a fleet."
 
 ## Built on

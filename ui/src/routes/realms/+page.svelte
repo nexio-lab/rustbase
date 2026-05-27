@@ -5,7 +5,7 @@
 	// State the page owns directly: the list of realms + the
 	// inline-create form. Keeping the create form inline (rather than
 	// a separate /realms/new route) means the user never loses the
-	// list context — same UX as PocketBase's "+ New collection".
+	// list context.
 
 	let realms = $state<Realm[]>([]);
 	let loading = $state(true);
