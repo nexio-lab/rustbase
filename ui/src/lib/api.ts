@@ -233,3 +233,36 @@ export type OAuthProviderPut = {
 	client_secret?: string;
 	config: OAuthProviderConfig;
 };
+
+// ---- hierarchical policies ----
+
+/**
+ * Wire-format PolicySpec — tagged union mirroring the Rust enum in
+ * `rustbase-core::config`.
+ */
+export type PolicySpec =
+	| { kind: 'range'; min: number; max: number }
+	| { kind: 'toggle'; state: 'open'; default: boolean }
+	| { kind: 'toggle'; state: 'locked'; value: boolean }
+	| { kind: 'enum_set'; allowed: string[] }
+	| { kind: 'free' };
+
+export type PolicyResponse = {
+	field: string;
+	spec: PolicySpec;
+	updated_at: string;
+};
+
+export type ClampOutcome = {
+	realm: string;
+	app: string | null;
+	field: string;
+	before: PolicySpec;
+	after: PolicySpec;
+};
+
+export type PutPolicyResponse = {
+	field: string;
+	spec: PolicySpec;
+	cascaded: ClampOutcome[];
+};
