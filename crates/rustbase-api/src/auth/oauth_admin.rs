@@ -36,10 +36,17 @@ use crate::error::ApiError;
 use crate::state::AppState;
 
 /// PUT body. `client_secret` is plaintext — server encrypts.
+///
+/// `client_secret` is optional on edit: when absent (or empty), the
+/// existing ciphertext is preserved. Create-without-secret is rejected
+/// with 400 since there's nothing to keep. This avoids forcing the
+/// admin UI to re-show the plaintext secret in an edit form just so
+/// the user can resubmit it.
 #[derive(Debug, Deserialize)]
 pub struct PutProviderBody {
     pub client_id: String,
-    pub client_secret: String,
+    #[serde(default)]
+    pub client_secret: Option<String>,
     pub config: OAuthProviderConfig,
 }
 
@@ -103,10 +110,22 @@ pub async fn put(
     auth.require_realm_access(&realm)?;
     let pool = realm_pool(&state, &realm).await?;
 
-    let secret_enc =
-        rustbase_auth::encrypt(body.client_secret.as_bytes(), state.oauth_kek.as_ref()).map_err(
-            |e| ApiError::Core(CoreError::Internal(format!("encrypt client_secret: {e}"))),
-        )?;
+    let secret_enc = match body.client_secret.as_deref().filter(|s| !s.is_empty()) {
+        Some(plain) => {
+            rustbase_auth::encrypt(plain.as_bytes(), state.oauth_kek.as_ref()).map_err(|e| {
+                ApiError::Core(CoreError::Internal(format!("encrypt client_secret: {e}")))
+            })?
+        }
+        None => {
+            // Edit-without-secret: reuse the existing ciphertext.
+            let existing = oauth_providers::find_provider(&pool, &provider)
+                .await?
+                .ok_or(ApiError::Core(CoreError::Validation(
+                    "client_secret is required when creating a provider".into(),
+                )))?;
+            existing.secret_enc
+        }
+    };
 
     oauth_providers::upsert_provider(
         &pool,
