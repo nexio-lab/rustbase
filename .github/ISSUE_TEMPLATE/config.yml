@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Questions & ideas
+    url: https://github.com/pjonaszik/rustbase/discussions
+    about: Open-ended questions, design discussions, or "is this the right way to do X?" go in Discussions.
+  - name: 🔒 Security reports
+    url: https://github.com/pjonaszik/rustbase/security/advisories/new
+    about: Vulnerability reports go through GitHub's private advisory flow, not public issues.
+  - name: 📖 Documentation
+    url: https://pjonaszik.github.io/rustbase/
+    about: Check the docs site first — your question may already be answered.

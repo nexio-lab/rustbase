@@ -1,0 +1,80 @@
+name: Bug report
+description: Something broke. Help us reproduce it.
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. The more we can reproduce locally, the faster it's fixed.
+
+        For open-ended questions and design discussion, please use [Discussions](https://github.com/pjonaszik/rustbase/discussions) instead.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One or two sentences.
+      placeholder: "Creating a record via POST /api/.../records returns 500 when the schema has a required `json` field with no value."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The shorter the better. `curl` blocks welcome.
+      render: bash
+      placeholder: |
+        ./rustbase &
+        curl -s -X POST localhost:8080/_/setup -d '{"password":"hunter22"}'
+        ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the exact response body / log lines if you have them.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: RustBaas version
+      placeholder: "v0.1.0 (or `git rev-parse HEAD` if running from source)"
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: "Linux x86_64 (musl) / macOS arm64 / Windows / Docker image"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Output of `RUST_LOG=debug ./rustbase` around the failure, redacted if needed.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and didn't find a duplicate.
+          required: true
+        - label: I'm running a current release or `main`.
+          required: true

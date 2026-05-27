@@ -1,29 +1,151 @@
 # RustBaas
 
-A multi-tenant Backend-as-a-Service in Rust. One binary, one `data/` folder.
+> **One binary. One data folder. Your backend.**
 
-Drop the executable on a server, run the setup wizard, and you have realms,
-apps, collections, auth, realtime, file storage, a dashboard, and a REST API.
-SQLite under the hood (one file per scope, all under `data/`) for maximum
-operational simplicity.
+A multi-tenant Backend-as-a-Service in Rust. Drop one executable on a server,
+run the setup wizard, and you have realms, apps, collections, auth, realtime,
+file storage, a dashboard, and a REST API.
 
-## Status
+[![ci](https://github.com/pjonaszik/rustbase/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pjonaszik/rustbase/actions/workflows/ci.yml)
+[![docs](https://github.com/pjonaszik/rustbase/actions/workflows/docs.yml/badge.svg?branch=main)](https://pjonaszik.github.io/rustbase/)
+[![release](https://img.shields.io/github/v/release/pjonaszik/rustbase?include_prereleases&sort=semver)](https://github.com/pjonaszik/rustbase/releases)
+[![licence: MIT OR Apache-2.0](https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-blue.svg)](#licence)
 
-Early design / scaffolding phase. See [CLAUDE.md](CLAUDE.md) for the
-authoritative architecture, mental model, and conventions.
+📖 **[Documentation](https://pjonaszik.github.io/rustbase/)**
+&nbsp;·&nbsp;
+🐛 **[Issues](https://github.com/pjonaszik/rustbase/issues)**
+&nbsp;·&nbsp;
+💬 **[Discussions](https://github.com/pjonaszik/rustbase/discussions)**
 
-## Quick start (planned)
+---
+
+## Why
+
+You want a backend. You don't want to wire up Postgres, Redis, S3, an auth
+service, a queue, a cron runner, and an admin UI before you can ship your first
+feature. RustBaas gives you all of that in one binary, backed by SQLite, with a
+dashboard at `/_/` for everything you'd otherwise need a custom admin panel
+for.
+
+## Features
+
+- **Three-level tenancy** — `System → Realm → App`. Each app owns its own
+  schema, end-user pool, OAuth config, files, and hooks.
+- **Auth** — email + password, email OTP (passwordless), TOTP second factor,
+  and OAuth2 / OIDC (Google, GitHub, Microsoft presets shipped).
+- **Three admin tiers** — master, realm, and app admins, each scoped exactly
+  to what they manage.
+- **Realtime** — SSE subscriptions on every collection. Hooks publish on
+  every create / update / delete.
+- **File storage** — local disk or any S3-compatible bucket (AWS, R2, MinIO)
+  via `object_store`.
+- **JS/TS hooks** — embedded QuickJS runtime. Drop a `.js` or `.ts` file into
+  `data/hooks/<realm>/<app>/` and lifecycle handlers, cron jobs, and custom
+  HTTP routes light up. No Node.js required.
+- **Hierarchical policies** — master sets bounds, realms tighten, apps pick
+  values. Auto-clamp + audit when a parent narrows.
+- **Audit log per scope**, append-only.
+- **Embedded SvelteKit dashboard** at `/_/`, served straight from the binary.
+- **Optional Litestream replication** to any S3 endpoint.
+
+## Quick start
+
+Download the binary for your platform from the
+[latest release](https://github.com/pjonaszik/rustbase/releases/latest), or
+build from source:
 
 ```sh
-./rustbase                # starts the server on :8080
-# open http://localhost:8080/_/ to create the master admin
+git clone https://github.com/pjonaszik/rustbase.git
+cd rustbase
+cargo build --release
+./target/release/rustbase
 ```
 
-## License
+Then:
+
+1. Open <http://localhost:8080/_/> in your browser.
+2. The server auto-seeded an `admin` master-admin row at first boot with no
+   password — the **setup wizard** asks you to set one. Submit it.
+3. You're signed in. Create your first realm and your first app.
+4. Hit the REST API: `/api/realms/<realm>/apps/<app>/collections/...`.
+
+The full walkthrough lives at
+[**docs / first-app**](https://pjonaszik.github.io/rustbase/guide/first-app).
+
+## Build from source
+
+You need:
+
+- Rust ≥ 1.85 (stable). Install via [`rustup`](https://rustup.rs/).
+- [Bun](https://bun.sh/) for the embedded dashboard and the docs site.
+
+```sh
+cargo build --release           # produces ./target/release/rustbase
+cargo test --workspace          # ≈ 20 s
+bun --cwd ui run dev            # dashboard dev server, proxies API on :8080
+bun --cwd docs run dev          # docs dev server (VitePress)
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full dev guide, hook setup, and
+conventions.
+
+## Architecture in 60 seconds
+
+```
+System
+  └── Realm  (organization boundary — admins live here)
+        └── App  (data product — collections, records, files, end-users, OAuth live here)
+```
+
+Storage layout:
+
+```
+data/
+  system.db                     # realms registry, master admins
+  realms/
+    <realm_id>/
+      realm.db                  # apps, realm/app admins, admin refresh tokens
+      apps/
+        <app_id>/
+          data.db               # collections, records, users, oauth, app audit
+          storage/              # file blobs
+  hooks/
+    <realm_id>/<app_id>/        # JS/TS hook source
+```
+
+One binary. One `data/` folder. Backups are object storage; restores are a
+directory copy.
+
+Full mental model: <https://pjonaszik.github.io/rustbase/concepts/mental-model>.
+
+## Contributing
+
+Bugs, feature ideas, and PRs are welcome. Please read
+[CONTRIBUTING.md](CONTRIBUTING.md) first — it covers the dev workflow,
+the conventions the code expects, and how to ship a clean PR.
+
+By participating you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+For security issues, see [SECURITY.md](SECURITY.md) — please do **not** open a
+public issue for those.
+
+## Support the project
+
+If RustBaas helps you ship, you can support continued development via the
+**Sponsor** button at the top of the repo (PayPal).
+
+## Licence
 
 Dual-licensed under either of:
 
-- MIT License ([LICENSE-MIT](LICENSE-MIT))
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT License ([LICENSE-MIT](LICENSE-MIT) or
+  <https://opensource.org/licenses/MIT>)
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or
+  <https://www.apache.org/licenses/LICENSE-2.0>)
 
 at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in the work by you, as defined in the Apache-2.0
+licence, shall be dual licensed as above, without any additional terms or
+conditions.

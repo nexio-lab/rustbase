@@ -17,7 +17,13 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.85"
 authors = ["RustBaas Contributors"]
-repository = "https://github.com/rustbase/rustbase"
+description = "A multi-tenant Backend-as-a-Service in Rust — realms, apps, collections, auth, hooks, files, realtime, dashboard."
+homepage = "https://pjonaszik.github.io/rustbase/"
+documentation = "https://pjonaszik.github.io/rustbase/"
+repository = "https://github.com/pjonaszik/rustbase"
+readme = "README.md"
+keywords = ["backend", "baas", "sqlite", "multi-tenant", "axum"]
+categories = ["web-programming::http-server", "database"]
 
 [workspace.dependencies]
 # async runtime

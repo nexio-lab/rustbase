@@ -1,0 +1,48 @@
+name: Feature request
+description: Suggest a new capability or improvement.
+labels: [enhancement, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For open-ended questions or design discussion, please use [Discussions](https://github.com/pjonaszik/rustbase/discussions) instead.
+
+        For concrete, scoped feature proposals, this template is the right place.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that's hard or impossible today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: API shape, config keys, dashboard surface — be as concrete as you can.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you tried, or designs you rejected and why.
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Which crates / surfaces does this touch? `rustbase-db`, the JS hooks runtime, the dashboard, the REST API, ...
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and Discussions for this idea.
+          required: true
+        - label: This is a scoped proposal, not an open-ended question.
+          required: true
