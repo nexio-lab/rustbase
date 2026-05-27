@@ -291,3 +291,13 @@ export type PutHookResponse = {
 	file: HookFileBody;
 	reload: ReloadOutcome;
 };
+
+// ---- per-app file storage ----
+
+export type FileMeta = {
+	id: string;
+	filename: string;
+	mime: string | null;
+	size: number;
+	created_at: string;
+};
