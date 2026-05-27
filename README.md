@@ -1,21 +1,32 @@
+<div align="center">
+
 # RustBaas
 
-> **One binary. One data folder. Your backend.**
+**One binary. One data folder. Your backend.**
 
-A multi-tenant Backend-as-a-Service in Rust. Drop one executable on a server,
-run the setup wizard, and you have realms, apps, collections, auth, realtime,
-file storage, a dashboard, and a REST API.
+A multi-tenant Backend-as-a-Service in Rust. Drop one executable on a server, run the setup wizard, and you have realms, apps, collections, auth, realtime, file storage, a dashboard, and a REST API.
 
-[![ci](https://github.com/pjonaszik/rustbase/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pjonaszik/rustbase/actions/workflows/ci.yml)
-[![docs](https://github.com/pjonaszik/rustbase/actions/workflows/docs.yml/badge.svg?branch=main)](https://pjonaszik.github.io/rustbase/)
-[![release](https://img.shields.io/github/v/release/pjonaszik/rustbase?include_prereleases&sort=semver)](https://github.com/pjonaszik/rustbase/releases)
-[![licence: MIT OR Apache-2.0](https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-blue.svg)](#licence)
+<!-- status row -->
+[![CI](https://img.shields.io/github/actions/workflow/status/pjonaszik/rustbase/ci.yml?branch=main&label=CI&style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/pjonaszik/rustbase/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/github/actions/workflow/status/pjonaszik/rustbase/docs.yml?branch=main&label=Docs&style=for-the-badge&logo=readthedocs&logoColor=white)](https://pjonaszik.github.io/rustbase/)
+[![Release](https://img.shields.io/github/v/release/pjonaszik/rustbase?include_prereleases&sort=semver&style=for-the-badge&logo=github&logoColor=white)](https://github.com/pjonaszik/rustbase/releases)
+[![Licence](https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-blue?style=for-the-badge)](#licence)
 
-📖 **[Documentation](https://pjonaszik.github.io/rustbase/)**
-&nbsp;·&nbsp;
-🐛 **[Issues](https://github.com/pjonaszik/rustbase/issues)**
-&nbsp;·&nbsp;
-💬 **[Discussions](https://github.com/pjonaszik/rustbase/discussions)**
+<!-- platform + community row -->
+[![Rust](https://img.shields.io/badge/Rust-1.85%2B-dea584?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![axum](https://img.shields.io/badge/axum-0.8-FFA500?style=for-the-badge&logo=tokio&logoColor=white)](https://github.com/tokio-rs/axum)
+[![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](https://www.sqlite.org/wal.html)
+[![Discussions](https://img.shields.io/badge/Discussions-open-2188ff?style=for-the-badge&logo=github)](https://github.com/pjonaszik/rustbase/discussions)
+
+<!-- vitals + funding row -->
+[![Stars](https://img.shields.io/github/stars/pjonaszik/rustbase?style=for-the-badge&logo=github)](https://github.com/pjonaszik/rustbase/stargazers)
+[![Last commit](https://img.shields.io/github/last-commit/pjonaszik/rustbase/main?style=for-the-badge&logo=git&logoColor=white)](https://github.com/pjonaszik/rustbase/commits/main)
+[![Issues](https://img.shields.io/github/issues/pjonaszik/rustbase?style=for-the-badge&logo=github)](https://github.com/pjonaszik/rustbase/issues)
+[![Sponsor](https://img.shields.io/badge/Sponsor-PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://www.paypal.com/donate/?business=paypal.mournful099@passinbox.com&item_name=RustBaas)
+
+📖 [Docs](https://pjonaszik.github.io/rustbase/) &nbsp;·&nbsp; 🐛 [Issues](https://github.com/pjonaszik/rustbase/issues) &nbsp;·&nbsp; 💬 [Discussions](https://github.com/pjonaszik/rustbase/discussions) &nbsp;·&nbsp; 🔒 [Security](SECURITY.md) &nbsp;·&nbsp; 📝 [Changelog](CHANGELOG.md)
+
+</div>
 
 ---
 
