@@ -25,7 +25,7 @@ use crate::records;
 use crate::setup::setup;
 use crate::state::AppState;
 
-/// Build the full RustBase HTTP router. Layered with a setup gate (blocks
+/// Build the full RustBaas HTTP router. Layered with a setup gate (blocks
 /// non-bootstrap routes while uninitialized) and a tracing middleware so
 /// every request shows up in the access log.
 pub fn build_router(state: AppState) -> Router {
@@ -3481,7 +3481,7 @@ mod tests {
         assert!(!secret.is_empty());
         let url = j["otpauth_url"].as_str().unwrap();
         assert!(url.starts_with("otpauth://totp/"), "got: {url}");
-        assert!(url.contains("RustBase"), "issuer should appear: {url}");
+        assert!(url.contains("RustBaas"), "issuer should appear: {url}");
         assert!(url.contains("u%40acme.com") || url.contains("u@acme.com"));
     }
 

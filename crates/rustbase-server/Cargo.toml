@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "RustBase server binary."
+description = "RustBaas server binary."
 
 [[bin]]
 name = "rustbase"

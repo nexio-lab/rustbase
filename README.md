@@ -1,4 +1,4 @@
-# RustBase
+# RustBaas
 
 A single-binary, single-file Backend-as-a-Service in Rust.
 

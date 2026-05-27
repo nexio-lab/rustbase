@@ -49,7 +49,7 @@
 <div class="mx-auto mt-12 max-w-sm">
 	<div class="mb-8 text-center">
 		<div class="mx-auto mb-2 inline-block h-3 w-3 rounded-sm bg-orange-500"></div>
-		<h1 class="text-2xl font-semibold tracking-tight text-slate-900">Sign in to RustBase</h1>
+		<h1 class="text-2xl font-semibold tracking-tight text-slate-900">Sign in to RustBaas</h1>
 		<p class="mt-1 text-sm text-slate-500">Master admin credentials</p>
 	</div>
 
@@ -96,5 +96,15 @@
 
 	<p class="mt-6 text-center text-xs text-slate-500">
 		First time? <a href="/setup" class="font-medium text-orange-600 hover:text-orange-700">Create the first master admin →</a>
+	</p>
+	<p class="mt-2 text-center text-xs text-slate-400">
+		<a
+			href={import.meta.env.VITE_DOCS_URL ?? 'https://pjonaszik.github.io/rustbase/'}
+			target="_blank"
+			rel="noopener noreferrer"
+			class="hover:text-slate-600"
+		>
+			Documentation ↗
+		</a>
 	</p>
 </div>

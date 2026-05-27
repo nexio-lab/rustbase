@@ -48,7 +48,7 @@
 <div class="mx-auto mt-12 max-w-sm">
 	<div class="mb-8 text-center">
 		<div class="mx-auto mb-2 inline-block h-3 w-3 rounded-sm bg-orange-500"></div>
-		<h1 class="text-2xl font-semibold tracking-tight text-slate-900">Set up RustBase</h1>
+		<h1 class="text-2xl font-semibold tracking-tight text-slate-900">Set up RustBaas</h1>
 		<p class="mt-1 text-sm text-slate-500">Create the first master admin</p>
 	</div>
 

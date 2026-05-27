@@ -1,4 +1,4 @@
-//! SQLite persistence layer for RustBase.
+//! SQLite persistence layer for RustBaas.
 //!
 //! Manages the system pool (`data/system.db`), per-realm pools
 //! (`data/realms/<id>/realm.db`), and per-app pools

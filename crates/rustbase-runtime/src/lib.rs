@@ -1,4 +1,4 @@
-//! Embedded JS hook runtime for RustBase.
+//! Embedded JS hook runtime for RustBaas.
 //!
 //! One `AppHooks` per (realm, app). Each holds its own `AsyncRuntime`
 //! and `AsyncContext`. At load time we evaluate every `.js` file under

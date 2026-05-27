@@ -1,4 +1,4 @@
-//! `nom`-based parser for the RustBase filter language.
+//! `nom`-based parser for the RustBaas filter language.
 //!
 //! Grammar (lowest to highest precedence):
 //!

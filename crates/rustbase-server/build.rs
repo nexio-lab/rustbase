@@ -142,8 +142,8 @@ fn run(bin: &Path, args: &[&str], cwd: &Path, label: &str) {
 
 fn write_placeholder(build_dir: &Path) {
     let _ = std::fs::create_dir_all(build_dir);
-    let html = "<!doctype html><html><head><meta charset=\"utf-8\"><title>RustBase</title>\
+    let html = "<!doctype html><html><head><meta charset=\"utf-8\"><title>RustBaas</title>\
 <style>body{font:15px/1.5 -apple-system,system-ui,sans-serif;display:grid;place-items:center;height:100vh;margin:0;background:#fafafa;color:#111}main{max-width:480px;padding:2rem;text-align:center}h1{font-weight:600;letter-spacing:-0.01em;margin:0 0 .5rem}p{color:#666;margin:0}code{background:#eef;padding:.15em .35em;border-radius:3px}</style></head>\
-<body><main><h1>RustBase</h1><p>Dashboard not built. Install <a href=\"https://bun.sh\">bun</a> and rerun <code>cargo build</code>, or run <code>bun --cwd ui run build</code> manually.</p></main></body></html>";
+<body><main><h1>RustBaas</h1><p>Dashboard not built. Install <a href=\"https://bun.sh\">bun</a> and rerun <code>cargo build</code>, or run <code>bun --cwd ui run build</code> manually.</p></main></body></html>";
     let _ = std::fs::write(build_dir.join("index.html"), html);
 }

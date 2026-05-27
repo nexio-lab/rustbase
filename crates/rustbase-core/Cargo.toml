@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "IO-free domain types for RustBase: ids, records, schemas, filter AST, errors, config policy."
+description = "IO-free domain types for RustBaas: ids, records, schemas, filter AST, errors, config policy."
 
 [dependencies]
 serde.workspace = true

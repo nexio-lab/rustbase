@@ -47,7 +47,7 @@ use crate::auth::{default_access_ttl, default_refresh_ttl, new_refresh_token};
 use crate::error::ApiError;
 use crate::state::AppState;
 
-const ISSUER: &str = "RustBase";
+const ISSUER: &str = "RustBaas";
 const STEP_SECONDS: u64 = 30;
 const DIGITS: usize = 6;
 /// Accept the code from one step before and one step after the
