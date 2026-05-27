@@ -1,4 +1,5 @@
 # https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+# PayPal payment-link: contributors enter the amount they want.
 
 custom:
-  - "https://www.paypal.com/donate/?business=paypal.mournful099@passinbox.com&item_name=RustBaas"
+  - "https://www.paypal.com/ncp/payment/5L8KUWE8F2PSU"

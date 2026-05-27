@@ -63,3 +63,21 @@ curl http://localhost:8080/api/realms/master/apps/blog/collections/posts/records
 ```
 
 That's it. The setup wizard creates the master admin on first visit, the API is documented in the [REST reference](/reference/rest-api), and JS hooks under `data/hooks/<realm>/<app>/` extend the runtime without a rebuild.
+
+## Support us
+
+RustBaas is built and maintained on personal time. If it helps you ship — or if you just want to encourage more work on it — contributions are welcome through PayPal. The link is a payment link, so you set the amount yourself.
+
+<div align="center">
+
+[**→ Support RustBaas on PayPal**](https://www.paypal.com/ncp/payment/5L8KUWE8F2PSU)
+
+<a href="https://www.paypal.com/ncp/payment/5L8KUWE8F2PSU">
+  <img src="https://pjonaszik.github.io/rustbase/donation-qrcode.png" alt="Scan to support RustBaas via PayPal" width="200" />
+</a>
+
+<em>Scan with your phone — opens the PayPal payment page.</em>
+
+</div>
+
+Code contributions, bug reports, and doc fixes are equally valued — see the [contributing guide](https://github.com/pjonaszik/rustbase/blob/main/CONTRIBUTING.md).

@@ -22,7 +22,7 @@ A multi-tenant Backend-as-a-Service in Rust. Drop one executable on a server, ru
 [![Stars](https://img.shields.io/github/stars/pjonaszik/rustbase?style=for-the-badge&logo=github)](https://github.com/pjonaszik/rustbase/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/pjonaszik/rustbase/main?style=for-the-badge&logo=git&logoColor=white)](https://github.com/pjonaszik/rustbase/commits/main)
 [![Issues](https://img.shields.io/github/issues/pjonaszik/rustbase?style=for-the-badge&logo=github)](https://github.com/pjonaszik/rustbase/issues)
-[![Sponsor](https://img.shields.io/badge/Sponsor-PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://www.paypal.com/donate/?business=paypal.mournful099@passinbox.com&item_name=RustBaas)
+[![Support](https://img.shields.io/badge/Support%20us-PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://www.paypal.com/ncp/payment/5L8KUWE8F2PSU)
 
 📖 [Docs](https://pjonaszik.github.io/rustbase/) &nbsp;·&nbsp; 🐛 [Issues](https://github.com/pjonaszik/rustbase/issues) &nbsp;·&nbsp; 💬 [Discussions](https://github.com/pjonaszik/rustbase/discussions) &nbsp;·&nbsp; 🔒 [Security](SECURITY.md) &nbsp;·&nbsp; 📝 [Changelog](CHANGELOG.md)
 
@@ -140,10 +140,26 @@ By participating you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
 For security issues, see [SECURITY.md](SECURITY.md) — please do **not** open a
 public issue for those.
 
-## Support the project
+## Support us
 
-If RustBaas helps you ship, you can support continued development via the
-**Sponsor** button at the top of the repo (PayPal).
+RustBaas is built and maintained on personal time. If it helps you ship — or
+if you just want to encourage more work on it — contributions are welcome
+through PayPal. The link is a payment link, so you enter the amount yourself
+(no fixed tiers, no recurring trap, just a one-off transfer of whatever feels
+right):
+
+[**→ Support RustBaas on PayPal**](https://www.paypal.com/ncp/payment/5L8KUWE8F2PSU)
+
+<p align="center">
+  <a href="https://www.paypal.com/ncp/payment/5L8KUWE8F2PSU">
+    <img src="docs/public/donation-qrcode.png" alt="Scan to support RustBaas via PayPal" width="180" />
+  </a>
+  <br>
+  <em>Scan to support — opens the PayPal payment page.</em>
+</p>
+
+Every contribution — code, docs, bug reports, PayPal — keeps the project
+moving. Thank you.
 
 ## Licence
 
