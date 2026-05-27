@@ -24,6 +24,12 @@
 		Collections
 	</a>
 	<span class="border-b-2 border-orange-500 px-3 py-1.5 font-medium text-slate-900">Policies</span>
+	<a
+		href="/realms/{realm}/apps/{app}/hooks"
+		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
+	>
+		Hooks
+	</a>
 </div>
 
 <PoliciesView
