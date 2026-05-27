@@ -119,6 +119,63 @@ pub async fn set_password_hash(pool: &SqlitePool, id: &str, hash: &str) -> Resul
     Ok(())
 }
 
+/// Admin-facing search. `email_like` is wrapped in `%…%` if non-empty;
+/// an empty string lists every user in the realm. Ordered by
+/// `created_at DESC` so the most recent signups land on page 1.
+pub async fn list_users(
+    pool: &SqlitePool,
+    email_like: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<User>> {
+    let pattern = if email_like.is_empty() {
+        "%".to_string()
+    } else {
+        format!("%{email_like}%")
+    };
+    let rows: Vec<User> = sqlx::query_as(
+        "SELECT id, email, password_hash, CAST(verified AS BOOLEAN) AS verified, \
+                last_login, created_at \
+         FROM users \
+         WHERE email LIKE ? \
+         ORDER BY created_at DESC \
+         LIMIT ? OFFSET ?",
+    )
+    .bind(&pattern)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// Total count for the same filter as `list_users`. Cheap COUNT(*)
+/// against the same LIKE pattern so the UI can show "page X of Y".
+pub async fn count_users(pool: &SqlitePool, email_like: &str) -> Result<i64> {
+    let pattern = if email_like.is_empty() {
+        "%".to_string()
+    } else {
+        format!("%{email_like}%")
+    };
+    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE email LIKE ?")
+        .bind(&pattern)
+        .fetch_one(pool)
+        .await?;
+    Ok(n)
+}
+
+/// Hard delete. Cascades to `_email_verifications`, `_password_resets`,
+/// `_email_otps`, `_user_totp`, `_mfa_challenges`, `user_oauth_links`
+/// via their `ON DELETE CASCADE` foreign keys. Returns the row count
+/// affected — 0 means the user didn't exist.
+pub async fn delete_user(pool: &SqlitePool, id: &str) -> Result<u64> {
+    let r = sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(r.rows_affected())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,5 +220,51 @@ mod tests {
         record_last_login(&pool, &u.id).await.unwrap();
         let again = find_user_by_id(&pool, &u.id).await.unwrap().unwrap();
         assert!(again.last_login.is_some());
+    }
+
+    #[tokio::test]
+    async fn list_paginates_and_orders_by_recency() {
+        let pool = fresh_pool().await;
+        for i in 0..5 {
+            insert_user(&pool, &format!("u{i}@x.com"), "h")
+                .await
+                .unwrap();
+        }
+        let page1 = list_users(&pool, "", 2, 0).await.unwrap();
+        let page2 = list_users(&pool, "", 2, 2).await.unwrap();
+        assert_eq!(page1.len(), 2);
+        assert_eq!(page2.len(), 2);
+        // Most recent first; uuid_v7 is monotonic so u4 → u3 → u2 → u1 → u0.
+        assert_eq!(page1[0].email, "u4@x.com");
+        assert_eq!(page1[1].email, "u3@x.com");
+        assert_eq!(page2[0].email, "u2@x.com");
+        assert_eq!(count_users(&pool, "").await.unwrap(), 5);
+    }
+
+    #[tokio::test]
+    async fn list_filters_by_email_substring() {
+        let pool = fresh_pool().await;
+        insert_user(&pool, "ada@acme.com", "h").await.unwrap();
+        insert_user(&pool, "ben@acme.com", "h").await.unwrap();
+        insert_user(&pool, "charlie@widgets.com", "h")
+            .await
+            .unwrap();
+        let acme = list_users(&pool, "acme", 10, 0).await.unwrap();
+        assert_eq!(acme.len(), 2);
+        assert_eq!(count_users(&pool, "acme").await.unwrap(), 2);
+        // Substring works mid-word too.
+        let ada = list_users(&pool, "ada@", 10, 0).await.unwrap();
+        assert_eq!(ada.len(), 1);
+        assert_eq!(ada[0].email, "ada@acme.com");
+    }
+
+    #[tokio::test]
+    async fn delete_removes_the_row() {
+        let pool = fresh_pool().await;
+        let u = insert_user(&pool, "ada@x.com", "h").await.unwrap();
+        assert_eq!(delete_user(&pool, &u.id).await.unwrap(), 1);
+        assert!(find_user_by_id(&pool, &u.id).await.unwrap().is_none());
+        // Idempotent — deleting twice doesn't blow up.
+        assert_eq!(delete_user(&pool, &u.id).await.unwrap(), 0);
     }
 }

@@ -61,6 +61,23 @@ pub async fn find_by_provider_user(
     Ok(row)
 }
 
+/// Every provider account linked to `user_id`. The admin user-detail
+/// page lists them so an operator can see which OAuth identities a
+/// given user signed in with. Ordered by provider name for a stable
+/// row order.
+pub async fn list_for_user(pool: &SqlitePool, user_id: &str) -> Result<Vec<OAuthLink>> {
+    let rows: Vec<OAuthLink> = sqlx::query_as(
+        "SELECT user_id, provider, provider_user_id \
+         FROM user_oauth_links \
+         WHERE user_id = ? \
+         ORDER BY provider ASC",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,5 +138,21 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn list_for_user_orders_by_provider() {
+        let (pool, user_id) = fresh().await;
+        upsert_link(&pool, &user_id, "google", "g-1").await.unwrap();
+        upsert_link(&pool, &user_id, "github", "h-1").await.unwrap();
+        let links = list_for_user(&pool, &user_id).await.unwrap();
+        let providers: Vec<_> = links.iter().map(|l| l.provider.as_str()).collect();
+        assert_eq!(providers, vec!["github", "google"]);
+    }
+
+    #[tokio::test]
+    async fn list_for_user_returns_empty_when_unlinked() {
+        let (pool, user_id) = fresh().await;
+        assert!(list_for_user(&pool, &user_id).await.unwrap().is_empty());
     }
 }
