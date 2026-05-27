@@ -344,10 +344,15 @@ Sandbox limits (set per app, bounded by realm, bounded by master):
 
 ## Dashboard & client SDKs
 
-- **Dashboard**: SvelteKit app served at `/_/`, prebuilt artifact downloaded
-  at build time and pinned in `rustbase-server/dashboard.lock`. The dashboard
-  navigates `Realm → App → Collection`; master admins also see a "System" tab.
-  Dev override: `RUSTBASE_DASHBOARD_PATH` points to a local build directory.
+- **Dashboard**: SvelteKit SPA in `ui/` (same workspace, separate from
+  the Rust crates). Built with `bun --cwd ui run build` to `ui/build/`,
+  embedded into the `rustbase` binary via `include_dir!` in
+  `rustbase-server/src/dashboard.rs`. Served at `/_/` with index-fallback
+  for client-side routing. Navigates `Realm → App → Collection`; master
+  admins also see a "System" tab. Dev iteration: `bun --cwd ui run dev`
+  on :5173 with a vite proxy forwarding API paths to the Rust server on
+  :8080. Runtime override: `RUSTBASE_DASHBOARD_PATH` points to any built
+  directory and bypasses the embed.
 - **REST API shape**: `/api/realms/<realm>/apps/<app>/collections/<name>/records[?filter=...]`
 - **Client SDKs**: JS/TS first, then Dart, then Go. Idiomatic and ergonomic per language. Generated against an OpenAPI spec emitted by `rustbase-api`.
 
@@ -360,6 +365,43 @@ Sandbox limits (set per app, bounded by realm, bounded by master):
 - All DB tests use `sqlite::memory:` — fresh DB per test, no Docker, sub-second suite.
 - A shared test suite in `rustbase-db/src/testing.rs` exercises every public DB operation; CI runs it against both `:memory:` and a temp file to catch durability/WAL issues.
 - Auto-clamp behavior has a dedicated property test suite: generate a random master config + N random realm configs + N random app configs all valid, then narrow a master bound and assert that every stored value is in-range afterwards and every change is in the audit log.
+
+---
+
+## Dev tooling
+
+Git hooks are tracked under `.githooks/`. Wire them on first clone:
+
+```sh
+./scripts/install-hooks.sh
+```
+
+This sets `git config core.hooksPath .githooks`. The hooks run:
+
+- **`pre-commit`** (fast, sub-5s): `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, arch greps (no `unwrap`/`expect` outside `#[cfg(test)]`, `rustbase-core` stays IO-free), and a no-AI-attribution scan of the staged diff.
+- **`pre-push`** (slower, ~10–15s): `cargo test --workspace`, and `cargo audit` if installed (`cargo install cargo-audit`).
+
+Bypass for one commit only with `git commit --no-verify` / `git push --no-verify`.
+
+The same checks run on every PR via `.github/workflows/ci.yml`. The `release-build` job (`cargo build --workspace --release`) is gated on the check job passing.
+
+`cargo audit`'s ignore list lives in `.cargo/audit.toml` — every entry carries a one-line rationale and must be re-evaluated on every dependency bump.
+
+### Shared dev services
+
+Local infrastructure that's reusable across apps — currently just MailHog — lives in `infra/docker-compose.yml`. Bring it up with:
+
+```sh
+docker compose -f infra/docker-compose.yml up -d
+```
+
+MailHog binds host ports `localhost:1025` (SMTP) and `localhost:8025` (web UI), and also joins the named `dev-shared` Docker network so other compose-managed apps can attach. See `infra/README.md` for the cross-app wiring recipe.
+
+To exercise the `SmtpMailer` end-to-end against MailHog, opt into the ignored test:
+
+```sh
+cargo test -p rustbase-api smtp_mailer_delivers_to_mailhog -- --ignored --nocapture
+```
 
 ---
 
@@ -432,5 +474,5 @@ On server start, `rustbase-server` does the following in order:
 - First run: the dashboard prompts for the master admin credentials before anything else is accessible.
 - Configuration: `rustbase.toml` in the working directory, overridable by `RUSTBASE_*` env vars.
 - License: dual MIT + Apache-2.0 (`license = "MIT OR Apache-2.0"` in every `Cargo.toml`).
-- Dashboard: separate repo, prebuilt artifact downloaded at build time and pinned in `rustbase-server/dashboard.lock`. Dev override: set `RUSTBASE_DASHBOARD_PATH` to a local build directory.
+- Dashboard: SvelteKit SPA under `ui/`, built with `bun --cwd ui run build`. `rustbase-server/build.rs` runs the build automatically when needed; the static artifact is then embedded into the `rustbase` binary via `include_dir!`. Dev iteration: `bun --cwd ui run dev` on :5173 with a vite proxy to the Rust API on :8080. Runtime override: `RUSTBASE_DASHBOARD_PATH=<dir>` bypasses the embed.
 - Client SDKs: separate repos, generated against the OpenAPI spec emitted by `rustbase-api`.

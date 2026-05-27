@@ -1,0 +1,122 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/rustbase-core",
+    "crates/rustbase-db",
+    "crates/rustbase-auth",
+    "crates/rustbase-realtime",
+    "crates/rustbase-storage",
+    "crates/rustbase-runtime",
+    "crates/rustbase-api",
+    "crates/rustbase-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+authors = ["RustBase Contributors"]
+repository = "https://github.com/rustbase/rustbase"
+
+[workspace.dependencies]
+# async runtime
+tokio = { version = "1", features = ["full"] }
+
+# http
+axum = { version = "0.8", features = ["macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+
+# database
+sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio", "macros", "chrono", "uuid"] }
+
+# storage
+object_store = { version = "0.11", features = ["aws"] }
+
+# auth
+jsonwebtoken = "9"
+argon2 = "0.5"
+rand_core = { version = "0.6", features = ["getrandom"] }
+
+# mail
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1", "tokio1-rustls-tls", "builder"] }
+
+# cron expressions for $app.cron scheduled jobs
+cron = "0.16"
+
+# RFC 6238 TOTP for 2FA / authenticator-app login.
+# - otpauth:    enables TOTP::new(..., issuer, account_name) + get_url()
+# - gen_secret: enables Secret::generate_secret()
+totp-rs = { version = "5", default-features = false, features = ["otpauth", "gen_secret"] }
+
+# AES-GCM for encrypting OAuth client_secret at rest under the KEK
+# stored in system.db._secrets.
+aes-gcm = { version = "0.10", features = ["aes", "alloc"] }
+
+# OAuth2 — provider sign-in (Google / GitHub / generic OIDC)
+oauth2 = { version = "5", default-features = false }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+# serde
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# parsing
+nom = "8"
+
+# concurrency
+dashmap = "6"
+lru = "0.18"
+parking_lot = "0.12"
+
+# dashboard embedding
+include_dir = "0.7"
+mime_guess = "2"
+
+# embedded JS runtime
+rquickjs = { version = "0.9", features = ["futures", "macro", "parallel"] }
+
+# TypeScript → JavaScript stripping for hook files
+swc_common = "22"
+swc_ecma_ast = "24"
+swc_ecma_codegen = "27"
+swc_ecma_parser = { version = "40", features = ["typescript"] }
+swc_ecma_transforms_base = "43"
+swc_ecma_transforms_typescript = "48"
+swc_ecma_visit = "24"
+
+# observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# config
+config = "0.14"
+
+# validation
+validator = { version = "0.19", features = ["derive"] }
+
+# errors
+thiserror = "2"
+anyhow = "1"
+
+# utilities
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+
+# workspace-internal
+rustbase-core = { path = "crates/rustbase-core" }
+rustbase-db = { path = "crates/rustbase-db" }
+rustbase-auth = { path = "crates/rustbase-auth" }
+rustbase-realtime = { path = "crates/rustbase-realtime" }
+rustbase-storage = { path = "crates/rustbase-storage" }
+rustbase-runtime = { path = "crates/rustbase-runtime" }
+rustbase-api = { path = "crates/rustbase-api" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"

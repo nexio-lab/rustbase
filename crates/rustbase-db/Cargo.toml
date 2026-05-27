@@ -1,0 +1,27 @@
+[package]
+name = "rustbase-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "SQLite persistence layer for RustBase: per-scope pool management, migrations, CRUD, filter → SQL."
+
+[dependencies]
+rustbase-core.workspace = true
+tokio.workspace = true
+sqlx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+dashmap.workspace = true
+lru.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+async-trait.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

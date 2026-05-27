@@ -1,0 +1,21 @@
+[package]
+name = "rustbase-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "File storage abstraction (local + S3-compatible) for RustBase."
+
+[dependencies]
+rustbase-core.workspace = true
+tokio.workspace = true
+object_store.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
