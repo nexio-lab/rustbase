@@ -204,6 +204,12 @@
 	>
 		Files
 	</a>
+	<a
+		href="/realms/{realm}/apps/{app}/audit"
+		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
+	>
+		Audit
+	</a>
 </div>
 
 <div class="mb-4">

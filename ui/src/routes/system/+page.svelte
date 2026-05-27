@@ -1,10 +1,8 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	// The System scope only has a Policies tab in this branch; the
-	// other future surfaces (audit, server-wide settings) plug in
-	// here as additional tabs in follow-up branches. Sending root
-	// straight through avoids a barren landing page.
+	// System root has no content of its own — bounce through to the
+	// Policies tab so the user lands on something usable.
 	$effect(() => {
 		goto('/system/policies', { replaceState: true });
 	});

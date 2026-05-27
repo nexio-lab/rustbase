@@ -6,6 +6,7 @@
 
 pub mod access_rules;
 pub mod apps;
+pub mod audit;
 pub mod auth;
 pub mod collections;
 pub mod custom_routes;

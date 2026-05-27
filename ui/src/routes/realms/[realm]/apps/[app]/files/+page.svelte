@@ -205,6 +205,12 @@
 		Hooks
 	</a>
 	<span class="border-b-2 border-orange-500 px-3 py-1.5 font-medium text-slate-900">Files</span>
+	<a
+		href="/realms/{realm}/apps/{app}/audit"
+		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
+	>
+		Audit
+	</a>
 </div>
 
 <div class="mb-4 flex items-end justify-between">

@@ -1,50 +1,45 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import AuditView from '$lib/AuditView.svelte';
 	import Breadcrumbs from '$lib/Breadcrumbs.svelte';
-	import PoliciesView from '$lib/PoliciesView.svelte';
 
 	const realm = $derived(page.params.realm);
-	const app = $derived(page.params.app);
 </script>
 
 <Breadcrumbs
 	items={[
 		{ label: 'Realms', href: '/realms' },
 		{ label: realm, href: `/realms/${realm}` },
-		{ label: app, href: `/realms/${realm}/apps/${app}` },
-		{ label: 'Policies' }
+		{ label: 'Audit' }
 	]}
 />
 
 <div class="mb-2 flex gap-1 border-b border-slate-200 text-sm">
 	<a
-		href="/realms/{realm}/apps/{app}"
+		href="/realms/{realm}"
 		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
 	>
-		Collections
-	</a>
-	<span class="border-b-2 border-orange-500 px-3 py-1.5 font-medium text-slate-900">Policies</span>
-	<a
-		href="/realms/{realm}/apps/{app}/hooks"
-		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
-	>
-		Hooks
+		Apps
 	</a>
 	<a
-		href="/realms/{realm}/apps/{app}/files"
+		href="/realms/{realm}/users"
 		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
 	>
-		Files
+		Users
 	</a>
 	<a
-		href="/realms/{realm}/apps/{app}/audit"
+		href="/realms/{realm}/oauth"
 		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
 	>
-		Audit
+		OAuth providers
 	</a>
+	<a
+		href="/realms/{realm}/policies"
+		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
+	>
+		Policies
+	</a>
+	<span class="border-b-2 border-orange-500 px-3 py-1.5 font-medium text-slate-900">Audit</span>
 </div>
 
-<PoliciesView
-	apiBase={`/api/realms/${realm}/apps/${app}/policies`}
-	scopeLabel={`app ${realm}/${app}`}
-/>
+<AuditView apiBase={`/api/realms/${realm}/audit`} scopeLabel={`realm ${realm}`} />
