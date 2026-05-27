@@ -301,3 +301,23 @@ export type FileMeta = {
 	size: number;
 	created_at: string;
 };
+
+// ---- audit log ----
+
+export type AuditEntry = {
+	id: number;
+	ts: string;
+	actor: string | null;
+	action: string;
+	target: string | null;
+	/** Server-decoded JSON; `null` when the stored column was empty or invalid. */
+	details: unknown;
+};
+
+export type AuditListResponse = {
+	items: AuditEntry[];
+	page: number;
+	per_page: number;
+	total_items: number;
+	total_pages: number;
+};

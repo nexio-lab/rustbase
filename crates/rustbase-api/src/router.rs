@@ -6,6 +6,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::access_rules;
 use crate::apps;
+use crate::audit;
 use crate::auth::{
     master_admin_login, master_admin_refresh, realm_admin_login, realm_admin_refresh, user_login,
     user_refresh, user_register,
@@ -216,6 +217,10 @@ pub fn build_router(state: AppState) -> Router {
                 .put(policies::app_put)
                 .delete(policies::app_delete),
         )
+        // audit log — read-only per scope
+        .route("/api/system/audit", get(audit::system_list))
+        .route("/api/realms/{realm}/audit", get(audit::realm_list))
+        .route("/api/realms/{realm}/apps/{app}/audit", get(audit::app_list))
         // hook source files — read/write/reload
         .route("/api/realms/{realm}/apps/{app}/hooks", get(hooks::list))
         .route(
@@ -4686,5 +4691,191 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    // ------------- audit log read-back -------------
+
+    #[tokio::test]
+    async fn system_audit_lists_master_scope_entries() {
+        // policy_set on master writes a row into system.audit_log via
+        // policy_engine::set_master_policy. Driving it through the
+        // public PUT endpoint is the simplest seed.
+        let (state, _dir, admin_id) = initialized_state_with_admin("hunter22").await;
+        let tok = master_token(&state, &admin_id);
+
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "PUT",
+                "/api/system/policies/password.length",
+                Some(&tok),
+                Some(&serde_json::json!({"kind":"range","min":4,"max":64})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/system/audit?per_page=10",
+                Some(&tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let j = json_body(resp).await;
+        assert!(j["total_items"].as_u64().unwrap() >= 1);
+        let actions: Vec<String> = j["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["action"].as_str().unwrap().to_string())
+            .collect();
+        assert!(actions.iter().any(|a| a == "policy_set"));
+    }
+
+    #[tokio::test]
+    async fn system_audit_filters_by_action_substring() {
+        let (state, _dir, admin_id) = initialized_state_with_admin("hunter22").await;
+        let tok = master_token(&state, &admin_id);
+
+        // seed two distinct actions
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "PUT",
+            "/api/system/policies/password.length",
+            Some(&tok),
+            Some(&serde_json::json!({"kind":"range","min":4,"max":64})),
+        ))
+        .await
+        .unwrap();
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "DELETE",
+            "/api/system/policies/password.length",
+            Some(&tok),
+            None,
+        ))
+        .await
+        .unwrap();
+
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/system/audit?action=delete",
+                Some(&tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        let j = json_body(resp).await;
+        let items = j["items"].as_array().unwrap();
+        assert!(!items.is_empty());
+        for e in items {
+            assert!(e["action"].as_str().unwrap().contains("delete"), "{e:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn system_audit_requires_master() {
+        let (state, _dir, _, realm_admin_id) = state_with_realm_and_admin().await;
+        let realm_tok = realm_token(&state, "acme", &realm_admin_id);
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/system/audit",
+                Some(&realm_tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn realm_audit_lists_entries_after_clamp() {
+        // Tightening a master bound auto-clamps any realm value that
+        // falls outside it AND writes "policy_clamped" into the realm's
+        // audit log. That's the cascade we want to surface in the UI.
+        let (state, _dir, master_id, realm_admin_id) = state_with_realm_and_admin().await;
+        let master_tok = master_token(&state, &master_id);
+        let realm_tok = realm_token(&state, "acme", &realm_admin_id);
+
+        // 1. master opens the bound wide
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "PUT",
+            "/api/system/policies/password.length",
+            Some(&master_tok),
+            Some(&serde_json::json!({"kind":"range","min":4,"max":64})),
+        ))
+        .await
+        .unwrap();
+        // 2. realm picks a tighter range inside the master bound
+        // (realm bound must fit inside the master bound)
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "PUT",
+            "/api/realms/acme/policies/password.length",
+            Some(&realm_tok),
+            Some(&serde_json::json!({"kind":"range","min":6,"max":12})),
+        ))
+        .await
+        .unwrap();
+        // 3. master tightens the upper bound below the realm value
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "PUT",
+                "/api/system/policies/password.length",
+                Some(&master_tok),
+                Some(&serde_json::json!({"kind":"range","min":4,"max":10})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // realm-scoped audit should now mention policy_clamped
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/realms/acme/audit",
+                Some(&realm_tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let j = json_body(resp).await;
+        let actions: Vec<String> = j["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["action"].as_str().unwrap().to_string())
+            .collect();
+        assert!(actions.iter().any(|a| a == "policy_clamped"), "{actions:?}");
+    }
+
+    #[tokio::test]
+    async fn audit_on_unknown_realm_is_404() {
+        let (state, _dir, admin_id) = initialized_state_with_admin("hunter22").await;
+        let tok = master_token(&state, &admin_id);
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/realms/nope/audit",
+                Some(&tok),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 }
