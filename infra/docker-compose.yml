@@ -5,7 +5,7 @@
 #
 # Why this lives here rather than in a separate repo: MailHog (and any
 # follow-up dev services — MinIO, redis-for-tests, etc.) need to be
-# reachable from *any* app you're hacking on, not only RustBase.
+# reachable from *any* app you're hacking on, not only RustBaas.
 # Other apps reach this service two ways:
 #
 #   1. localhost ports — `localhost:1025` SMTP, `http://localhost:8025`

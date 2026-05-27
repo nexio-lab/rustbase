@@ -1,4 +1,4 @@
-# RustBase
+# RustBaas
 
 A single-binary, single-file Backend-as-a-Service in Rust. PocketBase-style:
 drop one executable on a server, run the setup wizard, and you have realms,
@@ -9,7 +9,7 @@ SQLite under the hood for maximum operational simplicity.
 
 ## Mental model
 
-RustBase organizes everything under a three-level hierarchy:
+RustBaas organizes everything under a three-level hierarchy:
 
 ```
 System
@@ -19,7 +19,7 @@ System
 
 ### Master realm
 
-On first boot, RustBase creates a single privileged realm called **the master
+On first boot, RustBaas creates a single privileged realm called **the master
 realm**. Its rules:
 
 - Cannot be deleted. Its name and slug can be changed by the master admin.

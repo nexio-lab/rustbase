@@ -27,3 +27,9 @@ rustbase.toml
 # /build, and the .svelte-kit cache. The Rust build.rs in
 # rustbase-server runs `bun --cwd ui run build` to produce ui/build/
 # on demand, so the artifact lives only in target/.
+
+# Override the user-level global ignore that strips out docs/ —
+# we want the VitePress source tracked. docs/.gitignore handles
+# the per-folder exclusions (node_modules, dist, cache).
+!/docs/
+!/docs/**

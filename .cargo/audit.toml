@@ -1,4 +1,4 @@
-# `cargo audit` ignore list for RustBase.
+# `cargo audit` ignore list for RustBaas.
 #
 # Each entry MUST carry a one-line rationale. Re-evaluate on every
 # dependency bump — silenced advisories rot fast.
@@ -8,7 +8,7 @@ ignore = [
     # RUSTSEC-2023-0071 — Marvin timing attack on rsa.
     #
     # Pulled transitively by sqlx-macros-core. The vulnerable code path
-    # is RSA key parsing in sqlx-mysql; RustBase only uses the sqlite
+    # is RSA key parsing in sqlx-mysql; RustBaas only uses the sqlite
     # backend (workspace deps set `default-features = false, features =
     # ["sqlite", ...]`) so the affected code is never linked into the
     # binary. No fixed upgrade is available upstream.

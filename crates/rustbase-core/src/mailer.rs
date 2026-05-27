@@ -1,5 +1,5 @@
 //! Mailer interface — IO-free contract for sending email out of
-//! RustBase. Implementations live in higher layers (an in-memory
+//! RustBaas. Implementations live in higher layers (an in-memory
 //! `LogMailer` for dev/test, an SMTP-backed one for production).
 //!
 //! The trait is `async` and `Send + Sync` so it can be stored as

@@ -1,5 +1,5 @@
 /**
- * Minimal fetch wrapper for the RustBase REST API.
+ * Minimal fetch wrapper for the RustBaas REST API.
  *
  * - Same-origin in production (the SvelteKit bundle is served by the
  *   Rust binary at `/_/`, the API at `/api`, `/_/setup`, `/_/auth`).

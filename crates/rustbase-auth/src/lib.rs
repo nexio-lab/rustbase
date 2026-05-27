@@ -1,4 +1,4 @@
-//! Authentication for RustBase.
+//! Authentication for RustBaas.
 //!
 //! Argon2id password hashing, HS256 JWT issuance / verification, and an
 //! in-memory revocation set keyed by `SubjectKey`. Admin record storage

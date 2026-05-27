@@ -1,4 +1,4 @@
-//! HTTP API for RustBase.
+//! HTTP API for RustBaas.
 //!
 //! Exposes REST endpoints under `/api/realms/<realm>/apps/<app>/...`, plus
 //! SSE and WebSocket endpoints for realtime subscriptions. Errors map to
