@@ -113,6 +113,12 @@
 	>
 		Policies
 	</a>
+	<a
+		href="/realms/{realm}/apps/{app}/hooks"
+		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
+	>
+		Hooks
+	</a>
 </div>
 
 <div class="mb-6 flex items-end justify-between">

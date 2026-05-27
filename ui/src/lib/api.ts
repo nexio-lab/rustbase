@@ -266,3 +266,28 @@ export type PutPolicyResponse = {
 	spec: PolicySpec;
 	cascaded: ClampOutcome[];
 };
+
+// ---- JS/TS hook source files ----
+
+export type HookFile = {
+	filename: string;
+	size: number;
+	updated_at: string;
+};
+
+export type HookFileBody = {
+	filename: string;
+	source: string;
+	size: number;
+	updated_at: string;
+};
+
+export type ReloadOutcome = {
+	loaded: number;
+	errors: string[];
+};
+
+export type PutHookResponse = {
+	file: HookFileBody;
+	reload: ReloadOutcome;
+};

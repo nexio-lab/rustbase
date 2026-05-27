@@ -13,6 +13,7 @@ pub mod error;
 pub mod files;
 pub mod health;
 pub mod hook_bridge;
+pub mod hooks;
 pub mod mailer;
 pub mod middleware;
 pub mod policies;

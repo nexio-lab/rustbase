@@ -404,8 +404,11 @@ impl AppHooks {
     }
 
     /// Walk `dir`, evaluating every `*.js` file. Failing files are
-    /// logged but don't abort the load — other hooks may still be
-    /// valid. Returns the number of files successfully evaluated.
+    /// logged AND recorded into `__rb_errors` so a caller can surface
+    /// them via `drain_errors` — that's what the dashboard reads when
+    /// it renders a syntax-error chip next to the editor. Other hooks
+    /// may still be valid; one bad file doesn't abort the load.
+    /// Returns the number of files successfully evaluated.
     pub async fn load_dir(&self, dir: &Path) -> Result<usize> {
         if !dir.is_dir() {
             return Ok(0);
@@ -428,6 +431,8 @@ impl AppHooks {
                     Ok(js) => js,
                     Err(e) => {
                         tracing::error!(file = %label, error = %e, "ts transpile failed");
+                        self.record_load_error(&label, &format!("ts transpile failed: {e}"))
+                            .await;
                         continue;
                     }
                 }
@@ -436,6 +441,7 @@ impl AppHooks {
             };
             if let Err(e) = self.eval(&src, &label).await {
                 tracing::error!(file = %label, error = %e, "hook load failed");
+                self.record_load_error(&label, &format!("{e}")).await;
             } else {
                 loaded += 1;
                 tracing::info!(file = %label, "hook loaded");
@@ -1139,6 +1145,20 @@ impl AppHooks {
             })
             .await?;
         Ok(logs)
+    }
+
+    /// Record a per-file load failure into `__rb_errors` so the
+    /// dashboard's `drain_errors` call picks it up alongside any
+    /// runtime errors. JSON-escape the message so a quote in the JS
+    /// error doesn't break the driver. Failures here are themselves
+    /// swallowed — the original load error is already in tracing.
+    async fn record_load_error(&self, file: &str, msg: &str) {
+        let body = serde_json::to_string(&format!("hook load failed: {file}: {msg}"))
+            .unwrap_or_else(|_| "\"hook load failed\"".to_string());
+        let driver = format!(
+            "(function() {{ (globalThis.__rb_errors = globalThis.__rb_errors || []).push({body}); }})();"
+        );
+        let _ = self.eval(&driver, "<record_load_error>").await;
     }
 
     /// Drain any errors raised by handlers (caught via the dispatch
