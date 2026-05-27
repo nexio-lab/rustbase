@@ -21,7 +21,7 @@ A multi-tenant Backend-as-a-Service in Rust. Drop one executable on a server, ru
 <!-- vitals + funding row -->
 [![Stars](https://img.shields.io/github/stars/pjonaszik/rustbase?style=for-the-badge&logo=github)](https://github.com/pjonaszik/rustbase/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/pjonaszik/rustbase/main?style=for-the-badge&logo=git&logoColor=white)](https://github.com/pjonaszik/rustbase/commits/main)
-[![Issues](https://img.shields.io/github/issues/pjonaszik/rustbase?style=for-the-badge&logo=github)](https://github.com/pjonaszik/rustbase/issues)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=for-the-badge&logo=github)](https://github.com/pjonaszik/rustbase/blob/main/CONTRIBUTING.md)
 [![Support](https://img.shields.io/badge/Support%20us-PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://www.paypal.com/ncp/payment/5L8KUWE8F2PSU)
 
 📖 [Docs](https://pjonaszik.github.io/rustbase/) &nbsp;·&nbsp; 🐛 [Issues](https://github.com/pjonaszik/rustbase/issues) &nbsp;·&nbsp; 💬 [Discussions](https://github.com/pjonaszik/rustbase/discussions) &nbsp;·&nbsp; 🔒 [Security](SECURITY.md) &nbsp;·&nbsp; 📝 [Changelog](CHANGELOG.md)
