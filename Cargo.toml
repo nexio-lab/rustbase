@@ -103,7 +103,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 config = "0.14"
 
 # validation
-validator = { version = "0.19", features = ["derive"] }
+validator = { version = "0.20", features = ["derive"] }
 
 # errors
 thiserror = "2"
