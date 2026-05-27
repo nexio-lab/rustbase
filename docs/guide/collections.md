@@ -10,7 +10,7 @@ A collection is a typed table inside an app. It has an `id` (the table name), a 
 | `auth` | End-users. Auto-adds `email`, `password_hash`, `verified`, `last_login`, `oauth_providers` fields. |
 | `view` | SQL-backed, read-only. *(Coming soon.)* |
 
-You can have many `base` collections per app; you typically have one `auth` collection if you want app-scoped users (most apps share the realm's `users` table instead).
+You can have many `base` collections per app. Every app already gets a built-in `users` table (in its `data.db`) that the `/auth/users/*` endpoints write to; an `auth` collection is an alternative when you need extra user fields beyond the built-in shape.
 
 ## Field types
 
@@ -141,7 +141,7 @@ Creating a collection with `kind: "auth"` automatically adds:
 | `last_login` | datetime | updated on every successful login |
 | `oauth_providers` | json | array of linked provider records |
 
-Most apps share the realm's `users` table instead of defining their own — that's how SSO across apps works.
+Each app has its own `users` table — two apps in the same realm can share an email address but the rows are independent identities. If you want one identity that spans products, run them as a single app.
 
 ## Access rules
 

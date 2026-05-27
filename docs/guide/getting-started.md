@@ -43,9 +43,9 @@ INFO rustbase_server: dashboard at http://localhost:8080/_/
 INFO rustbase_server: uninitialized — visit /_/setup to create the first master admin
 ```
 
-Visit **http://localhost:8080/_/** in your browser. Because no master admin exists yet, you'll be redirected to the **setup wizard**. Fill in email + password and submit.
+Visit **http://localhost:8080/_/** in your browser. The server auto-seeded a master admin row at first boot with username `admin` and no password, so you'll be redirected to the **setup wizard**. Enter a password and submit.
 
-That's it — you're now signed in as the master admin.
+That's it — you're now signed in as the `admin` master admin.
 
 ## Create your first realm and app
 
@@ -73,10 +73,10 @@ After your first writes, the working directory looks like this:
         ├── master/
         │   └── realm.db
         └── acme/
-            ├── realm.db        # users, oauth, policies, refresh tokens
+            ├── realm.db        # apps, realm/app admins, admin refresh tokens, policies
             └── apps/
                 └── web/
-                    ├── data.db # collections, records, access rules
+                    ├── data.db # collections, records, access rules, users, oauth, refresh tokens
                     └── storage/
 ```
 

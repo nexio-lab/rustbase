@@ -9,13 +9,13 @@ Every significant change writes a row to the matching scope's `audit_log` table.
 | `policy_set` | scope where the policy was set |
 | `policy_clamped` | each child whose value was clamped on a parent tighten |
 | `policy_deleted` | scope where the policy was deleted |
-| `oauth_provider_set` | realm |
-| `oauth_provider_deleted` | realm |
+| `oauth_provider_set` | app |
+| `oauth_provider_deleted` | app |
 | `realm_admin_added` | system |
 | `app_admin_added` | realm |
-| `user_force_verified` | realm |
-| `user_totp_reset` | realm |
-| `user_deleted` | realm |
+| `user_force_verified` | app |
+| `user_totp_reset` | app |
+| `user_deleted` | app |
 | `realm_deleted` | system |
 | `app_deleted` | realm |
 | `collection_deleted` | app |

@@ -145,7 +145,7 @@ State is single-use and bound to the app. On first sign-in via OAuth, a user row
 
 ## Admin tokens
 
-Master admins call `/_/auth/admin/login` with `{ username, password }`; realm admins call `/api/realms/:realm/auth/admin/login` with `{ email, password }`. Tokens carry a `role` claim (`master_admin`, `realm_admin`, `app_admin`, `user`). Every protected handler enforces:
+Master admins call `/_/auth/admin/login` with `{ username, password }`; realm admins call `/api/realms/:realm/auth/admin/login` with `{ email, password }`. Tokens carry a `role` claim (`master_admin`, `realm_admin`, `app_admin`, `user`) plus the scope claims that match it: master admin tokens have neither `realm` nor `app`; realm-admin tokens carry `realm`; app-admin tokens carry both `realm` and `app`; end-user tokens always carry both `realm` and `app` (users are per-app since the users-per-app refactor). Every protected handler enforces:
 
 ```rust
 auth.require_master()?;             // master only

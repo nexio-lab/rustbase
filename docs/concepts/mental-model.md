@@ -4,8 +4,8 @@ Everything in RustBaas fits into a three-level hierarchy:
 
 ```
 System
-  └── Realm  (identity boundary — users live here)
-        └── App  (data product — collections + records + files live here)
+  └── Realm  (organization boundary — admins live here)
+        └── App  (data product — collections, records, files, end-users, OAuth live here)
 ```
 
 Understanding which layer owns which thing is the single most useful thing you can learn about the system.
@@ -29,7 +29,7 @@ On first boot, RustBaas creates a single privileged realm called **the master re
 - Owns the master admin(s).
 - Is the only place from which other realms can be created, edited, or deleted.
 
-The master realm is special, but it's still a realm — it has its own `realm.db`, its own users (if you choose to use them), and its own admins.
+The master realm is special, but it's still a realm — it has its own `realm.db`, its own apps (each with its own users if you create them), and its own admins.
 
 ## Realms
 
@@ -81,8 +81,8 @@ Each collection inside an app has a `kind`:
 
 ## Tokens
 
-- **Access tokens** are stateless JWTs, 15-minute TTL by default. They carry `realm_id`, optional `app_id`, `user_id` or `admin_id`, and a role.
-- **Refresh tokens** are opaque random strings stored in the realm's `_refresh_tokens` table. Exchange them at `/auth/refresh` to get a fresh access token.
+- **Access tokens** are stateless JWTs, 15-minute TTL by default. They carry a role and the scope claims that match it: master admins have neither `realm` nor `app`; realm and app admins carry `realm` (app admins also carry `app`); end-user tokens always carry both `realm` and `app`.
+- **Refresh tokens** are opaque random strings. Admin refresh tokens live in the realm's `_refresh_tokens` table; end-user refresh tokens live in the app's `_refresh_tokens` table (the `users` table moved with them). Exchange them at the matching `/auth/refresh` (master) or `/auth/refresh` (realm admin) or `/apps/:app/auth/users/refresh` (end-user) to get a fresh access token.
 - **Revocation** is in-memory; entries auto-expire on the access-token TTL. Restart the server and revocations are gone (which is fine — old tokens expire on their own clock anyway).
 
 ## What lives where
@@ -91,13 +91,16 @@ Each collection inside an app has a `kind`:
 |---|---|
 | Realms registry | `system.db` |
 | Master admins | `system.db` |
-| Users | `<realm>/realm.db` |
-| OAuth providers | `<realm>/realm.db` |
-| Refresh tokens | `<realm>/realm.db` |
-| Collections, records, access rules | `<realm>/apps/<app>/data.db` |
-| App admins (which admin → which apps) | `<realm>/realm.db` |
-| Hooks (JS/TS source) | `data/hooks/<realm>/<app>/` |
+| Realm admins, app admins | `<realm>/realm.db` |
+| Admin refresh tokens | `<realm>/realm.db` |
+| Apps registry, realm-scope policies, realm audit | `<realm>/realm.db` |
+| End-users | `<realm>/apps/<app>/data.db` |
+| OAuth providers | `<realm>/apps/<app>/data.db` |
+| End-user refresh tokens, verifications, password resets, OTPs, TOTP, MFA challenges | `<realm>/apps/<app>/data.db` |
+| Collections, records, access rules, app audit | `<realm>/apps/<app>/data.db` |
 | Files (metadata) | `<realm>/apps/<app>/data.db` |
+| Files (binary blobs) | `<realm>/apps/<app>/storage/` |
+| Hooks (JS/TS source) | `data/hooks/<realm>/<app>/` |
 | Files (binary) | `<realm>/apps/<app>/storage/` (or S3) |
 | Audit log | Each scope has its own `audit_log` table |
 

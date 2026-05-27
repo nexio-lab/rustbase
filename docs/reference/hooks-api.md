@@ -118,7 +118,7 @@ $app.onRecordAfterDelete (coll: string, fn: (rec: Record) => void);
 
 Returning `false` from a `Before*` hook vetoes the operation; the REST request gets a 400.
 
-## User lifecycle hooks (realm-wide)
+## User lifecycle hooks (app-scoped)
 
 ```ts
 $app.onUserBeforeLogin   (fn: (user) => void | false);
@@ -126,7 +126,7 @@ $app.onUserAfterLogin    (fn: (user) => void);
 $app.onUserAfterRegister (fn: (user) => void);
 ```
 
-These fire for **every app's hooks** in the realm, regardless of which app issued the login request.
+These fire only on the target app's runtime — the one whose `/apps/:app/auth/users/...` endpoint handled the request. Sibling apps in the same realm don't see the event; end-users are per-app, so cross-app fan-out wouldn't make sense.
 
 ## Misc
 

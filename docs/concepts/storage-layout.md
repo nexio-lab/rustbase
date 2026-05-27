@@ -11,8 +11,11 @@ data/
       storage/                        # realm-level files (rarely used)
       apps/
         <app_id>/
-          data.db                     # collections, records, users, oauth, app audit
-          storage/                    # app-level files
+          data.db                     # collections, records, access rules, users,
+                                      # oauth, user refresh tokens, verifications,
+                                      # password resets, OTPs, TOTP, MFA challenges,
+                                      # file metadata, app audit
+          storage/                    # app-level files (binary blobs)
   hooks/
     <realm_id>/<app_id>/              # JS/TS hook source files (*.js, *.ts)
 ```
