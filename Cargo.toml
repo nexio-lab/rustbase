@@ -41,7 +41,7 @@ tower-http = { version = "0.6", features = ["trace", "cors"] }
 sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio", "macros", "chrono", "uuid"] }
 
 # storage
-object_store = { version = "0.11", features = ["aws"] }
+object_store = { version = "0.13", features = ["aws"] }
 
 # auth
 jsonwebtoken = "9"
