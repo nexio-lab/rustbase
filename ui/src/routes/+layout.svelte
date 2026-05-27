@@ -39,6 +39,9 @@
 			</a>
 			<nav class="flex items-center gap-1 text-sm">
 				<a class="nav-link" href="/realms">Realms</a>
+				{#if auth.isMaster}
+					<a class="nav-link" href="/system">System</a>
+				{/if}
 				{#if auth.admin}
 					<span class="ml-3 text-xs text-slate-500">
 						{auth.admin.email}

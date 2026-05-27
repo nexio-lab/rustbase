@@ -60,6 +60,12 @@
 	<span class="border-b-2 border-orange-500 px-3 py-1.5 font-medium text-slate-900">
 		OAuth providers
 	</span>
+	<a
+		href="/realms/{realm}/policies"
+		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
+	>
+		Policies
+	</a>
 </div>
 
 <div class="mb-6 flex items-end justify-between">
