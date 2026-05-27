@@ -6,15 +6,13 @@ use rustbase_auth::{TokenRole, build_claims, encode_token, verify_password};
 use rustbase_core::{AppId, CoreError, RealmId};
 use rustbase_db::{
     admins::{find_master_admin_by_username, find_realm_admin_by_email},
-    apps::find_app,
-    realms::find_realm,
     tokens::{SubjectKind, insert_refresh_token},
     users::{find_user_by_email, record_last_login},
 };
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
-use super::{default_access_ttl, default_refresh_ttl, new_refresh_token};
+use super::{default_access_ttl, default_refresh_ttl, new_refresh_token, require_app_exists};
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -201,14 +199,17 @@ pub async fn realm_admin_login(
 
 pub async fn user_login(
     State(state): State<AppState>,
-    Path(realm): Path<String>,
+    Path((realm, app)): Path<(String, String)>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<UserLoginResponse>, ApiError> {
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
 
+    require_app_exists(&state, &realm, &app).await?;
+
     let realm_id = RealmId::from(realm.clone());
-    let pool = state.realms.pool_for(&realm_id).await?;
+    let app_id = AppId::from(app.clone());
+    let pool = state.apps.pool_for(&realm_id, &app_id).await?;
 
     let user = find_user_by_email(&pool, &req.email)
         .await?
@@ -230,14 +231,14 @@ pub async fn user_login(
         "email": &user.email,
         "verified": user.verified,
     });
-    let hook_req = rustbase_runtime::HookRequest::system(&realm, "", "_user");
+    let hook_req = rustbase_runtime::HookRequest::system(&realm, &app, "_user");
     state
         .hooks
-        .dispatch_user_before_login(&realm, &hook_req, &public)
+        .dispatch_user_before_login(&realm, &app, &hook_req, &public)
         .await
         .map_err(|e| match e {
             rustbase_runtime::RuntimeError::Veto(msg) => {
-                tracing::info!(realm = %realm, user_id = %user.id, %msg, "login vetoed by hook");
+                tracing::info!(realm = %realm, app = %app, user_id = %user.id, %msg, "login vetoed by hook");
                 ApiError::Core(CoreError::Forbidden)
             }
             other => ApiError::Core(CoreError::Internal(other.to_string())),
@@ -252,6 +253,7 @@ pub async fn user_login(
         let mfa_token = crate::auth::totp::issue_mfa_challenge(&pool, &user.id).await?;
         tracing::info!(
             realm = %realm,
+            app = %app,
             user_id = %user.id,
             "password ok; awaiting TOTP second step"
         );
@@ -267,7 +269,7 @@ pub async fn user_login(
         user.id.clone(),
         TokenRole::User,
         Some(realm.clone()),
-        None,
+        Some(app.clone()),
         default_access_ttl(),
     );
     let access_token = encode_token(&claims, &state.master_key)?;
@@ -281,16 +283,16 @@ pub async fn user_login(
     )
     .await?;
 
-    tracing::info!(realm = %realm, user_id = %user.id, "user login");
+    tracing::info!(realm = %realm, app = %app, user_id = %user.id, "user login");
 
     // Best-effort observer fire; failures are logged but don't roll
     // back the successful login.
     if let Err(e) = state
         .hooks
-        .dispatch_user_after_login(&realm, &hook_req, &public)
+        .dispatch_user_after_login(&realm, &app, &hook_req, &public)
         .await
     {
-        tracing::warn!(error = %e, realm = %realm, "user_after_login hook errored");
+        tracing::warn!(error = %e, realm = %realm, app = %app, "user_after_login hook errored");
     }
 
     Ok(Json(UserLoginResponse::Tokens {

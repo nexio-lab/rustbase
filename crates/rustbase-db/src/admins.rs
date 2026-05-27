@@ -112,10 +112,7 @@ pub async fn find_master_admin_by_username(
     Ok(row)
 }
 
-pub async fn find_master_admin_by_id(
-    pool: &SqlitePool,
-    id: &str,
-) -> Result<Option<MasterAdmin>> {
+pub async fn find_master_admin_by_id(pool: &SqlitePool, id: &str) -> Result<Option<MasterAdmin>> {
     let sql = format!("{SELECT_MASTER} WHERE id = ?");
     let row: Option<MasterAdmin> = sqlx::query_as(&sql).bind(id).fetch_optional(pool).await?;
     Ok(row)

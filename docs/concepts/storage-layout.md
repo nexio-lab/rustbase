@@ -7,15 +7,17 @@ data/
   system.db                           # realms registry, master admins, master audit
   realms/
     <realm_id>/
-      realm.db                        # users, oauth, settings, refresh tokens, realm audit
+      realm.db                        # apps, realm/app admins, admin refresh tokens, realm audit
       storage/                        # realm-level files (rarely used)
       apps/
         <app_id>/
-          data.db                     # collections, records, access rules, app audit
+          data.db                     # collections, records, users, oauth, app audit
           storage/                    # app-level files
   hooks/
     <realm_id>/<app_id>/              # JS/TS hook source files (*.js, *.ts)
 ```
+
+End-users live in each app's `data.db` — the `users` table is per-app along with the OAuth provider config, refresh tokens, and every auxiliary auth table (verifications, password resets, OTPs, TOTP, MFA challenges).
 
 Plus, when [Litestream](/guide/backups) is enabled:
 

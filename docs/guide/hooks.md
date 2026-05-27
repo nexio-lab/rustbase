@@ -34,9 +34,9 @@ $app.onRecordAfterCreate("posts", (rec) => {
 |---|---|
 | `$app.onUserBeforeLogin(fn)` | After password check, before token issuance. Throw to veto. |
 | `$app.onUserAfterLogin(fn)` | After a successful login. |
-| `$app.onUserAfterRegister(fn)` | After `POST /auth/users/register`. |
+| `$app.onUserAfterRegister(fn)` | After `POST /apps/:app/auth/users/register`. |
 
-User-lifecycle hooks are realm-wide — every app's hooks for the same realm fire on every login.
+User-lifecycle hooks are app-scoped — only the hooks for the target app fire on a login or registration. End-users live per-app, so cross-app fan-out wouldn't make sense.
 
 ## Custom HTTP routes
 

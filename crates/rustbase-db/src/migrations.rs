@@ -188,11 +188,10 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
     ),
 ];
 
-pub const REALM_MIGRATIONS: &[Migration] = &[
-    Migration::new(
-        "20260520_000001_initial_realm",
-        MigrationScope::Realm,
-        r#"
+pub const REALM_MIGRATIONS: &[Migration] = &[Migration::new(
+    "20260520_000001_initial_realm",
+    MigrationScope::Realm,
+    r#"
     CREATE TABLE apps (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -246,8 +245,7 @@ pub const REALM_MIGRATIONS: &[Migration] = &[
     );
     CREATE INDEX audit_log_ts ON audit_log(ts);
     "#,
-    ),
-];
+)];
 
 pub const APP_MIGRATIONS: &[Migration] = &[
     Migration::new(
@@ -444,7 +442,8 @@ mod tests {
             .unwrap();
         assert_eq!(n, REALM_MIGRATIONS.len());
 
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        // Realm-scope tables: apps + admin tiers. End-users moved to app.db.
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM apps")
             .fetch_one(&pool)
             .await
             .unwrap();

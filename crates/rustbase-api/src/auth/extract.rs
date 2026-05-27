@@ -148,6 +148,26 @@ impl PrincipalAuth {
             _ => None,
         }
     }
+
+    /// App the (user) principal is bound to. Since the refactor that
+    /// moved users from realm to app, every TokenRole::User token must
+    /// carry both realm and app claims.
+    pub fn user_app(&self) -> Option<&str> {
+        match self.claims.role {
+            TokenRole::User => self.claims.app.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Convenience: assert the (user) principal owns `(realm, app)`.
+    /// Returns `Forbidden` for admins (they don't match a user route),
+    /// for users in another realm/app, or for tokens missing claims.
+    pub fn require_user_in_app(&self, realm: &str, app: &str) -> Result<(), ApiError> {
+        match (self.user_realm(), self.user_app()) {
+            (Some(r), Some(a)) if r == realm && a == app => Ok(()),
+            _ => Err(ApiError::Core(CoreError::Forbidden)),
+        }
+    }
 }
 
 impl FromRequestParts<AppState> for PrincipalAuth {

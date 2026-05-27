@@ -1,15 +1,16 @@
 //! Email-verification endpoints.
 //!
-//! Two routes, both under a realm scope:
+//! Two routes, both under an app scope:
 //!
-//! - `POST /api/realms/:realm/auth/verify-email/request`
+//! - `POST /api/realms/:realm/apps/:app/auth/verify-email/request`
 //!   Authenticated end-user asks to receive a verification email.
-//!   A fresh token is issued in the realm DB, mailed to the user's
+//!   A fresh token is issued in the app DB, mailed to the user's
 //!   stored address, and the response indicates whether a mail was
-//!   dispatched. Already-verified users receive `204 No Content`
-//!   instead — we don't leak whether a token row was created.
+//!   dispatched. Already-verified users receive `200 OK` with an
+//!   `already verified` message instead — we don't leak whether a
+//!   token row was created.
 //!
-//! - `POST /api/realms/:realm/auth/verify-email/confirm`
+//! - `POST /api/realms/:realm/apps/:app/auth/verify-email/confirm`
 //!   Anyone can call. Body carries `{ "token": "<opaque>" }`. The
 //!   token is consumed atomically; on success the matching user is
 //!   marked verified.
@@ -24,15 +25,14 @@ use axum::{
     http::StatusCode,
 };
 use rand_core::{OsRng, RngCore};
-use rustbase_core::{CoreError, EmailMessage, RealmId};
+use rustbase_core::{AppId, CoreError, EmailMessage, RealmId};
 use rustbase_db::{
     email_verifications::{self, ConsumeOutcome},
-    realms::find_realm,
     users::{find_user_by_id, mark_verified},
 };
 use serde::{Deserialize, Serialize};
 
-use crate::auth::PrincipalAuth;
+use crate::auth::{PrincipalAuth, require_app_exists};
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -60,18 +60,16 @@ pub struct ConfirmResponse {
 pub async fn request(
     auth: PrincipalAuth,
     State(state): State<AppState>,
-    Path(realm): Path<String>,
+    Path((realm, app)): Path<(String, String)>,
 ) -> Result<(StatusCode, Json<VerifyRequestResponse>), ApiError> {
-    // Only end users in this realm may ask for verification of their
-    // own email; admins and cross-realm tokens are rejected.
-    if auth.user_realm() != Some(realm.as_str()) {
-        return Err(ApiError::Core(CoreError::Forbidden));
-    }
+    // Only end users in this app may ask for verification of their own
+    // email; admins and tokens from another app/realm are rejected.
+    auth.require_user_in_app(&realm, &app)?;
 
-    find_realm(state.system.pool(), &realm)
-        .await?
-        .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.clone())))?;
-    let pool = state.realms.pool_for(&RealmId::from(realm.clone())).await?;
+    require_app_exists(&state, &realm, &app).await?;
+    let realm_id = RealmId::from(realm.clone());
+    let app_id = AppId::from(app.clone());
+    let pool = state.apps.pool_for(&realm_id, &app_id).await?;
 
     let user = find_user_by_id(&pool, &auth.subject_id)
         .await?
@@ -105,7 +103,7 @@ pub async fn request(
     let msg = EmailMessage::new(
         SYSTEM_FROM_ADDRESS,
         &user.email,
-        format!("Verify your email for realm {realm}"),
+        format!("Verify your email for {realm}/{app}"),
         body,
     );
     state
@@ -116,6 +114,7 @@ pub async fn request(
 
     tracing::info!(
         realm = %realm,
+        app = %app,
         user_id = %user.id,
         "verification token issued + mailed"
     );
@@ -133,18 +132,18 @@ pub async fn request(
 /// re-using a consumed token returns 410 Gone.
 pub async fn confirm(
     State(state): State<AppState>,
-    Path(realm): Path<String>,
+    Path((realm, app)): Path<(String, String)>,
     Json(req): Json<ConfirmRequest>,
 ) -> Result<Json<ConfirmResponse>, ApiError> {
-    find_realm(state.system.pool(), &realm)
-        .await?
-        .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.clone())))?;
-    let pool = state.realms.pool_for(&RealmId::from(realm.clone())).await?;
+    require_app_exists(&state, &realm, &app).await?;
+    let realm_id = RealmId::from(realm.clone());
+    let app_id = AppId::from(app.clone());
+    let pool = state.apps.pool_for(&realm_id, &app_id).await?;
 
     match email_verifications::consume(&pool, &req.token).await? {
         ConsumeOutcome::Ok { user_id } => {
             mark_verified(&pool, &user_id).await?;
-            tracing::info!(realm = %realm, user_id = %user_id, "email verified");
+            tracing::info!(realm = %realm, app = %app, user_id = %user_id, "email verified");
             Ok(Json(ConfirmResponse {
                 verified: true,
                 user_id,

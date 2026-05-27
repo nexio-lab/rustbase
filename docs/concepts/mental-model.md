@@ -33,17 +33,14 @@ The master realm is special, but it's still a realm — it has its own `realm.db
 
 ## Realms
 
-A realm is an **identity boundary**. It holds:
+A realm is an **organization boundary**. It holds:
 
-- The **user pool**.
-- **OAuth provider** configuration (Google / GitHub / etc.).
+- **Realm admins** and **app admins** (the realm's administrators).
 - Realm-level **branding** and settings.
 - Realm-scope **policy values** (bounded by master).
 - The realm's **audit log**.
 
-Users authenticate against a realm. A successful login produces a token bound to `(realm_id, user_id)` — that token can be used by any app in the realm. Apps still enforce per-collection access rules, but SSO across apps in the same realm is automatic.
-
-A realm has its own **realm admins**, scoped to that one realm.
+A realm has its own **realm admins**, scoped to that one realm; their token is honored across every app inside the realm.
 
 ## Apps
 
@@ -54,10 +51,12 @@ An app is what a developer ships against. It owns:
 - Per-collection **access rules**.
 - **Files** uploaded for this app.
 - **JS/TS hooks** loaded for this app.
+- The **end-user pool** for this app — every user lives in the app's `data.db`.
+- **OAuth provider** configuration (Google / GitHub / etc.).
 - App-scope **policy values** (bounded by realm and master).
 - The app's **audit log**.
 
-Apps inside the same realm share the realm's user pool. Build a mobile app and a website against the same realm and your users can sign in to both without re-registering.
+End-users live per-app: a user registered against `acme/mobile` is a different identity than the same email registered against `acme/web`. Authentication produces a token bound to `(realm_id, app_id, user_id)`. If you want one identity that spans two products, run them as a single app.
 
 An app has its own **app admins** — a subset of realm admins, plus single-app-scoped admins.
 
@@ -75,10 +74,10 @@ Each collection inside an app has a `kind`:
 
 | Principal | Stored in | Authenticates at |
 |---|---|---|
-| Master admin | `system.db` | `/_/auth/admin/login` |
+| Master admin | `system.db` | `/_/auth/admin/login` (username + password) |
 | Realm admin | The realm's `realm.db` | `/api/realms/<realm>/auth/admin/login` |
 | App admin | The realm's `realm.db`, scoped to one or more apps | (same) |
-| End-user | The realm's `realm.db` (in the `users` table or an auth-collection table) | `/api/realms/<realm>/auth/users/login` |
+| End-user | The app's `data.db` (in the `users` table or an auth-collection table) | `/api/realms/<realm>/apps/<app>/auth/users/login` |
 
 ## Tokens
 

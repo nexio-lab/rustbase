@@ -31,6 +31,18 @@ const RESERVED_COLLECTION_IDS: &[&str] = &[
     "_migrations",
     "policies",
     "audit_log",
+    // App-scoped system tables created by APP_MIGRATIONS.
+    "_files",
+    "users",
+    "oauth_providers",
+    "user_oauth_links",
+    "_refresh_tokens",
+    "_email_verifications",
+    "_password_resets",
+    "_email_otps",
+    "_oauth_states",
+    "_user_totp",
+    "_mfa_challenges",
 ];
 
 const RESERVED_FIELD_NAMES: &[&str] = &["id", "created_at", "updated_at"];
@@ -391,7 +403,7 @@ mod tests {
 
     fn users_schema() -> Schema {
         Schema {
-            id: CollectionId::from("users"),
+            id: CollectionId::from("people"),
             kind: CollectionKind::Base,
             fields: vec![
                 Field {
@@ -426,11 +438,11 @@ mod tests {
     async fn create_collection_creates_table_and_meta_row() {
         let pool = fresh_pool().await;
         let c = create_collection(&pool, &users_schema()).await.unwrap();
-        assert_eq!(c.id, "users");
+        assert_eq!(c.id, "people");
 
         // table exists with the expected columns
         let cols: Vec<(String,)> =
-            sqlx::query_as("SELECT name FROM pragma_table_info('users') ORDER BY cid")
+            sqlx::query_as("SELECT name FROM pragma_table_info('people') ORDER BY cid")
                 .fetch_all(&pool)
                 .await
                 .unwrap();
@@ -494,7 +506,7 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].schema, users_schema());
 
-        let found = find_collection(&pool, "users").await.unwrap().unwrap();
+        let found = find_collection(&pool, "people").await.unwrap().unwrap();
         assert_eq!(found.schema, users_schema());
     }
 
@@ -502,16 +514,16 @@ mod tests {
     async fn delete_collection_drops_table_and_meta() {
         let pool = fresh_pool().await;
         create_collection(&pool, &users_schema()).await.unwrap();
-        delete_collection(&pool, "users").await.unwrap();
+        delete_collection(&pool, "people").await.unwrap();
 
         let still: Vec<(String,)> =
-            sqlx::query_as("SELECT name FROM sqlite_master WHERE name = 'users'")
+            sqlx::query_as("SELECT name FROM sqlite_master WHERE name = 'people'")
                 .fetch_all(&pool)
                 .await
                 .unwrap();
         assert!(still.is_empty());
 
-        assert!(find_collection(&pool, "users").await.unwrap().is_none());
+        assert!(find_collection(&pool, "people").await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -525,7 +537,7 @@ mod tests {
 
     fn schema_with(fields: Vec<Field>) -> Schema {
         Schema {
-            id: rustbase_core::CollectionId::from("users"),
+            id: rustbase_core::CollectionId::from("people"),
             kind: CollectionKind::Base,
             fields,
         }
@@ -566,7 +578,7 @@ mod tests {
 
         // table now exposes the column
         let cols: Vec<(String,)> =
-            sqlx::query_as("SELECT name FROM pragma_table_info('users') ORDER BY cid")
+            sqlx::query_as("SELECT name FROM pragma_table_info('people') ORDER BY cid")
                 .fetch_all(&pool)
                 .await
                 .unwrap();
@@ -594,7 +606,7 @@ mod tests {
         // with force the column is dropped
         let (_after, diff) = patch_collection(&pool, &next, true).await.unwrap();
         assert_eq!(diff.dropped, vec!["verified".to_string()]);
-        let cols: Vec<(String,)> = sqlx::query_as("SELECT name FROM pragma_table_info('users')")
+        let cols: Vec<(String,)> = sqlx::query_as("SELECT name FROM pragma_table_info('people')")
             .fetch_all(&pool)
             .await
             .unwrap();

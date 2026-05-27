@@ -1,14 +1,15 @@
-//! Admin CRUD for per-realm OAuth provider configuration.
+//! Admin CRUD for per-app OAuth provider configuration.
 //!
-//! Four endpoints under `/api/realms/:realm/auth/oauth/providers`:
+//! Four endpoints under `/api/realms/:realm/apps/:app/auth/oauth/providers`:
 //!
 //! - `GET    /`             list providers (summary; no secrets)
 //! - `GET    /:provider`    fetch one provider (summary; no secret)
 //! - `PUT    /:provider`    upsert provider + client_secret
 //! - `DELETE /:provider`    remove the row
 //!
-//! Auth: requires master OR realm-admin of the target realm — same
-//! gate as the policy endpoints, via `AdminAuth::require_realm_access`.
+//! Auth: requires master OR realm-admin of the target realm OR app-admin
+//! of the target app — `AdminAuth::require_app_access` enforces the
+//! matrix.
 //!
 //! Secrets handling:
 //!
@@ -24,14 +25,13 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
 };
-use rustbase_core::{CoreError, RealmId};
-use rustbase_db::{
-    oauth_providers::{self, OAuthProvider, OAuthProviderConfig, OAuthProviderSummary},
-    realms::find_realm,
+use rustbase_core::{AppId, CoreError, RealmId};
+use rustbase_db::oauth_providers::{
+    self, OAuthProvider, OAuthProviderConfig, OAuthProviderSummary,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::auth::AdminAuth;
+use crate::auth::{AdminAuth, require_app_exists};
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -67,26 +67,26 @@ impl From<OAuthProviderSummary> for ProviderResponse {
     }
 }
 
-/// `GET /api/realms/:realm/auth/oauth/providers`.
+/// `GET /api/realms/:realm/apps/:app/auth/oauth/providers`.
 pub async fn list(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path(realm): Path<String>,
+    Path((realm, app)): Path<(String, String)>,
 ) -> Result<Json<Vec<ProviderResponse>>, ApiError> {
-    auth.require_realm_access(&realm)?;
-    let pool = realm_pool(&state, &realm).await?;
+    auth.require_app_access(&realm, &app)?;
+    let pool = app_pool(&state, &realm, &app).await?;
     let rows = oauth_providers::list_providers(&pool).await?;
     Ok(Json(rows.into_iter().map(ProviderResponse::from).collect()))
 }
 
-/// `GET /api/realms/:realm/auth/oauth/providers/:provider`.
+/// `GET /api/realms/:realm/apps/:app/auth/oauth/providers/:provider`.
 pub async fn get(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((realm, provider)): Path<(String, String)>,
+    Path((realm, app, provider)): Path<(String, String, String)>,
 ) -> Result<Json<ProviderResponse>, ApiError> {
-    auth.require_realm_access(&realm)?;
-    let pool = realm_pool(&state, &realm).await?;
+    auth.require_app_access(&realm, &app)?;
+    let pool = app_pool(&state, &realm, &app).await?;
     let row = oauth_providers::find_provider(&pool, &provider)
         .await?
         .ok_or(ApiError::Core(CoreError::NotFound {
@@ -100,15 +100,15 @@ pub async fn get(
     }))
 }
 
-/// `PUT /api/realms/:realm/auth/oauth/providers/:provider`.
+/// `PUT /api/realms/:realm/apps/:app/auth/oauth/providers/:provider`.
 pub async fn put(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((realm, provider)): Path<(String, String)>,
+    Path((realm, app, provider)): Path<(String, String, String)>,
     Json(body): Json<PutProviderBody>,
 ) -> Result<Json<ProviderResponse>, ApiError> {
-    auth.require_realm_access(&realm)?;
-    let pool = realm_pool(&state, &realm).await?;
+    auth.require_app_access(&realm, &app)?;
+    let pool = app_pool(&state, &realm, &app).await?;
 
     let secret_enc = match body.client_secret.as_deref().filter(|s| !s.is_empty()) {
         Some(plain) => {
@@ -117,7 +117,6 @@ pub async fn put(
             })?
         }
         None => {
-            // Edit-without-secret: reuse the existing ciphertext.
             let existing = oauth_providers::find_provider(&pool, &provider)
                 .await?
                 .ok_or(ApiError::Core(CoreError::Validation(
@@ -138,7 +137,7 @@ pub async fn put(
     )
     .await?;
 
-    tracing::info!(realm = %realm, provider = %provider, "OAuth provider upserted");
+    tracing::info!(realm = %realm, app = %app, provider = %provider, "OAuth provider upserted");
     Ok(Json(ProviderResponse {
         provider,
         client_id: body.client_id,
@@ -146,14 +145,14 @@ pub async fn put(
     }))
 }
 
-/// `DELETE /api/realms/:realm/auth/oauth/providers/:provider`.
+/// `DELETE /api/realms/:realm/apps/:app/auth/oauth/providers/:provider`.
 pub async fn delete(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((realm, provider)): Path<(String, String)>,
+    Path((realm, app, provider)): Path<(String, String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    auth.require_realm_access(&realm)?;
-    let pool = realm_pool(&state, &realm).await?;
+    auth.require_app_access(&realm, &app)?;
+    let pool = app_pool(&state, &realm, &app).await?;
     let n = oauth_providers::delete_provider(&pool, &provider).await?;
     if n == 0 {
         return Err(ApiError::Core(CoreError::NotFound {
@@ -161,16 +160,17 @@ pub async fn delete(
             id: provider,
         }));
     }
-    tracing::info!(realm = %realm, provider = %provider, "OAuth provider deleted");
+    tracing::info!(realm = %realm, app = %app, provider = %provider, "OAuth provider deleted");
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn realm_pool(state: &AppState, realm: &str) -> Result<sqlx::SqlitePool, ApiError> {
-    find_realm(state.system.pool(), realm)
-        .await?
-        .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.to_string())))?;
+async fn app_pool(state: &AppState, realm: &str, app: &str) -> Result<sqlx::SqlitePool, ApiError> {
+    require_app_exists(state, realm, app).await?;
     Ok(state
-        .realms
-        .pool_for(&RealmId::from(realm.to_string()))
+        .apps
+        .pool_for(
+            &RealmId::from(realm.to_string()),
+            &AppId::from(app.to_string()),
+        )
         .await?)
 }

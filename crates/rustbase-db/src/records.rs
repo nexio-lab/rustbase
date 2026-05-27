@@ -341,7 +341,7 @@ mod tests {
             .await
             .unwrap();
         let schema = Schema {
-            id: CollectionId::from("users"),
+            id: CollectionId::from("people"),
             kind: CollectionKind::Base,
             fields: vec![
                 Field {

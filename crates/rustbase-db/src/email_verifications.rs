@@ -111,13 +111,13 @@ pub async fn consume(pool: &SqlitePool, token: &str) -> Result<ConsumeOutcome> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::migrations::{REALM_MIGRATIONS, apply_migrations};
+    use crate::migrations::{APP_MIGRATIONS, apply_migrations};
     use crate::pool::open_memory_pool;
     use crate::users::insert_user;
 
     async fn setup() -> (SqlitePool, String) {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(pool.clone(), REALM_MIGRATIONS)
+        apply_migrations(pool.clone(), APP_MIGRATIONS)
             .await
             .unwrap();
         let user = insert_user(&pool, "ada@x.com", "hash").await.unwrap();

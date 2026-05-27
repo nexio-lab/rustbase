@@ -29,10 +29,10 @@ Returns `{ "initialized": bool }`. Always 200, even when the server is uninitial
 POST /_/setup
 Content-Type: application/json
 
-{ "email": "ada@example.com", "password": "hunter22", "name": "Ada" }
+{ "password": "hunter22" }
 ```
 
-Creates the first master admin. Returns 201 on success, 409 if a master admin already exists.
+RustBaas auto-seeds a master admin row at first boot with `username = "admin"` and a NULL password. The setup wizard sets that password. Returns 201 on success, 409 if the password has already been set.
 
 While the server is uninitialized, every other route returns **503 uninitialized** — that's the setup gate.
 
@@ -42,7 +42,7 @@ While the server is uninitialized, every other route returns **503 uninitialized
 
 ```http
 POST /_/auth/admin/login
-{ "email": "ada@example.com", "password": "hunter22" }
+{ "username": "admin", "password": "hunter22" }
 
 POST /_/auth/refresh
 { "refresh_token": "rfsh_..." }
@@ -107,28 +107,28 @@ Body shape mirrors realms. Creating an app initializes its `data.db` and picks u
 
 ## End-user auth
 
-Self-service flows, **no admin token** required:
+Self-service flows, **no admin token** required. End-users live per-app, so every URL carries an `/apps/:app/` segment:
 
 ```http
-POST /api/realms/:realm/auth/users/register
+POST /api/realms/:realm/apps/:app/auth/users/register
 { "email": "u@acme.com", "password": "userpass1" }
 
-POST /api/realms/:realm/auth/users/login
-POST /api/realms/:realm/auth/users/refresh
+POST /api/realms/:realm/apps/:app/auth/users/login
+POST /api/realms/:realm/apps/:app/auth/users/refresh
 
-POST /api/realms/:realm/auth/verify-email/request    [user token]
-POST /api/realms/:realm/auth/verify-email/confirm    { "token": "..." }
+POST /api/realms/:realm/apps/:app/auth/verify-email/request    [user token]
+POST /api/realms/:realm/apps/:app/auth/verify-email/confirm    { "token": "..." }
 
-POST /api/realms/:realm/auth/password-reset/request  { "email": "..." }
-POST /api/realms/:realm/auth/password-reset/confirm  { "token": "...", "new_password": "..." }
+POST /api/realms/:realm/apps/:app/auth/password-reset/request  { "email": "..." }
+POST /api/realms/:realm/apps/:app/auth/password-reset/confirm  { "token": "...", "new_password": "..." }
 
-POST /api/realms/:realm/auth/otp/request             { "email": "..." }
-POST /api/realms/:realm/auth/otp/login               { "email": "...", "code": "123456" }
+POST /api/realms/:realm/apps/:app/auth/otp/request             { "email": "..." }
+POST /api/realms/:realm/apps/:app/auth/otp/login               { "email": "...", "code": "123456" }
 
-POST /api/realms/:realm/auth/totp/enroll             [user token]   → returns secret + QR url
-POST /api/realms/:realm/auth/totp/confirm            [user token]   { "code": "123456" }
-POST /api/realms/:realm/auth/totp/disable            [user token]   { "code": "123456" }
-POST /api/realms/:realm/auth/users/login/totp        { "challenge_id": "...", "code": "123456" }
+POST /api/realms/:realm/apps/:app/auth/totp/enroll             [user token]   → returns secret + QR url
+POST /api/realms/:realm/apps/:app/auth/totp/confirm            [user token]   { "code": "123456" }
+POST /api/realms/:realm/apps/:app/auth/totp/disable            [user token]   { "code": "123456" }
+POST /api/realms/:realm/apps/:app/auth/users/login/totp        { "challenge_id": "...", "code": "123456" }
 ```
 
 See the [authentication guide](/guide/authentication) for what each flow does.
@@ -140,18 +140,18 @@ See the [authentication guide](/guide/authentication) for what each flow does.
 End-user-facing:
 
 ```http
-GET  /api/realms/:realm/auth/oauth/:provider/authorize?redirect_uri=...
-POST /api/realms/:realm/auth/oauth/:provider/callback
+GET  /api/realms/:realm/apps/:app/auth/oauth/:provider/authorize?redirect_uri=...
+POST /api/realms/:realm/apps/:app/auth/oauth/:provider/callback
 { "code": "...", "state": "...", "redirect_uri": "..." }
 ```
 
-Admin-facing — manage which providers are wired up:
+Admin-facing — manage which providers are wired up for this app:
 
 ```http
-GET    /api/realms/:realm/auth/oauth/providers              [realm admin]
-GET    /api/realms/:realm/auth/oauth/providers/:provider
-PUT    /api/realms/:realm/auth/oauth/providers/:provider
-DELETE /api/realms/:realm/auth/oauth/providers/:provider
+GET    /api/realms/:realm/apps/:app/auth/oauth/providers              [app admin]
+GET    /api/realms/:realm/apps/:app/auth/oauth/providers/:provider
+PUT    /api/realms/:realm/apps/:app/auth/oauth/providers/:provider
+DELETE /api/realms/:realm/apps/:app/auth/oauth/providers/:provider
 ```
 
 `PUT` body:
@@ -176,11 +176,11 @@ DELETE /api/realms/:realm/auth/oauth/providers/:provider
 ## Admin user management
 
 ```http
-GET    /api/realms/:realm/users?page=&per_page=&q=          [realm admin]
-GET    /api/realms/:realm/users/:id
-PATCH  /api/realms/:realm/users/:id/verify     { "verified": true }
-DELETE /api/realms/:realm/users/:id/totp                    # force unenroll
-DELETE /api/realms/:realm/users/:id
+GET    /api/realms/:realm/apps/:app/users?page=&per_page=&q=          [app admin]
+GET    /api/realms/:realm/apps/:app/users/:id
+PATCH  /api/realms/:realm/apps/:app/users/:id/verify     { "verified": true }
+DELETE /api/realms/:realm/apps/:app/users/:id/totp                    # force unenroll
+DELETE /api/realms/:realm/apps/:app/users/:id
 ```
 
 `q` is a substring match on email.
