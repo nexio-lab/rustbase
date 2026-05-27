@@ -23,6 +23,7 @@ pub mod records;
 pub mod router;
 pub mod setup;
 pub mod state;
+pub mod users;
 
 pub use auth::AdminAuth;
 pub use error::ApiError;

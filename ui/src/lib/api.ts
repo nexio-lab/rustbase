@@ -166,3 +166,38 @@ export type RecordListResponse = {
 	total_items: number;
 	total_pages: number;
 };
+
+// ---- admin user management ----
+
+export type AdminUser = {
+	id: string;
+	email: string;
+	verified: boolean;
+	has_password: boolean;
+	last_login: string | null;
+	created_at: string;
+};
+
+export type AdminUserListResponse = {
+	items: AdminUser[];
+	page: number;
+	per_page: number;
+	total_items: number;
+	total_pages: number;
+};
+
+export type AdminTotpStatus = {
+	enabled: boolean;
+	enrolled_at: string;
+	confirmed_at: string | null;
+};
+
+export type AdminOAuthLink = {
+	provider: string;
+	provider_user_id: string;
+};
+
+export type AdminUserDetail = AdminUser & {
+	totp: AdminTotpStatus | null;
+	oauth_links: AdminOAuthLink[];
+};
