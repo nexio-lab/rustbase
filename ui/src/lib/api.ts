@@ -201,3 +201,35 @@ export type AdminUserDetail = AdminUser & {
 	totp: AdminTotpStatus | null;
 	oauth_links: AdminOAuthLink[];
 };
+
+// ---- OAuth provider admin ----
+
+/**
+ * Provider config returned by GET. The secret never appears here —
+ * it's only ever inbound on PUT.
+ */
+export type OAuthProviderConfig = {
+	auth_url: string;
+	token_url: string;
+	userinfo_url: string;
+	scopes: string[];
+	userinfo_id_field: string;
+	userinfo_email_field: string;
+};
+
+export type OAuthProvider = {
+	provider: string;
+	client_id: string;
+	config: OAuthProviderConfig;
+};
+
+/**
+ * PUT body shape. `client_secret` is optional on edit — when absent /
+ * empty the server reuses the existing ciphertext. Create-without-
+ * secret returns 400.
+ */
+export type OAuthProviderPut = {
+	client_id: string;
+	client_secret?: string;
+	config: OAuthProviderConfig;
+};

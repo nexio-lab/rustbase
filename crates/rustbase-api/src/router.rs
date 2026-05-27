@@ -4068,6 +4068,89 @@ mod tests {
         assert_eq!(j["user"]["email"], "via-admin@acme.test");
     }
 
+    #[tokio::test]
+    async fn oauth_admin_put_without_secret_preserves_existing_ciphertext() {
+        // Create with a real secret, then PUT again with only client_id
+        // and config — the stored ciphertext should still decrypt to
+        // the original secret. This is what the edit form relies on.
+        let (state, _dir, master_id, _) = state_with_realm_and_admin().await;
+        let master_tok = master_token(&state, &master_id);
+        let app = build_router(state.clone());
+        app.oneshot(req_with_auth(
+            "PUT",
+            "/api/realms/acme/auth/oauth/providers/google",
+            Some(&master_tok),
+            Some(&provider_body()),
+        ))
+        .await
+        .unwrap();
+
+        // Edit without sending client_secret.
+        let mut body = provider_body();
+        body.as_object_mut().unwrap().remove("client_secret");
+        body["client_id"] = serde_json::Value::String("rotated-id".into());
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "PUT",
+                "/api/realms/acme/auth/oauth/providers/google",
+                Some(&master_tok),
+                Some(&body),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Pull the raw ciphertext and decrypt with the server's KEK —
+        // it should still match the ORIGINAL secret.
+        let pool = state
+            .realms
+            .pool_for(&rustbase_core::RealmId::from("acme".to_string()))
+            .await
+            .unwrap();
+        let (ct,): (Vec<u8>,) =
+            sqlx::query_as("SELECT client_secret_enc FROM oauth_providers WHERE provider = ?")
+                .bind("google")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let pt = rustbase_auth::decrypt(&ct, state.oauth_kek.as_ref()).unwrap();
+        assert_eq!(pt, b"shh-very-secret");
+        // And the new client_id stuck.
+        let app = build_router(state);
+        let detail = json_body(
+            app.oneshot(req_with_auth(
+                "GET",
+                "/api/realms/acme/auth/oauth/providers/google",
+                Some(&master_tok),
+                None,
+            ))
+            .await
+            .unwrap(),
+        )
+        .await;
+        assert_eq!(detail["client_id"], "rotated-id");
+    }
+
+    #[tokio::test]
+    async fn oauth_admin_put_without_secret_on_create_returns_400() {
+        let (state, _dir, master_id, _) = state_with_realm_and_admin().await;
+        let master_tok = master_token(&state, &master_id);
+        let mut body = provider_body();
+        body.as_object_mut().unwrap().remove("client_secret");
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "PUT",
+                "/api/realms/acme/auth/oauth/providers/google",
+                Some(&master_tok),
+                Some(&body),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
     // ------------- admin user management -------------
 
     /// Bootstrap: realm with two pre-registered end users + a
