@@ -149,13 +149,36 @@ For security issues, **do not file a public issue** — see [SECURITY.md](SECURI
 
 ## Release process (maintainers)
 
-1. Bump `workspace.package.version` in `Cargo.toml`.
-2. Move `## [Unreleased]` entries into a dated `## [vX.Y.Z] — YYYY-MM-DD` section.
-3. `git commit -m "release: vX.Y.Z"` on `main`.
-4. `git tag -s vX.Y.Z -m "vX.Y.Z"` (signed tag) and push.
-5. The `release` workflow:
-   - cross-compiles `linux-x86_64-musl`, `linux-x86_64-gnu`, `macos-arm64` binaries,
-   - builds + pushes the multi-arch Docker image to `ghcr.io/pjonaszik/rustbase`,
-   - creates the GitHub Release with the binaries + sha256 sums attached.
+One command does the local cut:
 
-Patch releases follow the same flow; only the bump + changelog move differ.
+```sh
+make release V=0.1.2
+```
+
+That target runs `scripts/release.sh`, which:
+
+1. runs `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test` (the
+   same gate CI enforces) — aborts if anything fails;
+2. bumps `workspace.package.version` in `Cargo.toml`;
+3. rotates `## [Unreleased]` in `CHANGELOG.md` into a dated
+   `## [vX.Y.Z] — YYYY-MM-DD` section, and prepends a fresh empty
+   `## [Unreleased]`;
+4. refreshes `Cargo.lock` via `cargo check`;
+5. commits as `release: vX.Y.Z`;
+6. creates a **signed** tag `vX.Y.Z` (uses the SSH signing key configured
+   on the repo).
+
+Review the commit, then push:
+
+```sh
+make release-push V=0.1.2
+```
+
+The push triggers `.github/workflows/release.yml`, which:
+
+- cross-compiles `linux-x86_64-musl`, `linux-x86_64-gnu`, `macos-arm64` binaries,
+- builds + pushes the multi-arch Docker image to `ghcr.io/pjonaszik/rustbase`,
+- creates the GitHub Release with the binaries + sha256 sums attached.
+
+If you change your mind before pushing, the script tells you exactly how
+to revert: `git tag -d vX.Y.Z && git reset --hard HEAD~1`.
