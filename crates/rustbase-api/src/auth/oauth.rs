@@ -181,14 +181,13 @@ pub async fn callback(
     });
     let hook_req = rustbase_runtime::HookRequest::system(&realm, &app, "_user");
 
-    if just_signed_up {
-        if let Err(e) = app_state
+    if just_signed_up
+        && let Err(e) = app_state
             .hooks
             .dispatch_user_after_register(&realm, &app, &hook_req, &public)
             .await
-        {
-            tracing::warn!(error = %e, %realm, %app, %provider, "user_after_register hook errored");
-        }
+    {
+        tracing::warn!(error = %e, %realm, %app, %provider, "user_after_register hook errored");
     }
 
     app_state

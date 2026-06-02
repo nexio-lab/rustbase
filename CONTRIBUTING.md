@@ -21,7 +21,7 @@ dual licence (**MIT OR Apache-2.0**).
 
 You need:
 
-- **Rust ≥ 1.85** (stable). Install via [`rustup`](https://rustup.rs/).
+- **Rust ≥ 1.88** (stable). Install via [`rustup`](https://rustup.rs/).
 - **Bun** for the dashboard / docs (`curl -fsSL https://bun.sh/install | bash`).
 - **Docker** if you want to exercise the optional MailHog integration test
   (`infra/docker-compose.yml`).

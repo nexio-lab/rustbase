@@ -30,10 +30,10 @@ const DEFAULT_MAX_CONNECTIONS: u32 = 8;
 /// Open a new `SqlitePool` against `path`, creating it (and its parent
 /// directory) if missing, and applying the workspace-standard PRAGMAs.
 pub async fn open_pool(path: &Path) -> Result<SqlitePool> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        tokio::fs::create_dir_all(parent).await?;
     }
     let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))
         .map_err(DbError::Sqlx)?

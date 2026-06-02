@@ -188,12 +188,12 @@ pub async fn patch_collection(
 
     // Fields kept on both sides — reject type changes.
     for (name, new_field) in &new_by_name {
-        if let Some(old_field) = old_by_name.get(name) {
-            if !field_types_compatible(&old_field.ty, &new_field.ty) {
-                return Err(DbError::InvalidIdentifier(format!(
-                    "changing the type of field '{name}' is not supported"
-                )));
-            }
+        if let Some(old_field) = old_by_name.get(name)
+            && !field_types_compatible(&old_field.ty, &new_field.ty)
+        {
+            return Err(DbError::InvalidIdentifier(format!(
+                "changing the type of field '{name}' is not supported"
+            )));
         }
     }
 

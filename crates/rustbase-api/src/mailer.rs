@@ -269,10 +269,10 @@ impl Mailer for QuotedMailer {
             Err(e) => {
                 // Refund the reserved slot on transport failure so
                 // operators don't lose mail budget to an SMTP outage.
-                if let Some(mut entry) = self.counts.get_mut(&today) {
-                    if *entry > 0 {
-                        *entry -= 1;
-                    }
+                if let Some(mut entry) = self.counts.get_mut(&today)
+                    && *entry > 0
+                {
+                    *entry -= 1;
                 }
                 Err(e)
             }

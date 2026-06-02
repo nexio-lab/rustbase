@@ -15,6 +15,15 @@ updates:
     schedule:
       interval: weekly
     labels: [dependencies, ci]
+    groups:
+      # upload-artifact + download-artifact MUST be bumped together —
+      # a major-version skew between them produces a digest-mismatch
+      # at download time. Group them so Dependabot can't ship one
+      # without the other.
+      artifact-actions:
+        patterns:
+          - "actions/upload-artifact"
+          - "actions/download-artifact"
 
   - package-ecosystem: npm
     directory: "/ui"

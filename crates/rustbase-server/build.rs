@@ -89,10 +89,10 @@ fn fresher_than_inputs(build: &Path, src: &Path) -> bool {
     };
     let mut newest = std::time::SystemTime::UNIX_EPOCH;
     for entry in walkdir(src) {
-        if let Ok(m) = entry.metadata().and_then(|m| m.modified()) {
-            if m > newest {
-                newest = m;
-            }
+        if let Ok(m) = entry.metadata().and_then(|m| m.modified())
+            && m > newest
+        {
+            newest = m;
         }
     }
     build_mtime >= newest

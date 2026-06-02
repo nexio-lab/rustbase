@@ -22,7 +22,7 @@ A multi-tenant Backend-as-a-Service in Rust. Drop one executable on a server, ru
 [![Licence](https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-blue?style=for-the-badge)](#licence)
 
 <!-- platform + community row -->
-[![Rust](https://img.shields.io/badge/Rust-1.85%2B-dea584?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/Rust-1.88%2B-dea584?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![axum](https://img.shields.io/badge/axum-0.8-FFA500?style=for-the-badge&logo=tokio&logoColor=white)](https://github.com/tokio-rs/axum)
 [![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](https://www.sqlite.org/wal.html)
 [![Discussions](https://img.shields.io/badge/Discussions-open-2188ff?style=for-the-badge&logo=github)](https://github.com/pjonaszik/rustbase/discussions)
@@ -105,7 +105,7 @@ The full walkthrough lives at
 
 You need:
 
-- Rust ≥ 1.85 (stable). Install via [`rustup`](https://rustup.rs/).
+- Rust ≥ 1.88 (stable). Install via [`rustup`](https://rustup.rs/).
 - [Bun](https://bun.sh/) for the embedded dashboard and the docs site.
 
 ```sh

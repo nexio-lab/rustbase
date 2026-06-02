@@ -50,11 +50,11 @@ fn resolve(path: &str) -> Option<(Vec<u8>, String)> {
     if let Some(root) = dev_root() {
         for c in candidates {
             let p = root.join(c);
-            if p.is_file() {
-                if let Ok(bytes) = std::fs::read(&p) {
-                    let mime = mime_for(StdPath::new(c));
-                    return Some((bytes, mime));
-                }
+            if p.is_file()
+                && let Ok(bytes) = std::fs::read(&p)
+            {
+                let mime = mime_for(StdPath::new(c));
+                return Some((bytes, mime));
             }
         }
     }
