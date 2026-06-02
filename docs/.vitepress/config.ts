@@ -13,7 +13,15 @@ export default defineConfig({
 	lastUpdated: true,
 	// localhost links in examples shouldn't fail the build.
 	ignoreDeadLinks: 'localhostLinks',
-	head: [['link', { rel: 'icon', href: `${base}favicon.svg` }]],
+	head: [
+		['link', { rel: 'icon', type: 'image/svg+xml', href: `${base}favicon.svg` }],
+		['link', { rel: 'icon', type: 'image/png', sizes: '32x32', href: `${base}favicon-32.png` }],
+		['link', { rel: 'icon', type: 'image/png', sizes: '192x192', href: `${base}favicon-192.png` }],
+		['link', { rel: 'apple-touch-icon', href: `${base}favicon-192.png` }],
+		['meta', { property: 'og:image', content: `${base}social-preview.png` }],
+		['meta', { name: 'twitter:image', content: `${base}social-preview.png` }],
+		['meta', { name: 'twitter:card', content: 'summary_large_image' }]
+	],
 
 	themeConfig: {
 		logo: '/logo.svg',

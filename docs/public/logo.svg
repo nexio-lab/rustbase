@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="RustBaas logo">
+  <title>RustBaas</title>
+  <!--
+    Mark concept: three stacked rounded blocks representing
+    System → Realm → App. Brand colour follows the dashboard
+    orange (Tailwind orange-500). One muted tier to suggest
+    hierarchy depth.
+  -->
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fb923c"/>
+      <stop offset="1" stop-color="#f97316"/>
+    </linearGradient>
+  </defs>
+
+  <!-- system tier -->
+  <rect x="64"  y="80"  width="384" height="96" rx="24" fill="url(#g)"/>
+  <!-- realm tier -->
+  <rect x="112" y="208" width="288" height="96" rx="24" fill="#f97316" opacity="0.78"/>
+  <!-- app tier -->
+  <rect x="160" y="336" width="192" height="96" rx="24" fill="#c2410c"/>
+</svg>

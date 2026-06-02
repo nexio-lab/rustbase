@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="RustBaas">
+  <title>RustBaas</title>
+  <rect x="4"  y="5"  width="24" height="6" rx="2" fill="#fb923c"/>
+  <rect x="7"  y="13" width="18" height="6" rx="2" fill="#f97316"/>
+  <rect x="10" y="21" width="12" height="6" rx="2" fill="#c2410c"/>
+</svg>

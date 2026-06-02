@@ -1,10 +1,19 @@
 <div align="center">
 
+<img src="docs/public/logo-512.png" alt="RustBaas" width="120" />
+
 # RustBaas
 
 **One binary. One data folder. Your backend.**
 
 A multi-tenant Backend-as-a-Service in Rust. Drop one executable on a server, run the setup wizard, and you have realms, apps, collections, auth, realtime, file storage, a dashboard, and a REST API.
+
+<img src="docs/public/screenshot-docs.png" alt="RustBaas documentation landing page" width="780" />
+</div>
+
+<div align="center">
+
+
 
 <!-- status row -->
 [![CI](https://img.shields.io/github/actions/workflow/status/pjonaszik/rustbase/ci.yml?branch=main&label=CI&style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/pjonaszik/rustbase/actions/workflows/ci.yml)
@@ -60,6 +69,15 @@ for.
 - **Optional Litestream replication** to any S3 endpoint.
 
 ## Quick start
+
+### Docker (fastest)
+
+```sh
+docker run --rm -p 8080:8080 -v $(pwd)/data:/home/rustbase/data \
+  ghcr.io/pjonaszik/rustbase:latest
+```
+
+### Native binary
 
 Download the binary for your platform from the
 [latest release](https://github.com/pjonaszik/rustbase/releases/latest), or

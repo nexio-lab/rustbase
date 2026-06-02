@@ -7,7 +7,30 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-(nothing yet)
+### Added
+- Multi-arch Docker image published to `ghcr.io/pjonaszik/rustbase` on
+  every release tag (linux/amd64 + linux/arm64).
+- Root-level `Dockerfile` for reproducible builds + local `docker build`.
+- `ARCHITECTURE.md` summarising the crate map, hierarchy, and bootstrap
+  for new contributors.
+- `ROADMAP.md` with the public sketch of v0.2 → v1.0.
+- Logo (`docs/public/logo.svg`) and favicons (32px / 192px / SVG) in
+  RustBaas orange.
+- Social-preview image (`docs/public/social-preview.png`, 1280×640)
+  wired into the docs `og:image` / Twitter card meta tags.
+- README header now embeds the docs landing screenshot for a faster
+  visual read.
+
+### Changed
+- README badge row reorganised; live screenshot replaces the previous
+  text-only intro.
+
+### Known issues (to be addressed in v0.2)
+- Dashboard SPA does not consistently honour `paths.base = "/_"`: the
+  layout route guard redirects to bare `/login` instead of `/_/login`,
+  producing a 404 on hard refresh / direct deep-links. Workaround:
+  always enter via the `/_/` root and let client-side routing take over.
+  Tracked at <https://github.com/pjonaszik/rustbase/issues>.
 
 ## [0.1.0] — 2026-05-27
 
