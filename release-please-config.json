@@ -1,0 +1,31 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "rust",
+  "packages": {
+    ".": {
+      "package-name": "rustbase",
+      "include-component-in-tag": false,
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": []
+    }
+  },
+  "include-v-in-tag": true,
+  "tag-separator": "",
+  "pull-request-title-pattern": "release: ${version}",
+  "pull-request-header": "Auto-generated release PR. Merging this PR cuts a new tag (`v${version}`); pushing that tag triggers `.github/workflows/release.yml`, which builds the cross-platform binaries + GHCR image and publishes the GitHub Release.",
+  "draft": false,
+  "prerelease": false,
+  "separate-pull-requests": false,
+  "changelog-sections": [
+    { "type": "feat",     "section": "Added" },
+    { "type": "fix",      "section": "Fixed" },
+    { "type": "perf",     "section": "Performance" },
+    { "type": "refactor", "section": "Changed" },
+    { "type": "docs",     "section": "Documentation" },
+    { "type": "build",    "section": "Build" },
+    { "type": "ci",       "section": "CI" },
+    { "type": "chore",    "section": "Chore", "hidden": true },
+    { "type": "test",     "section": "Tests", "hidden": true },
+    { "type": "style",    "section": "Style", "hidden": true }
+  ]
+}

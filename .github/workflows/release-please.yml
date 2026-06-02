@@ -1,0 +1,23 @@
+name: release-please
+
+# release-please watches `main` and proposes a "release: x.y.z" pull request
+# whenever there are conventional-commit-formatted changes since the last
+# tag. Merging that PR pushes a signed tag → triggers `.github/workflows/release.yml`,
+# which builds binaries + Docker image + GitHub Release.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
