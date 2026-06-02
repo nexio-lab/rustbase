@@ -2499,7 +2499,7 @@ dependencies = [
 
 [[package]]
 name = "rustbase-api"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -2533,7 +2533,7 @@ dependencies = [
 
 [[package]]
 name = "rustbase-auth"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -2553,7 +2553,7 @@ dependencies = [
 
 [[package]]
 name = "rustbase-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2566,7 +2566,7 @@ dependencies = [
 
 [[package]]
 name = "rustbase-db"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2586,7 +2586,7 @@ dependencies = [
 
 [[package]]
 name = "rustbase-realtime"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "dashmap",
@@ -2599,7 +2599,7 @@ dependencies = [
 
 [[package]]
 name = "rustbase-runtime"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2625,7 +2625,7 @@ dependencies = [
 
 [[package]]
 name = "rustbase-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -2648,7 +2648,7 @@ dependencies = [
 
 [[package]]
 name = "rustbase-storage"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "object_store",

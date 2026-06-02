@@ -7,6 +7,10 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+(nothing yet)
+
+## [0.1.1] — 2026-06-03
+
 ### Added
 - Multi-arch Docker image published to `ghcr.io/pjonaszik/rustbase` on
   every release tag (linux/amd64 + linux/arm64).
@@ -18,14 +22,16 @@ versioning follows [Semantic Versioning](https://semver.org/).
   RustBaas orange.
 - Social-preview image (`docs/public/social-preview.png`, 1280×640)
   wired into the docs `og:image` / Twitter card meta tags.
-- README header now embeds the docs landing screenshot for a faster
-  visual read.
+- README header now embeds a real dashboard sign-in screenshot.
+- New GitHub label taxonomy: `type:*`, `scope:*`, `status:*`, `needs:*`.
+- Welcome post pinned in GitHub Discussions (Announcements category).
+- Dashboard smoke job in `ci.yml` that asserts asset prefixes, runtime
+  `paths.base`, GET fallback on `/_/setup` / admin login / refresh, deep
+  links, and that POST `/healthz` stays an honest 405.
 
 ### Changed
 - README badge row reorganised; live screenshot replaces the previous
   text-only intro.
-- README header screenshot now showcases the real sign-in page of the
-  embedded dashboard.
 
 ### Fixed (#17 — dashboard SPA mount)
 - `rustbase-server/build.rs` now sets `VITE_BASE=/_` when invoking
@@ -46,6 +52,17 @@ versioning follows [Semantic Versioning](https://semver.org/).
   SvelteKit's configured `base` to absolute-path hrefs. Every
   `+page.svelte` and `+layout.svelte` now navigates through this helper,
   so embedded-mount navigation no longer escapes the `/_/` prefix.
+
+### Build
+- Dependabot bumps: `download-artifact` 4 → 8, `upload-artifact` 4 → 7,
+  `actions/checkout` 4 → 6, `actions/configure-pages` 5 → 6,
+  `actions/deploy-pages` 4 → 5, `actions/upload-pages-artifact` 3 → 5,
+  `softprops/action-gh-release` 2 → 3, `rquickjs` 0.9 → 0.11,
+  `validator` 0.19 → 0.20, `config` 0.14 → 0.15, `prettier-plugin-svelte`
+  3.5 → 4.0, `prettier-plugin-tailwindcss` 0.7 → 0.8.
+
+[Unreleased]: https://github.com/pjonaszik/rustbase/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/pjonaszik/rustbase/compare/v0.1.0...v0.1.1
 
 ## [0.1.0] — 2026-05-27
 
@@ -107,5 +124,4 @@ between minors until v1.0.
 - `rustbase-api` — axum handlers (REST, SSE).
 - `rustbase-server` — the binary.
 
-[Unreleased]: https://github.com/pjonaszik/rustbase/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/pjonaszik/rustbase/releases/tag/v0.1.0
