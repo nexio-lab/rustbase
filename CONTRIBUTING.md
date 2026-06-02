@@ -149,34 +149,13 @@ For security issues, **do not file a public issue** — see [SECURITY.md](SECURI
 
 ## Release process (maintainers)
 
-Releases are driven by [**release-please**](https://github.com/googleapis/release-please).
-Conventional-commit messages on `main` (`feat:`, `fix:`, `perf:`, etc.)
-accumulate; release-please opens an auto-updated **`release: x.y.z`** PR.
-
-When you're ready to ship:
-
-1. Review the open release-please PR. Edit the body / CHANGELOG if you want
-   to add context the commits didn't capture.
-2. Merge the PR. release-please:
-   - bumps `workspace.package.version` in `Cargo.toml`,
-   - moves the `[Unreleased]` content into a new dated section in `CHANGELOG.md`,
-   - pushes the tag `vX.Y.Z`,
-   - publishes a GitHub Release at that tag.
-3. The `release` workflow fires on the `release: published` event:
-   - cross-compiles `linux-x86_64-musl`, `linux-x86_64-gnu`, `macos-arm64` binaries,
-   - builds + pushes the multi-arch Docker image to `ghcr.io/pjonaszik/rustbase`,
-   - attaches the binaries + sha256 sums to the release.
-
-### Cutting a release without release-please
-
-Ad-hoc releases (security fixes, repository surgery) can be cut manually:
-
 1. Bump `workspace.package.version` in `Cargo.toml`.
-2. Move `## [Unreleased]` entries into `## [vX.Y.Z] — YYYY-MM-DD` in CHANGELOG.
+2. Move `## [Unreleased]` entries into a dated `## [vX.Y.Z] — YYYY-MM-DD` section.
 3. `git commit -m "release: vX.Y.Z"` on `main`.
 4. `git tag -s vX.Y.Z -m "vX.Y.Z"` (signed tag) and push.
-5. The `release` workflow fires on the tag push and produces the same artefacts.
+5. The `release` workflow:
+   - cross-compiles `linux-x86_64-musl`, `linux-x86_64-gnu`, `macos-arm64` binaries,
+   - builds + pushes the multi-arch Docker image to `ghcr.io/pjonaszik/rustbase`,
+   - creates the GitHub Release with the binaries + sha256 sums attached.
 
-Manual cuts produce **signed** tags. release-please tags are unsigned —
-that's an acceptable tradeoff for the convenience of automation; the
-commits the tag points at are still verified.
+Patch releases follow the same flow; only the bump + changelog move differ.

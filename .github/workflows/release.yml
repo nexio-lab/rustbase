@@ -1,26 +1,13 @@
 name: release
 
 on:
-  # Manual tag push (signed, ad hoc cuts).
   push:
     tags: ["v*.*.*"]
-  # release-please publishes a GitHub Release after merging the release PR;
-  # the default GITHUB_TOKEN's tag push does NOT trigger workflows, so
-  # we also watch the `published` event on Releases as the canonical entry
-  # point for the binary + Docker pipeline.
-  release:
-    types: [published]
   workflow_dispatch:
 
 permissions:
   contents: write
   packages: write
-
-# Avoid duplicate runs when both the tag push AND the release-published
-# events fire for the same version (e.g. manual tag, then GH UI publish).
-concurrency:
-  group: release-${{ github.ref_name }}
-  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
