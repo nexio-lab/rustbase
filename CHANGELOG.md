@@ -5,6 +5,37 @@ All notable changes to this project are documented here.
 Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.1.1](https://github.com/pjonaszik/rustbase/compare/v0.1.0...v0.1.1) (2026-06-02)
+
+
+### Fixed
+
+* **dashboard:** honour paths.base under the /_/ mount (closes [#17](https://github.com/pjonaszik/rustbase/issues/17)) ([a51b7f5](https://github.com/pjonaszik/rustbase/commit/a51b7f57f0f5313acf18060604755330dcc0d5ac))
+
+
+### Build
+
+* **deps-dev:** bump prettier-plugin-svelte from 3.5.2 to 4.0.1 in /ui ([#7](https://github.com/pjonaszik/rustbase/issues/7)) ([c57569b](https://github.com/pjonaszik/rustbase/commit/c57569b7370da96d976fc74a263f2cfb31f5eece))
+* **deps-dev:** bump prettier-plugin-tailwindcss in /ui ([#6](https://github.com/pjonaszik/rustbase/issues/6)) ([ed27bc8](https://github.com/pjonaszik/rustbase/commit/ed27bc8362072f50f1dfac94e087cabd0a02cd5e))
+* **deps:** bump actions/checkout from 4 to 6 ([#3](https://github.com/pjonaszik/rustbase/issues/3)) ([d31cb55](https://github.com/pjonaszik/rustbase/commit/d31cb55bbe2d9e2be9c1ff7d1afbb12636cbdd32))
+* **deps:** bump actions/configure-pages from 5 to 6 ([#5](https://github.com/pjonaszik/rustbase/issues/5)) ([5959e56](https://github.com/pjonaszik/rustbase/commit/5959e56fa1bef2d3c350f6914952f7a79b899e37))
+* **deps:** bump actions/deploy-pages from 4 to 5 ([#4](https://github.com/pjonaszik/rustbase/issues/4)) ([9746448](https://github.com/pjonaszik/rustbase/commit/974644816fb9370d4de37c0e3ae119d10126d2d3))
+* **deps:** bump actions/download-artifact from 4 to 8 ([#14](https://github.com/pjonaszik/rustbase/issues/14)) ([30f5a3a](https://github.com/pjonaszik/rustbase/commit/30f5a3aa5820d3d04a1647452687315f23534210))
+* **deps:** bump actions/upload-artifact from 4 to 7 ([#15](https://github.com/pjonaszik/rustbase/issues/15)) ([f8ed2b9](https://github.com/pjonaszik/rustbase/commit/f8ed2b9c09983c6ce8baa1e0e00f9c0512a2448e))
+* **deps:** bump actions/upload-pages-artifact from 3 to 5 ([#1](https://github.com/pjonaszik/rustbase/issues/1)) ([4b2e33f](https://github.com/pjonaszik/rustbase/commit/4b2e33fe26fd9e40a9b6c2ec5c26e2434664074c))
+* **deps:** bump config from 0.14.1 to 0.15.23 ([#10](https://github.com/pjonaszik/rustbase/issues/10)) ([0d952c4](https://github.com/pjonaszik/rustbase/commit/0d952c478b2a26c638cc59f7aab5d36c5dd8ca0b))
+* **deps:** bump rquickjs from 0.9.0 to 0.11.0 ([#9](https://github.com/pjonaszik/rustbase/issues/9)) ([192479b](https://github.com/pjonaszik/rustbase/commit/192479b723b37283b6f09260b22ddfda298ad566))
+* **deps:** bump softprops/action-gh-release from 2 to 3 ([#2](https://github.com/pjonaszik/rustbase/issues/2)) ([c82f561](https://github.com/pjonaszik/rustbase/commit/c82f56159474496b2076c78056fbb2fe094e5568))
+* **deps:** bump the patch-updates group with 2 updates ([#8](https://github.com/pjonaszik/rustbase/issues/8)) ([8bec598](https://github.com/pjonaszik/rustbase/commit/8bec59884527c9ab4015ff6d054b2271c607c043))
+* **deps:** bump validator from 0.19.0 to 0.20.0 ([#12](https://github.com/pjonaszik/rustbase/issues/12)) ([c6a1a37](https://github.com/pjonaszik/rustbase/commit/c6a1a37644a51b52fdfc79276581f951926aeaf0))
+
+
+### CI
+
+* **release-please:** add workflow_dispatch trigger ([a053f2c](https://github.com/pjonaszik/rustbase/commit/a053f2cb5c4b20ca3ae44826f784d6c70a93a8d1))
+* **release-please:** switch to simple+extra-files; release-please rust strategy can't parse workspace-inherited versions ([f105e50](https://github.com/pjonaszik/rustbase/commit/f105e502ba0161153d9a716e04eb1823f1098c1c))
+* **release:** wire release-please for automated version bumps + changelog ([9e137f5](https://github.com/pjonaszik/rustbase/commit/9e137f5113f8ba514f897251b9b188119cc28340))
+
 ## [Unreleased]
 
 ### Added
