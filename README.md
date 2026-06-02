@@ -8,7 +8,7 @@
 
 A multi-tenant Backend-as-a-Service in Rust. Drop one executable on a server, run the setup wizard, and you have realms, apps, collections, auth, realtime, file storage, a dashboard, and a REST API.
 
-<img src="docs/public/screenshot-docs.png" alt="RustBaas documentation landing page" width="780" />
+<img src="docs/public/screenshot-dashboard.png" alt="RustBaas dashboard sign-in page" width="780" />
 </div>
 
 <div align="center">

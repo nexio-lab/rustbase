@@ -154,11 +154,30 @@ async fn main() -> Result<()> {
     let dashboard_routes: Router<()> = Router::new()
         .route("/_/", get(dashboard::index))
         .route("/_/{*path}", get(dashboard::asset));
-    let app = build_router(state).merge(dashboard_routes);
+    let app = build_router(state)
+        .merge(dashboard_routes)
+        // `/_/setup`, `/_/auth/admin/login`, `/_/auth/refresh` are
+        // registered as POST-only on the API. Without this fallback,
+        // a browser navigating directly to one of them gets 405
+        // instead of the SPA shell. Hand any 405 under `/_/` to the
+        // dashboard's index so the client-side router takes over.
+        .method_not_allowed_fallback(dashboard_or_405);
     let listener = tokio::net::TcpListener::bind(&cfg.listen).await?;
     tracing::info!(listen = %cfg.listen, "rustbase: ready");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// Per-request 405 fallback. GET requests under `/_/` get the dashboard
+/// SPA shell; every other 405 stays a 405 so the API surface remains
+/// honest about which methods it accepts.
+async fn dashboard_or_405(req: axum::extract::Request) -> axum::response::Response {
+    use axum::http::{Method, StatusCode};
+    use axum::response::IntoResponse;
+    if req.method() == Method::GET && req.uri().path().starts_with("/_/") {
+        return dashboard::index().await;
+    }
+    StatusCode::METHOD_NOT_ALLOWED.into_response()
 }
 
 /// Walk every realm + app that exists in `system.db`, and load JS

@@ -3,6 +3,7 @@
 	import favicon from '$lib/assets/favicon.svg';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import { base } from '$app/paths';
 	import { auth } from '$lib/auth.svelte';
 
 	let { children } = $props();
@@ -16,16 +17,23 @@
 	// Route guard: anything outside the public list requires a session.
 	// Runs on every navigation thanks to runes; redirects don't loop
 	// because the redirect target IS one of the public routes.
+	//
+	// `page.url.pathname` includes the configured base (e.g. `/_/login`
+	// when the dashboard is embedded under `/_/`). Strip it so the
+	// PUBLIC_ROUTES set stays base-agnostic, and prefix `base` back
+	// onto every `goto()` target so the navigation doesn't accidentally
+	// escape the dashboard mount.
 	$effect(() => {
-		const path = page.url.pathname;
+		const raw = page.url.pathname;
+		const path = base && raw.startsWith(base) ? raw.slice(base.length) || '/' : raw;
 		if (!auth.isAuthenticated && !PUBLIC_ROUTES.has(path)) {
-			goto('/login', { replaceState: true });
+			goto(`${base}/login`, { replaceState: true });
 		}
 	});
 
 	async function logout() {
 		auth.clear();
-		await goto('/login', { replaceState: true });
+		await goto(`${base}/login`, { replaceState: true });
 	}
 </script>
 

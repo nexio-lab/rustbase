@@ -130,8 +130,14 @@ fn which(cmd: &str) -> Option<PathBuf> {
 }
 
 fn run(bin: &Path, args: &[&str], cwd: &Path, label: &str) {
+    // The embedded dashboard mounts at `/_/` (see dashboard.rs). SvelteKit's
+    // adapter-static needs `paths.base` set at build time so the generated
+    // HTML references `/_/_app/...` (not `/_app/...`) AND so the runtime
+    // `goto()` / `<a href="...">` calls auto-prefix the base. svelte.config.js
+    // reads this from `VITE_BASE`.
     let status = Command::new(bin)
         .args(args)
+        .env("VITE_BASE", "/_")
         .current_dir(cwd)
         .status()
         .unwrap_or_else(|e| panic!("failed to spawn {label}: {e}"));

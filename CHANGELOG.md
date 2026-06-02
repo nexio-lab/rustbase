@@ -24,13 +24,28 @@ versioning follows [Semantic Versioning](https://semver.org/).
 ### Changed
 - README badge row reorganised; live screenshot replaces the previous
   text-only intro.
+- README header screenshot now showcases the real sign-in page of the
+  embedded dashboard.
 
-### Known issues (to be addressed in v0.2)
-- Dashboard SPA does not consistently honour `paths.base = "/_"`: the
-  layout route guard redirects to bare `/login` instead of `/_/login`,
-  producing a 404 on hard refresh / direct deep-links. Workaround:
-  always enter via the `/_/` root and let client-side routing take over.
-  Tracked at <https://github.com/pjonaszik/rustbase/issues>.
+### Fixed (#17 — dashboard SPA mount)
+- `rustbase-server/build.rs` now sets `VITE_BASE=/_` when invoking
+  `bun run build`, so the SvelteKit static build embeds the correct
+  `paths.base` at both the asset-path level (`/_/_app/...`) and the
+  runtime config level (`__sveltekit_xxx.base = "/_"`).
+- `crates/rustbase-server/src/main.rs` attaches a
+  `method_not_allowed_fallback` to the merged router: `GET` requests
+  under `/_/` that hit a POST-only API route (e.g. `/_/setup`,
+  `/_/auth/admin/login`, `/_/auth/refresh`) fall through to the dashboard
+  SPA shell so direct navigation + hard refresh work. Other 405s stay
+  honest 405s — the rule is path-prefixed.
+- `crates/rustbase-server/src/dashboard.rs::asset` falls back to
+  `index.html` for paths that look like client-side routes (no extension,
+  no `_app/` prefix), so deep links like `/_/realms/acme/apps/web`
+  reload cleanly.
+- `ui/src/lib/nav.ts` introduces a `goto` helper that prefixes
+  SvelteKit's configured `base` to absolute-path hrefs. Every
+  `+page.svelte` and `+layout.svelte` now navigates through this helper,
+  so embedded-mount navigation no longer escapes the `/_/` prefix.
 
 ## [0.1.0] — 2026-05-27
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
+	import { goto } from "$lib/nav";
 	import { api, ApiError, type Realm } from '$lib/api';
 
 	// State the page owns directly: the list of realms + the

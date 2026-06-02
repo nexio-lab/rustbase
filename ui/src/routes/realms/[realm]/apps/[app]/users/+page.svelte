@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
+	import { goto } from "$lib/nav";
 	import { page } from '$app/state';
 	import { api, ApiError, type AdminUser, type AdminUserListResponse } from '$lib/api';
 	import Breadcrumbs from '$lib/Breadcrumbs.svelte';

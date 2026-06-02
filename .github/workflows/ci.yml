@@ -55,8 +55,58 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ci-release
       - name: cargo build --release
         run: cargo build --workspace --release
+
+  dashboard-smoke:
+    name: dashboard smoke
+    runs-on: ubuntu-latest
+    needs: [release-build]
+    # Regression guard for #17: paths.base, 405 fallback, SPA deep links.
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-release
+
+      - name: cargo build --release --bin rustbase
+        run: cargo build --release --bin rustbase
+
+      - name: Boot + smoke
+        run: |
+          mkdir -p /tmp/rb && cd /tmp/rb
+          "${GITHUB_WORKSPACE}/target/release/rustbase" &> /tmp/rb.log &
+          PID=$!
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:8080/healthz > /dev/null && break
+            sleep 0.5
+          done
+
+          asset=$(curl -s http://localhost:8080/_/login | grep -oE '/_/_app/[a-zA-Z0-9._/-]+\.js' | head -1)
+          test -n "$asset" || { echo "::error::SvelteKit assets not under /_/_app/"; exit 1; }
+          curl -fsS "http://localhost:8080$asset" > /dev/null
+
+          curl -s http://localhost:8080/_/login | grep -q 'base: "/_"' \
+            || { echo "::error::SvelteKit runtime base != /_"; exit 1; }
+
+          for path in /_/setup /_/auth/admin/login /_/auth/refresh /_/realms/acme/apps/web; do
+            status=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:8080$path")
+            test "$status" = "200" || { echo "::error::GET $path expected 200, got $status"; exit 1; }
+          done
+
+          # `/healthz` POST must STAY 405 — the dashboard fallback is path-prefixed.
+          status=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8080/healthz)
+          test "$status" = "405" || { echo "::error::POST /healthz expected 405, got $status"; exit 1; }
+
+          kill $PID 2>/dev/null || true
+          echo "dashboard smoke OK"

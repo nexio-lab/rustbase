@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
+	import { goto } from "$lib/nav";
 	import { api, ApiError, type MasterLoginResponse } from '$lib/api';
 	import { auth } from '$lib/auth.svelte';
 
