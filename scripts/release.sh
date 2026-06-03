@@ -47,14 +47,20 @@ echo "▶ bumping Cargo.toml → version = \"$V\""
 sed -i.bak '0,/^version = "[^"]*"$/{s//version = "'"$V"'"/}' Cargo.toml
 rm -f Cargo.toml.bak
 
-# ----- regenerate [Unreleased] from git log ---------------------------
-# Skip with KEEP_CHANGELOG=1 if you've hand-edited the [Unreleased]
-# block and don't want the script to overwrite it.
-if [[ "${KEEP_CHANGELOG:-0}" != "1" ]]; then
+# ----- optionally regenerate [Unreleased] from git log ---------------
+# Default: leave the hand-written `## [Unreleased]` block alone. A
+# crafted changelog that explains *why* each change happened reads much
+# better than the cold `type(scope): subject (sha)` bullets the auto-
+# generator emits.
+#
+# Opt in with REGEN_CHANGELOG=1 if you want a starting draft synthesised
+# from commit messages — useful for paths where you've kept conventional
+# commits clean and don't want to write it by hand.
+if [[ "${REGEN_CHANGELOG:-0}" == "1" ]]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     "$SCRIPT_DIR/changelog.sh"
 else
-    echo "▶ KEEP_CHANGELOG=1 — leaving hand-written [Unreleased] as-is"
+    echo "▶ keeping hand-written [Unreleased] (pass REGEN_CHANGELOG=1 to autogen)"
 fi
 
 # ----- rotate CHANGELOG.md --------------------------------------------

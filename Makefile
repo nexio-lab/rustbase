@@ -64,11 +64,11 @@ install-hooks: ## Wire .githooks/ as core.hooksPath for this clone
 
 # ----- release --------------------------------------------------------
 
-changelog: ## Regenerate [Unreleased] from commits since the last tag
+changelog: ## (Re)draft [Unreleased] from commits since the last tag — useful as a starting point you then polish by hand
 	@./scripts/changelog.sh
 
-release: ## Cut a release locally (bump + CHANGELOG + signed tag). Usage: make release V=X.Y.Z [KEEP_CHANGELOG=1]
-	@V=$(V) KEEP_CHANGELOG=$(KEEP_CHANGELOG) ./scripts/release.sh
+release: ## Cut a release. Usage: make release V=X.Y.Z [REGEN_CHANGELOG=1]
+	@V=$(V) REGEN_CHANGELOG=$(REGEN_CHANGELOG) ./scripts/release.sh
 
 release-push: ## Push the staged release. Usage: make release-push V=X.Y.Z
 	@test -n "$(V)" || { echo "usage: make release-push V=X.Y.Z"; exit 1; }
