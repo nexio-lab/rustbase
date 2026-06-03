@@ -26,18 +26,25 @@ You need:
 - **Docker** if you want to exercise the optional MailHog integration test
   (`infra/docker-compose.yml`).
 
-Clone and wire the git hooks once:
+Clone, then one command bootstraps the rest:
 
 ```sh
 git clone git@github.com:pjonaszik/rustbase.git
 cd rustbase
-./scripts/install-hooks.sh
+make setup-dev
 ```
 
-That sets `core.hooksPath` to `.githooks/`. The `pre-commit` hook runs
-`cargo fmt --check`, `cargo clippy -- -D warnings`, an architectural grep
-suite, and a no-AI-attribution scan on the staged diff. The `pre-push` hook
-runs the full test suite (and `cargo audit` if it's installed).
+`make setup-dev` (a.k.a. `scripts/setup-dev.sh`) checks that the right
+toolchain is present (Rust ≥ 1.88, Bun, Python 3, git; Docker if you
+want the local image target), installs the git hooks, then warms the
+Cargo and Bun caches so the first `make build` doesn't have to download
+the world.
+
+The hooks set `core.hooksPath` to `.githooks/`. The `pre-commit` hook
+runs `cargo fmt --check`, `cargo clippy -- -D warnings`, an architectural
+grep suite, and a no-AI-attribution scan on the staged diff. The
+`pre-push` hook runs the full test suite (and `cargo audit` if it's
+installed).
 
 You can skip the hooks for a single commit / push with `--no-verify`, but CI
 will run the same checks, so it's usually faster to fix locally.

@@ -7,7 +7,7 @@
 .DEFAULT_GOAL := help
 
 .PHONY: help fmt clippy test check audit build docker docker-run \
-        ui-dev docs-dev docs-build install-hooks \
+        ui-dev docs-dev docs-build install-hooks setup-dev \
         changelog release release-push
 
 help: ## Show this help
@@ -61,6 +61,9 @@ docs-build: ## Build the docs site to docs/.vitepress/dist
 
 install-hooks: ## Wire .githooks/ as core.hooksPath for this clone
 	./scripts/install-hooks.sh
+
+setup-dev: ## First-time bootstrap: toolchain check + hooks + warm caches
+	./scripts/setup-dev.sh
 
 # ----- release --------------------------------------------------------
 

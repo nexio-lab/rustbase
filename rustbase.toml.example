@@ -1,4 +1,4 @@
-# RustBase server configuration.
+# RustBaas server configuration.
 # Copy to rustbase.toml in the working directory.
 # Any value can be overridden by an RUSTBASE_* environment variable.
 
