@@ -20,6 +20,11 @@ pub struct OAuthState {
     pub issued_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
     pub consumed_at: Option<DateTime<Utc>>,
+    /// PKCE `code_verifier` (RFC 7636) persisted at `/authorize` and
+    /// replayed to the token endpoint at `/callback`. Optional only
+    /// for legacy rows that predate the 0.2 PKCE pack — new flows
+    /// always populate it.
+    pub code_verifier: Option<String>,
 }
 
 pub async fn issue(
@@ -27,19 +32,22 @@ pub async fn issue(
     state: &str,
     provider: &str,
     redirect_uri: &str,
+    code_verifier: &str,
     ttl: Duration,
 ) -> Result<OAuthState> {
     let issued_at = Utc::now();
     let expires_at = issued_at + ttl;
     sqlx::query(
-        "INSERT INTO _oauth_states (state, provider, redirect_uri, issued_at, expires_at, consumed_at) \
-         VALUES (?, ?, ?, ?, ?, NULL)",
+        "INSERT INTO _oauth_states \
+            (state, provider, redirect_uri, issued_at, expires_at, consumed_at, code_verifier) \
+         VALUES (?, ?, ?, ?, ?, NULL, ?)",
     )
     .bind(state)
     .bind(provider)
     .bind(redirect_uri)
     .bind(issued_at)
     .bind(expires_at)
+    .bind(code_verifier)
     .execute(pool)
     .await?;
     Ok(OAuthState {
@@ -49,14 +57,19 @@ pub async fn issue(
         issued_at,
         expires_at,
         consumed_at: None,
+        code_verifier: Some(code_verifier.into()),
     })
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ConsumeOutcome {
     /// Successfully consumed. Caller proceeds to the token exchange
-    /// using `redirect_uri`.
-    Ok { redirect_uri: String },
+    /// using `redirect_uri` and replays `code_verifier` to the
+    /// provider's `/token` endpoint when present.
+    Ok {
+        redirect_uri: String,
+        code_verifier: Option<String>,
+    },
     /// State unknown — either was never issued, or is from a forged
     /// callback. Reject the request.
     Unknown,
@@ -70,7 +83,7 @@ pub enum ConsumeOutcome {
 
 pub async fn consume(pool: &SqlitePool, state: &str, provider: &str) -> Result<ConsumeOutcome> {
     let row: Option<OAuthState> = sqlx::query_as(
-        "SELECT state, provider, redirect_uri, issued_at, expires_at, consumed_at \
+        "SELECT state, provider, redirect_uri, issued_at, expires_at, consumed_at, code_verifier \
          FROM _oauth_states WHERE state = ?",
     )
     .bind(state)
@@ -102,6 +115,7 @@ pub async fn consume(pool: &SqlitePool, state: &str, provider: &str) -> Result<C
     }
     Ok(ConsumeOutcome::Ok {
         redirect_uri: row.redirect_uri,
+        code_verifier: row.code_verifier,
     })
 }
 
@@ -127,12 +141,19 @@ mod tests {
             "s-1",
             "google",
             "https://app/cb",
+            "verifier-1",
             Duration::minutes(5),
         )
         .await
         .unwrap();
         match consume(&pool, "s-1", "google").await.unwrap() {
-            ConsumeOutcome::Ok { redirect_uri } => assert_eq!(redirect_uri, "https://app/cb"),
+            ConsumeOutcome::Ok {
+                redirect_uri,
+                code_verifier,
+            } => {
+                assert_eq!(redirect_uri, "https://app/cb");
+                assert_eq!(code_verifier.as_deref(), Some("verifier-1"));
+            }
             other => panic!("expected Ok, got {other:?}"),
         }
     }
@@ -145,6 +166,7 @@ mod tests {
             "s-2",
             "google",
             "https://app/cb",
+            "v",
             Duration::minutes(5),
         )
         .await
@@ -164,6 +186,7 @@ mod tests {
             "s-3",
             "google",
             "https://app/cb",
+            "v",
             Duration::minutes(5),
         )
         .await
@@ -187,6 +210,7 @@ mod tests {
             "s-4",
             "google",
             "https://app/cb",
+            "v",
             Duration::seconds(-1),
         )
         .await

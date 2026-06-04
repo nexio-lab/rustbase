@@ -1,25 +1,34 @@
-//! OAuth2 authorization-code sign-in.
+//! OAuth2 authorization-code sign-in with PKCE (RFC 7636).
 //!
-//! Two endpoints, both anonymous:
+//! Two endpoints, both anonymous.
 //!
-//! - `GET  /api/realms/:realm/apps/:app/auth/oauth/:provider/authorize?redirect_uri=...`
-//!   Mints a fresh CSRF state nonce, persists it bound to the
-//!   provider + caller-supplied `redirect_uri`, and returns the
-//!   provider's authorize URL with `client_id`, `redirect_uri`,
-//!   `scope`, `response_type=code`, and `state` query parameters
-//!   baked in. The client redirects the user's browser there.
+//! `GET /api/realms/:realm/apps/:app/auth/oauth/:provider/authorize?redirect_uri=...`
+//! mints a fresh CSRF state nonce and a PKCE `code_verifier`,
+//! persists both bound to the provider plus the caller-supplied
+//! `redirect_uri`, and returns the provider's authorize URL with
+//! `client_id`, `redirect_uri`, `scope`, `response_type=code`,
+//! `state`, `code_challenge` (S256), and `code_challenge_method=S256`
+//! query parameters baked in. The client redirects the user's
+//! browser there.
 //!
-//! - `POST /api/realms/:realm/apps/:app/auth/oauth/:provider/callback`
-//!   Body: `{ code, state }`. The endpoint atomically consumes the
-//!   state nonce (rejecting mismatched provider, replay, or
-//!   expiry), exchanges the code for an access token at the
-//!   provider's `token_url`, fetches the userinfo blob, extracts
-//!   the stable provider-side id + email, then:
-//!     * if a `user_oauth_links` row matches → log that user in,
-//!     * if a user already exists for the userinfo email → link it
-//!       and log in,
-//!     * otherwise create a passwordless user, mark it verified
-//!       (OAuth proved email ownership), link it, and log it in.
+//! `POST /api/realms/:realm/apps/:app/auth/oauth/:provider/callback`
+//! takes `{ code, state }`. The endpoint atomically consumes the
+//! state nonce (rejecting mismatched provider, replay, or expiry),
+//! reads the stored `code_verifier`, exchanges the code plus the
+//! verifier for an access token at the provider's `token_url`,
+//! fetches the userinfo blob, and extracts the stable provider-side
+//! id plus email. It then performs a three-way resolve — match an
+//! existing `user_oauth_links` row, fall back to an existing user
+//! with the same email (link them), or otherwise create a
+//! passwordless user, mark verified (OAuth proved email ownership),
+//! link, and log in.
+//!
+//! PKCE is mandatory — every flow generates a 32-byte verifier and
+//! sends the S256 challenge. Providers that don't enforce it ignore
+//! the field; providers that do (Google, GitHub, Microsoft, every
+//! modern OIDC IdP) reject token exchanges whose verifier doesn't
+//! match the original challenge, blocking authorization-code
+//! interception attacks.
 //!
 //! Provider configuration (auth URL, token URL, userinfo URL, scopes,
 //! id/email JSON pointers) is per-app — each app gets its own
@@ -29,6 +38,8 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Duration;
 use rand_core::{OsRng, RngCore};
 use rustbase_auth::{TokenRole, build_claims};
@@ -41,6 +52,7 @@ use rustbase_db::{
     users::{User, find_user_by_email, insert_passwordless_user, mark_verified, record_last_login},
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
 use crate::auth::login::UserPublic;
@@ -96,16 +108,19 @@ pub async fn authorize(
         }))?;
 
     let nonce = fresh_state_nonce();
+    let code_verifier = fresh_code_verifier();
+    let code_challenge = derive_s256_challenge(&code_verifier);
     oauth_states::issue(
         &pool,
         &nonce,
         &provider,
         &q.redirect_uri,
+        &code_verifier,
         Duration::minutes(STATE_TTL_MINUTES),
     )
     .await?;
 
-    let authorize_url = build_authorize_url(&cfg, &q.redirect_uri, &nonce)?;
+    let authorize_url = build_authorize_url(&cfg, &q.redirect_uri, &nonce, &code_challenge)?;
     Ok(Json(AuthorizeResponse {
         authorize_url,
         state: nonce,
@@ -123,22 +138,26 @@ pub async fn callback(
     let app_id = AppId::from(app.clone());
     let pool = app_state.apps.pool_for(&realm_id, &app_id).await?;
 
-    let redirect_uri = match oauth_states::consume(&pool, &body.state, &provider).await? {
-        ConsumeOutcome::Ok { redirect_uri } => redirect_uri,
-        ConsumeOutcome::Unknown | ConsumeOutcome::ProviderMismatch => {
-            return Err(ApiError::Core(CoreError::Unauthorized));
-        }
-        ConsumeOutcome::AlreadyConsumed => {
-            return Err(ApiError::Core(CoreError::Conflict(
-                "oauth state already used".into(),
-            )));
-        }
-        ConsumeOutcome::Expired => {
-            return Err(ApiError::Core(CoreError::Conflict(
-                "oauth state expired — restart sign-in".into(),
-            )));
-        }
-    };
+    let (redirect_uri, code_verifier) =
+        match oauth_states::consume(&pool, &body.state, &provider).await? {
+            ConsumeOutcome::Ok {
+                redirect_uri,
+                code_verifier,
+            } => (redirect_uri, code_verifier),
+            ConsumeOutcome::Unknown | ConsumeOutcome::ProviderMismatch => {
+                return Err(ApiError::Core(CoreError::Unauthorized));
+            }
+            ConsumeOutcome::AlreadyConsumed => {
+                return Err(ApiError::Core(CoreError::Conflict(
+                    "oauth state already used".into(),
+                )));
+            }
+            ConsumeOutcome::Expired => {
+                return Err(ApiError::Core(CoreError::Conflict(
+                    "oauth state expired — restart sign-in".into(),
+                )));
+            }
+        };
 
     let cfg = oauth_providers::find_provider(&pool, &provider)
         .await?
@@ -154,7 +173,14 @@ pub async fn callback(
         .map_err(|e| ApiError::Core(CoreError::Internal(format!("client_secret utf8: {e}"))))?;
 
     // Exchange the auth code for an access token at the provider.
-    let token = exchange_code(&cfg, &client_secret, &body.code, &redirect_uri).await?;
+    let token = exchange_code(
+        &cfg,
+        &client_secret,
+        &body.code,
+        &redirect_uri,
+        code_verifier.as_deref(),
+    )
+    .await?;
     // Fetch the userinfo blob with the access token. Extract the
     // stable provider-side id and the verified email using the JSON
     // pointers stored in the provider config.
@@ -294,6 +320,7 @@ fn build_authorize_url(
     cfg: &OAuthProvider,
     redirect_uri: &str,
     state: &str,
+    code_challenge: &str,
 ) -> Result<String, ApiError> {
     let scope = cfg.config.scopes.join(" ");
     let mut url = reqwest::Url::parse(&cfg.config.auth_url).map_err(|e| {
@@ -309,6 +336,11 @@ fn build_authorize_url(
         q.append_pair("response_type", "code");
         q.append_pair("scope", &scope);
         q.append_pair("state", state);
+        // PKCE (RFC 7636). S256 is the only method we offer; `plain`
+        // is rejected by every modern provider and defeats the whole
+        // purpose of the verifier.
+        q.append_pair("code_challenge", code_challenge);
+        q.append_pair("code_challenge_method", "S256");
     }
     Ok(url.into())
 }
@@ -321,17 +353,22 @@ async fn exchange_code(
     client_secret: &str,
     code: &str,
     redirect_uri: &str,
+    code_verifier: Option<&str>,
 ) -> Result<String, ApiError> {
     let client = reqwest::Client::new();
+    let mut form: Vec<(&str, &str)> = vec![
+        ("grant_type", "authorization_code"),
+        ("code", code),
+        ("redirect_uri", redirect_uri),
+        ("client_id", cfg.client_id.as_str()),
+        ("client_secret", client_secret),
+    ];
+    if let Some(v) = code_verifier {
+        form.push(("code_verifier", v));
+    }
     let resp = client
         .post(&cfg.config.token_url)
-        .form(&[
-            ("grant_type", "authorization_code"),
-            ("code", code),
-            ("redirect_uri", redirect_uri),
-            ("client_id", cfg.client_id.as_str()),
-            ("client_secret", client_secret),
-        ])
+        .form(&form)
         .header("accept", "application/json")
         .send()
         .await
@@ -395,4 +432,60 @@ fn fresh_state_nonce() -> String {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// PKCE `code_verifier` (RFC 7636 §4.1). 32 OS-random bytes encoded
+/// as base64url-no-pad — yields a 43-character verifier (the upper
+/// bound the spec recommends; allowed range is 43..=128).
+fn fresh_code_verifier() -> String {
+    let mut bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut bytes);
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
+/// PKCE `code_challenge` for `code_challenge_method = "S256"`
+/// (RFC 7636 §4.2): `base64url(sha256(code_verifier))`.
+fn derive_s256_challenge(verifier: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(verifier.as_bytes());
+    URL_SAFE_NO_PAD.encode(hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fresh_code_verifier_meets_rfc7636_size_bounds() {
+        let v = fresh_code_verifier();
+        // base64url(32 bytes) → 43 chars, comfortably inside 43..=128.
+        assert!((43..=128).contains(&v.len()));
+        assert!(
+            v.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        );
+    }
+
+    #[test]
+    fn derive_s256_challenge_matches_rfc7636_example() {
+        // RFC 7636 Appendix B vector.
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let challenge = derive_s256_challenge(verifier);
+        assert_eq!(challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+    }
+
+    #[test]
+    fn challenge_is_deterministic_for_same_verifier() {
+        let v = "abcdefghijklmnopqrstuvwxyz0123456789-_";
+        let c1 = derive_s256_challenge(v);
+        let c2 = derive_s256_challenge(v);
+        assert_eq!(c1, c2);
+    }
+
+    #[test]
+    fn challenge_differs_for_different_verifiers() {
+        let c1 = derive_s256_challenge("verifier-a");
+        let c2 = derive_s256_challenge("verifier-b");
+        assert_ne!(c1, c2);
+    }
 }

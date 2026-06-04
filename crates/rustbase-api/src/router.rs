@@ -2384,9 +2384,29 @@ mod tests {
     async fn fake_oauth_provider(
         userinfo_body: serde_json::Value,
     ) -> (String, tokio::task::JoinHandle<()>) {
-        use axum::{Json, Router, routing::post};
-        // Token endpoint — accepts any form body, returns a fixed token.
-        async fn token() -> Json<serde_json::Value> {
+        fake_oauth_provider_with_capture(userinfo_body).await.0
+    }
+
+    /// Variant that also returns a shared cell capturing the last
+    /// `/token` form body so callers can assert PKCE parameters made
+    /// it to the provider.
+    async fn fake_oauth_provider_with_capture(
+        userinfo_body: serde_json::Value,
+    ) -> (
+        (String, tokio::task::JoinHandle<()>),
+        std::sync::Arc<parking_lot::Mutex<Option<String>>>,
+    ) {
+        use axum::{Json, Router, extract::State as AxumState, routing::post};
+
+        let captured: std::sync::Arc<parking_lot::Mutex<Option<String>>> =
+            std::sync::Arc::new(parking_lot::Mutex::new(None));
+        let captured_for_handler = captured.clone();
+
+        async fn token(
+            AxumState(captured): AxumState<std::sync::Arc<parking_lot::Mutex<Option<String>>>>,
+            body: String,
+        ) -> Json<serde_json::Value> {
+            *captured.lock() = Some(body);
             Json(serde_json::json!({
                 "access_token": "fake-access-token",
                 "token_type": "Bearer",
@@ -2400,15 +2420,15 @@ mod tests {
         };
         let app: Router = Router::new()
             .route("/token", post(token))
+            .with_state(captured_for_handler)
             .route("/userinfo", axum::routing::get(userinfo_handler));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let handle = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        // Give axum a tick to actually start accepting.
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        (format!("http://{addr}"), handle)
+        ((format!("http://{addr}"), handle), captured)
     }
 
     /// Seed a provider config in the per-app DB pointing at the stub.
@@ -2475,6 +2495,9 @@ mod tests {
         assert!(url.contains("response_type=code"), "got: {url}");
         assert!(url.contains("state="), "got: {url}");
         assert!(url.contains("scope=openid+email"), "got: {url}");
+        // PKCE (RFC 7636) — every authorize URL carries S256 challenge.
+        assert!(url.contains("code_challenge="), "got: {url}");
+        assert!(url.contains("code_challenge_method=S256"), "got: {url}");
         assert!(j["state"].as_str().unwrap().len() == 64);
     }
 
@@ -2492,6 +2515,58 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn oauth_callback_sends_pkce_verifier_to_token_endpoint() {
+        let ((base_url, _h), captured) = fake_oauth_provider_with_capture(serde_json::json!({
+            "sub": "google-sub-pkce",
+            "email": "pkce@google.test",
+        }))
+        .await;
+        let (state, _dir, _, _) = state_with_realm_and_admin().await;
+        seed_provider(&state, "acme", "mobile", "google", &base_url).await;
+
+        let app = build_router(state.clone());
+        let resp = app
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/realms/acme/apps/mobile/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
+                None,
+                None,
+            ))
+            .await
+            .unwrap();
+        let j = json_body(resp).await;
+        let nonce = j["state"].as_str().unwrap().to_string();
+        let auth_url = j["authorize_url"].as_str().unwrap().to_string();
+        // The authorize URL carries the S256 challenge.
+        assert!(auth_url.contains("code_challenge="), "got: {auth_url}");
+        assert!(auth_url.contains("code_challenge_method=S256"));
+
+        let app = build_router(state);
+        let resp = app
+            .oneshot(req_with_auth(
+                "POST",
+                "/api/realms/acme/apps/mobile/auth/oauth/google/callback",
+                None,
+                Some(&serde_json::json!({"code":"unused", "state": nonce})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // The token endpoint received the verifier in its form body.
+        let body = captured
+            .lock()
+            .clone()
+            .expect("token endpoint never reached");
+        assert!(
+            body.contains("code_verifier="),
+            "token POST missing code_verifier: {body}"
+        );
+        assert!(body.contains("grant_type=authorization_code"));
+        assert!(body.contains("client_id=test-client"));
     }
 
     #[tokio::test(flavor = "multi_thread")]

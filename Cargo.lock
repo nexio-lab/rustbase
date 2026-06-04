@@ -2651,6 +2651,7 @@ version = "0.1.1"
 dependencies = [
  "async-trait",
  "axum",
+ "base64",
  "chrono",
  "dashmap",
  "futures",
@@ -2669,6 +2670,7 @@ dependencies = [
  "rustbase-storage",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "tempfile",
  "thiserror 2.0.18",

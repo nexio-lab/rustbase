@@ -53,6 +53,12 @@ versioning follows [Semantic Versioning](https://semver.org/).
   (`issue`, `verify`, `jwks`). HS256 tokens issued before the upgrade
   continue to verify until they expire on their own; the legacy HMAC
   key is kept as a verification-only fallback.
+- **PKCE (RFC 7636) on every OAuth flow.** `/authorize` mints a
+  32-byte `code_verifier`, persists it alongside the CSRF state,
+  sends `code_challenge=S256(verifier)` + `code_challenge_method=S256`
+  to the upstream provider; `/callback` replays the verifier on the
+  token exchange. New `_oauth_states.code_verifier` column added via
+  app-scoped migration `20260604_000001_oauth_pkce`.
 
 ### Changed
 - README hero copy and badge row aligned with the new positioning.

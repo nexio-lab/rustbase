@@ -407,6 +407,20 @@ pub const APP_MIGRATIONS: &[Migration] = &[
         CREATE INDEX mfa_challenges_user ON _mfa_challenges(user_id, consumed_at);
         "#,
     ),
+    // PKCE (RFC 7636). Every OAuth `/authorize` mints a `code_verifier`
+    // and persists it alongside the CSRF state; the matching
+    // `code_challenge = base64url(sha256(verifier))` is appended to the
+    // upstream authorize URL. `/callback` reads the verifier back and
+    // sends it on the token exchange. Defends against authorization-
+    // code interception on every provider — pure additive change, no
+    // configuration knobs.
+    Migration::new(
+        "20260604_000001_oauth_pkce",
+        MigrationScope::App,
+        r#"
+        ALTER TABLE _oauth_states ADD COLUMN code_verifier TEXT;
+        "#,
+    ),
 ];
 
 #[cfg(test)]

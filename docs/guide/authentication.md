@@ -155,14 +155,28 @@ The dashboard ships with **Google**, **GitHub**, and **Microsoft** presets — p
 
 ```http
 GET /api/realms/:realm/apps/:app/auth/oauth/google/authorize?redirect_uri=https://app/cb
-  → 302 to Google with a state cookie set
+  → 200 { authorize_url, state }
+  The authorize URL carries client_id, redirect_uri, scope,
+  response_type=code, state, code_challenge, code_challenge_method=S256.
 
 POST /api/realms/:realm/apps/:app/auth/oauth/google/callback
-  { "code": "...", "state": "...", "redirect_uri": "https://app/cb" }
+  { "code": "...", "state": "..." }
   → 200  { access_token, refresh_token, user }
 ```
 
-State is single-use and bound to the app. On first sign-in via OAuth, a user row is created with `has_password = false`. Subsequent logins match by `email` within the same app.
+State is single-use and bound to the app. On first sign-in via OAuth,
+a user row is created with `has_password = false`. Subsequent logins
+match by `email` within the same app.
+
+::: tip PKCE everywhere
+Every flow is **PKCE-protected (RFC 7636, S256)** — the server mints
+a 32-byte `code_verifier` at `/authorize`, stores it alongside the
+state nonce, sends `code_challenge` to the provider, and replays the
+verifier on the token exchange. Providers that don't honour PKCE
+ignore the parameters; providers that do (Google, GitHub, Microsoft,
+every modern OIDC IdP) refuse the token exchange when the verifier
+doesn't match the original challenge. Nothing to configure.
+:::
 
 ## Admin tokens
 

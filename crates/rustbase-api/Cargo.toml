@@ -37,6 +37,9 @@ reqwest.workspace = true
 totp-rs.workspace = true
 tower_governor.workspace = true
 governor.workspace = true
+# PKCE S256 challenge derivation (sha256 + base64url-no-pad).
+base64.workspace = true
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3"
