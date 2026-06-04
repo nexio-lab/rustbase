@@ -1,4 +1,4 @@
-# RustBaas server configuration.
+# RustBase server configuration.
 # Copy to rustbase.toml in the working directory.
 # Any value can be overridden by an RUSTBASE_* environment variable.
 
@@ -11,6 +11,44 @@ data_dir = "./data"
 # LRU caps for per-realm and per-app SQLite pools.
 realm_pool_cap = 32
 app_pool_cap = 64
+
+# HTTP hardening at the entry layer. Defaults shown.
+[http]
+# Maximum request body size, in bytes (8 MiB by default).
+max_body_bytes = 8388608
+# Default-on bundle of security headers (HSTS, X-Content-Type-Options,
+# Referrer-Policy, X-Frame-Options, baseline CSP, Permissions-Policy).
+# Disable only when an upstream reverse proxy already injects them.
+security_headers = true
+# HSTS `max-age=` value in seconds. `0` omits the header.
+# 63072000 = 2 years; the OWASP-recommended baseline once TLS is the
+# only way clients reach the server.
+hsts_max_age_secs = 63072000
+hsts_include_subdomains = true
+
+# CORS allowlist for the REST API. Default: no cross-origin allowed.
+# The dashboard is same-origin and does not need an entry here.
+[cors]
+allow_origins = []
+allow_credentials = false
+max_age_secs = 600
+
+# Per-IP token-bucket rate limit at the entry layer. Rejected requests
+# come back as 429 with a Retry-After header.
+[rate_limit]
+enabled = true
+per_second = 50
+burst = 100
+
+# Per-subject auth lockout. After `max_failures` rejected credential
+# attempts inside `window_secs`, the subject (master admin / realm
+# admin / end user) is locked out for `lockout_secs`. Both the lockout
+# 429 response and the locked-state 429 carry Retry-After.
+[lockout]
+enabled = true
+max_failures = 5
+window_secs = 300
+lockout_secs = 300
 
 # Optional SQLite → S3 replication via Litestream. Off by default.
 [litestream]

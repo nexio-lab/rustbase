@@ -1,3 +1,4 @@
+use crate::security::{LockoutPolicy, LoginAttempts};
 use rustbase_auth::{RevocationSet, SigningKey};
 use rustbase_core::Mailer;
 use rustbase_db::{AppPoolManager, RealmPoolManager, SystemPool};
@@ -43,6 +44,12 @@ pub struct AppState {
     /// boot. Handlers use it with scoped keys of the form
     /// `realms/<realm>/apps/<app>/storage/<file_id>`.
     pub storage: Storage,
+    /// Per-subject failed-login counters that drive the auth lockout.
+    /// Cloned cheaply (DashMap behind an `Arc`).
+    pub login_attempts: LoginAttempts,
+    /// Lockout thresholds applied by `login_attempts`. Loaded from
+    /// `[lockout]` in `rustbase.toml` at boot.
+    pub lockout_policy: LockoutPolicy,
 }
 
 impl AppState {

@@ -128,6 +128,12 @@ async fn main() -> Result<()> {
         }
     };
 
+    let lockout_policy = rustbase_api::security::LockoutPolicy::from_secs(
+        cfg.lockout.enabled,
+        cfg.lockout.max_failures,
+        cfg.lockout.window_secs,
+        cfg.lockout.lockout_secs,
+    );
     let state = AppState {
         system: Arc::new(system),
         realms: Arc::new(RealmPoolManager::new(
@@ -144,6 +150,8 @@ async fn main() -> Result<()> {
         mailer,
         oauth_kek,
         storage,
+        login_attempts: rustbase_api::security::LoginAttempts::new(),
+        lockout_policy,
     };
 
     // Load JS hooks for every (realm, app) that exists on disk.
@@ -154,7 +162,7 @@ async fn main() -> Result<()> {
     let dashboard_routes: Router<()> = Router::new()
         .route("/_/", get(dashboard::index))
         .route("/_/{*path}", get(dashboard::asset));
-    let app = build_router(state)
+    let mut app = build_router(state)
         .merge(dashboard_routes)
         // `/_/setup`, `/_/auth/admin/login`, `/_/auth/refresh` are
         // registered as POST-only on the API. Without this fallback,
@@ -162,9 +170,68 @@ async fn main() -> Result<()> {
         // instead of the SPA shell. Hand any 405 under `/_/` to the
         // dashboard's index so the client-side router takes over.
         .method_not_allowed_fallback(dashboard_or_405);
+
+    // Body size cap at the HTTP entry layer. Defaults to 8 MiB —
+    // override under `[http]` in `rustbase.toml` if your hooks accept
+    // larger payloads.
+    app = app.layer(tower_http::limit::RequestBodyLimitLayer::new(
+        cfg.http.max_body_bytes,
+    ));
+
+    if cfg.http.security_headers {
+        let stack = rustbase_api::middleware::security_headers::layer(
+            rustbase_api::middleware::security_headers::SecurityHeadersConfig {
+                hsts_max_age_secs: cfg.http.hsts_max_age_secs,
+                hsts_include_subdomains: cfg.http.hsts_include_subdomains,
+            },
+        );
+        app = app.layer(stack);
+    }
+
+    let cors_layer =
+        rustbase_api::middleware::cors::layer(&rustbase_api::middleware::cors::CorsConfig {
+            allow_origins: cfg.cors.allow_origins.clone(),
+            allow_credentials: cfg.cors.allow_credentials,
+            max_age: std::time::Duration::from_secs(cfg.cors.max_age_secs),
+        });
+    app = app.layer(cors_layer);
+
+    if cfg.rate_limit.enabled {
+        match rustbase_api::middleware::rate_limit::layer(
+            rustbase_api::middleware::rate_limit::RateLimitConfig {
+                per_second: cfg.rate_limit.per_second,
+                burst: cfg.rate_limit.burst,
+            },
+        ) {
+            Some(layer) => {
+                app = app.layer(layer);
+                tracing::info!(
+                    per_second = cfg.rate_limit.per_second,
+                    burst = cfg.rate_limit.burst,
+                    "rate-limit: enabled (per-IP)"
+                );
+            }
+            None => {
+                tracing::warn!(
+                    "rate-limit: bad config; layer NOT installed (per_second/burst rejected)"
+                );
+            }
+        }
+    } else {
+        tracing::warn!("rate-limit: disabled in config");
+    }
+
     let listener = tokio::net::TcpListener::bind(&cfg.listen).await?;
     tracing::info!(listen = %cfg.listen, "rustbase: ready");
-    axum::serve(listener, app).await?;
+    // `into_make_service_with_connect_info` exposes the peer
+    // `SocketAddr` to inner services. tower-governor's
+    // `PeerIpKeyExtractor` requires it — using the default
+    // `into_make_service` would return a hard error on every request.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 

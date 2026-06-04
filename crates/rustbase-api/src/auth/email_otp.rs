@@ -138,11 +138,81 @@ pub async fn login(
     let app_id = AppId::from(app.clone());
     let pool = state.apps.pool_for(&realm_id, &app_id).await?;
 
-    match email_otps::consume(&pool, &req.email, &req.code).await? {
-        ConsumeOutcome::Ok { email } => issue_tokens_for(&state, &pool, &realm, &app, &email).await,
-        ConsumeOutcome::WrongCode { attempts_left } => Err(ApiError::Core(CoreError::Validation(
-            format!("wrong code ({attempts_left} attempts left)"),
-        ))),
+    // Share the lockout subject with password and TOTP, so a bad-OTP
+    // burst against `alice@x` counts toward the same budget as
+    // password attempts.
+    let subject = format!("realm:{realm}:app:{app}:user:{}", &req.email);
+    state
+        .login_attempts
+        .check(&subject, &state.lockout_policy)?;
+
+    let outcome = email_otps::consume(&pool, &req.email, &req.code).await?;
+    match outcome {
+        ConsumeOutcome::Ok { email } => {
+            state.login_attempts.note_success(&subject);
+            let res = issue_tokens_for(&state, &pool, &realm, &app, &email).await;
+            if res.is_ok() {
+                crate::auth::audit_events::record(
+                    &state,
+                    crate::auth::audit_events::AuthEvent {
+                        outcome: crate::auth::audit_events::AuthOutcome::Success,
+                        scope: crate::auth::audit_events::Scope::Realm(&realm),
+                        subject: &subject,
+                        target: Some(&email),
+                        details: serde_json::json!({ "flow": "email_otp", "app": &app }),
+                    },
+                )
+                .await;
+            }
+            res
+        }
+        ConsumeOutcome::WrongCode { attempts_left } => {
+            let err = match state
+                .login_attempts
+                .note_failure(&subject, &state.lockout_policy)
+            {
+                Ok(()) => {
+                    crate::auth::audit_events::record(
+                        &state,
+                        crate::auth::audit_events::AuthEvent {
+                            outcome: crate::auth::audit_events::AuthOutcome::Failed,
+                            scope: crate::auth::audit_events::Scope::Realm(&realm),
+                            subject: &subject,
+                            target: Some(&req.email),
+                            details: serde_json::json!({
+                                "flow": "email_otp",
+                                "app": &app,
+                                "attempts_left": attempts_left,
+                            }),
+                        },
+                    )
+                    .await;
+                    ApiError::Core(CoreError::Validation(format!(
+                        "wrong code ({attempts_left} attempts left)"
+                    )))
+                }
+                Err(CoreError::TooManyRequests { retry_after_secs }) => {
+                    crate::auth::audit_events::record(
+                        &state,
+                        crate::auth::audit_events::AuthEvent {
+                            outcome: crate::auth::audit_events::AuthOutcome::Locked,
+                            scope: crate::auth::audit_events::Scope::Realm(&realm),
+                            subject: &subject,
+                            target: Some(&req.email),
+                            details: serde_json::json!({
+                                "flow": "email_otp",
+                                "app": &app,
+                                "retry_after_secs": retry_after_secs,
+                            }),
+                        },
+                    )
+                    .await;
+                    ApiError::Core(CoreError::TooManyRequests { retry_after_secs })
+                }
+                Err(other) => ApiError::Core(other),
+            };
+            Err(err)
+        }
         ConsumeOutcome::Unknown => Err(ApiError::Core(CoreError::Conflict(
             "no pending code for this email — request a new one".into(),
         ))),

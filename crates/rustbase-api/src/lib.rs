@@ -23,6 +23,7 @@ pub mod realms;
 pub mod realtime;
 pub mod records;
 pub mod router;
+pub mod security;
 pub mod setup;
 pub mod state;
 pub mod users;

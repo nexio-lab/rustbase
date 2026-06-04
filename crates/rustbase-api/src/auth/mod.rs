@@ -6,6 +6,7 @@
 //!
 //! Realm-admin and end-user flows come later, on their own feature branches.
 
+pub mod audit_events;
 pub mod email_otp;
 pub mod extract;
 pub mod login;

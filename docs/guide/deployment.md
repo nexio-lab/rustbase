@@ -367,12 +367,43 @@ The v0.2 release fills several of these gaps. Until then, you do them.
 - [ ] You have a runbook for "the binary won't start" — typically: bad config,
       missing data dir, exhausted file descriptors.
 
-## What v0.2 changes for ops
+## Built-in security layer
 
-- Rate limiting at the auth endpoints (no Caddy-side `rate_limit` needed).
-- Built-in security headers (CSP / HSTS / etc. — no Caddy block needed).
+As of the security-hardening pack (post-0.1.1), the binary ships with
+the following enabled by default — no extra reverse-proxy config
+required:
+
+- **Per-IP rate limit** at the HTTP entry layer (token bucket, 50 r/s,
+  100 burst by default — tunable via `[rate_limit]` in
+  `rustbase.toml`). Rejections return `429 too_many_requests` +
+  `Retry-After`.
+- **Per-subject auth lockout** (5 failures inside 5 min → 5 min
+  lockout). Failures share a budget across password / TOTP /
+  email-OTP for the same identity. Audit rows: `login_success`,
+  `login_failed`, `login_locked`.
+- **Security headers** on every response: HSTS (`max-age=63072000;
+  includeSubDomains`), `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options:
+  DENY`, a baseline `Content-Security-Policy`, and a restrictive
+  `Permissions-Policy`. Disable in `[http]` only if your reverse proxy
+  already injects them.
+- **CORS allowlist** under `[cors]`. Empty (default) means same-origin
+  only — the dashboard is same-origin, so most installs need nothing
+  here.
+- **Body size cap** (`[http].max_body_bytes`, default 8 MiB).
+
+If you have Caddy/nginx in front and it's already setting headers,
+flip `http.security_headers = false` to avoid duplicate headers (most
+proxies tolerate them, but it's noisy in logs).
+
+See [Configuration → rate_limit / lockout / http / cors](configuration.html#full-reference)
+for every knob, and [Error codes → 429](../reference/errors.html#status--code-mapping)
+for the response shape.
+
+## What's still on the v0.2+ roadmap
+
 - `/metrics` endpoint (Prometheus exposition format).
-- Configurable max body size and CORS origin allowlist.
-- Account lockout after N failed logins.
+- PKCE on the OAuth flows + JWKS rotation.
+- Cookie-based session for the dashboard (httpOnly, SameSite=Strict).
 
-This guide will be updated when v0.2 ships.
+This guide will be updated as each lands.

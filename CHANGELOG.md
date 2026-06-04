@@ -7,7 +7,44 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-(nothing yet)
+### Added
+- **Brand: project renamed to RustBase.** New tagline: _"Multi-tenant
+  backend. Single binary. Real isolation."_ The on-disk layout, crate
+  names, and config keys are unchanged; only public-facing wording
+  moved.
+- New positioning page (`docs/concepts/positioning.md`) — explicit
+  "who this is for" / "who it is not for" / "what multi-tenant means
+  here precisely" / "when to outgrow RustBase."
+- New comparison page (`docs/guide/comparison.md`) — RustBase vs
+  PocketBase / Supabase / Appwrite, feature-by-feature plus a
+  decision matrix.
+- Deployment guide rewritten end to end: Hetzner sizing, hardened
+  systemd unit, Caddy + Let's Encrypt with security headers, Nginx
+  alternative, tarball-backup timer, Litestream sidecar, upgrade flow,
+  hardening checklist.
+- **Security layer 1 — defaults on:**
+  - Per-IP token-bucket rate limit at the entry layer (50 r/s, 100
+    burst by default) via `tower_governor`. Rejected with `429
+    too_many_requests` + `Retry-After`. Tunable under `[rate_limit]`.
+  - Per-subject auth lockout shared across password / TOTP /
+    email-OTP. 5 failures inside 5 min → 5 min lockout, returned as
+    `429` + `Retry-After`. Tunable under `[lockout]`.
+  - Conservative default-on security headers (HSTS, X-Content-Type-
+    Options, Referrer-Policy, X-Frame-Options, baseline CSP,
+    Permissions-Policy). Tunable / disable under `[http]`.
+  - CORS allowlist; empty default = same-origin only. Tunable under
+    `[cors]`.
+  - HTTP request body cap (`[http].max_body_bytes`, default 8 MiB).
+  - Audit rows: `login_success` / `login_failed` / `login_locked` for
+    every auth flow.
+- New error variant `CoreError::TooManyRequests { retry_after_secs }`
+  → HTTP 429 with `Retry-After` header. Reference docs updated.
+
+### Changed
+- README hero copy and badge row aligned with the new positioning.
+- `rustbase.toml.example` documents every new section.
+- `docs/guide/configuration.md`: full reference now includes `[http]`,
+  `[cors]`, `[rate_limit]`, `[lockout]`.
 
 ## [0.1.1] — 2026-06-03
 

@@ -35,7 +35,17 @@ tokio = { version = "1", features = ["full"] }
 # http
 axum = { version = "0.8", features = ["macros"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["trace", "cors"] }
+tower-http = { version = "0.6", features = [
+    "trace",
+    "cors",
+    "limit",
+    "set-header",
+    "request-id",
+    "timeout",
+] }
+# governor-based IP rate limiter as a Tower layer.
+tower_governor = { version = "0.8", default-features = false, features = ["axum"] }
+governor = { version = "0.10", default-features = false, features = ["std"] }
 
 # database
 sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio", "macros", "chrono", "uuid"] }

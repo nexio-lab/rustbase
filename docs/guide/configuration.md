@@ -63,6 +63,46 @@ endpoint          = "https://s3.example.com"    # omit for AWS
 access_key_id     = "AKIA..."
 secret_access_key = "${S3_SECRET}"
 virtual_hosted_style_request = false             # set false for MinIO, true for AWS
+
+# ------------------------------------------------------------------
+# HTTP hardening at the entry layer. Defaults shown.
+# ------------------------------------------------------------------
+[http]
+max_body_bytes         = 8388608         # 8 MiB
+security_headers       = true            # HSTS / nosniff / Referrer-Policy / XFO / CSP
+hsts_max_age_secs      = 63072000        # 2 years; 0 omits HSTS
+hsts_include_subdomains = true
+
+# ------------------------------------------------------------------
+# CORS allowlist. Empty (default) means: no cross-origin allowed.
+# The dashboard is same-origin and does not need an entry.
+# ------------------------------------------------------------------
+[cors]
+allow_origins     = []
+allow_credentials = false
+max_age_secs      = 600
+
+# ------------------------------------------------------------------
+# Per-IP token-bucket rate limit at the entry layer. Rejections are
+# returned as `429 too_many_requests` with a `Retry-After` header.
+# ------------------------------------------------------------------
+[rate_limit]
+enabled    = true
+per_second = 50
+burst      = 100
+
+# ------------------------------------------------------------------
+# Per-subject auth lockout. After N failed credential attempts inside
+# a rolling window, the subject (master admin / realm admin / end
+# user) is locked out for `lockout_secs`. Failures share a budget
+# across password + TOTP + email-OTP for the same user — so a
+# password-spray that pivots to OTP doesn't reset the counter.
+# ------------------------------------------------------------------
+[lockout]
+enabled       = true
+max_failures  = 5
+window_secs   = 300
+lockout_secs  = 300
 ```
 
 ## Environment variables
@@ -78,6 +118,9 @@ Every key is reachable as `RUSTBASE_<UPPERCASE_PATH_JOINED_BY_UNDERSCORES>`. Exa
 | `mail.smtp.password` | `RUSTBASE_MAIL_SMTP_PASSWORD` |
 | `litestream.bucket` | `RUSTBASE_LITESTREAM_BUCKET` |
 | `storage.s3.bucket` | `RUSTBASE_STORAGE_S3_BUCKET` |
+| `http.max_body_bytes` | `RUSTBASE_HTTP__MAX_BODY_BYTES` |
+| `rate_limit.per_second` | `RUSTBASE_RATE_LIMIT__PER_SECOND` |
+| `lockout.max_failures` | `RUSTBASE_LOCKOUT__MAX_FAILURES` |
 
 `12-factor`-style — set secrets via env in production; keep `rustbase.toml` in source control with non-secret defaults.
 

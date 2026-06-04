@@ -1,5 +1,3 @@
-//! Cross-cutting middleware.
-//!
 //! `setup_gate` blocks every route except `/healthz` and `/_/setup` while
 //! the server has no master admin. The dashboard reads `/healthz` to
 //! decide when to redirect users to the setup wizard.

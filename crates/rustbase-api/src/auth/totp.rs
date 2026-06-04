@@ -229,10 +229,57 @@ pub async fn login_totp(
     let user = find_user_by_id(&pool, &user_id)
         .await?
         .ok_or(ApiError::Core(CoreError::Unauthorized))?;
+
+    // Subject mirrors the password step: same key, so the password +
+    // TOTP failure budgets are shared.
+    let subject = format!("realm:{realm}:app:{app}:user:{}", &user.email);
+    state
+        .login_attempts
+        .check(&subject, &state.lockout_policy)?;
+
     let totp = build_totp(&row.secret_b32, &realm, &app, &user.email)?;
     if !check_code(&totp, &body.code)? {
-        return Err(ApiError::Core(CoreError::Unauthorized));
+        let err = match state
+            .login_attempts
+            .note_failure(&subject, &state.lockout_policy)
+        {
+            Ok(()) => {
+                crate::auth::audit_events::record(
+                    &state,
+                    crate::auth::audit_events::AuthEvent {
+                        outcome: crate::auth::audit_events::AuthOutcome::Failed,
+                        scope: crate::auth::audit_events::Scope::Realm(&realm),
+                        subject: &subject,
+                        target: Some(&user.email),
+                        details: serde_json::json!({"flow":"totp","app":&app}),
+                    },
+                )
+                .await;
+                ApiError::Core(CoreError::Unauthorized)
+            }
+            Err(CoreError::TooManyRequests { retry_after_secs }) => {
+                crate::auth::audit_events::record(
+                    &state,
+                    crate::auth::audit_events::AuthEvent {
+                        outcome: crate::auth::audit_events::AuthOutcome::Locked,
+                        scope: crate::auth::audit_events::Scope::Realm(&realm),
+                        subject: &subject,
+                        target: Some(&user.email),
+                        details: serde_json::json!({
+                            "flow": "totp",
+                            "app": &app,
+                            "retry_after_secs": retry_after_secs,
+                        }),
+                    },
+                )
+                .await;
+                ApiError::Core(CoreError::TooManyRequests { retry_after_secs })
+            }
+            Err(other) => ApiError::Core(other),
+        };
+        return Err(err);
     }
+    state.login_attempts.note_success(&subject);
 
     record_last_login(&pool, &user.id).await?;
 
@@ -253,6 +300,21 @@ pub async fn login_totp(
     )
     .await?;
     tracing::info!(realm = %realm, app = %app, user_id = %user.id, "user login (TOTP second step)");
+    crate::auth::audit_events::record(
+        &state,
+        crate::auth::audit_events::AuthEvent {
+            outcome: crate::auth::audit_events::AuthOutcome::Success,
+            scope: crate::auth::audit_events::Scope::Realm(&realm),
+            subject: &subject,
+            target: Some(&user.email),
+            details: serde_json::json!({
+                "flow": "totp",
+                "app": &app,
+                "user_id": &user.id,
+            }),
+        },
+    )
+    .await;
 
     Ok(Json(LoginTotpResponse {
         access_token,

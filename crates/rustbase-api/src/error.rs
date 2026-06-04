@@ -45,6 +45,7 @@ struct ErrorBody {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        let mut retry_after: Option<u64> = None;
         let (status, code) = match &self {
             ApiError::Core(e) => match e {
                 CoreError::NotFound { .. } => (StatusCode::NOT_FOUND, "not_found"),
@@ -55,6 +56,10 @@ impl IntoResponse for ApiError {
                 CoreError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
                 CoreError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
                 CoreError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
+                CoreError::TooManyRequests { retry_after_secs } => {
+                    retry_after = Some(*retry_after_secs);
+                    (StatusCode::TOO_MANY_REQUESTS, "too_many_requests")
+                }
                 CoreError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
             },
         };
@@ -62,7 +67,14 @@ impl IntoResponse for ApiError {
             code,
             message: self.to_string(),
         };
-        (status, Json(body)).into_response()
+        let mut resp = (status, Json(body)).into_response();
+        if let Some(secs) = retry_after
+            && let Ok(value) = axum::http::HeaderValue::from_str(&secs.to_string())
+        {
+            resp.headers_mut()
+                .insert(axum::http::header::RETRY_AFTER, value);
+        }
+        resp
     }
 }
 
@@ -133,5 +145,31 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["code"], "unauthorized");
         assert!(body["message"].as_str().unwrap().contains("unauthorized"));
+    }
+
+    #[test]
+    fn too_many_requests_maps_to_429() {
+        let e = CoreError::TooManyRequests {
+            retry_after_secs: 42,
+        };
+        assert_eq!(status_of(e.into()), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn too_many_requests_sets_retry_after_header() {
+        let resp = ApiError::Core(CoreError::TooManyRequests {
+            retry_after_secs: 90,
+        })
+        .into_response();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        let header = resp
+            .headers()
+            .get(axum::http::header::RETRY_AFTER)
+            .expect("Retry-After header missing");
+        assert_eq!(header.to_str().unwrap(), "90");
+        let bytes = to_bytes(resp.into_body(), 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["code"], "too_many_requests");
+        assert!(body["message"].as_str().unwrap().contains("90"));
     }
 }

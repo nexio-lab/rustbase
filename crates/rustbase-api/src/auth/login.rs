@@ -12,9 +12,67 @@ use rustbase_db::{
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
+use super::audit_events::{AuthEvent, AuthOutcome, Scope, record as record_audit};
 use super::{default_access_ttl, default_refresh_ttl, new_refresh_token, require_app_exists};
 use crate::error::ApiError;
 use crate::state::AppState;
+
+/// Subject keys used by both the lockout map and the audit log.
+fn master_subject(username: &str) -> String {
+    format!("master:{username}")
+}
+fn realm_admin_subject(realm: &str, email: &str) -> String {
+    format!("realm:{realm}:admin:{email}")
+}
+fn user_subject(realm: &str, app: &str, email: &str) -> String {
+    format!("realm:{realm}:app:{app}:user:{email}")
+}
+
+/// Translate a `LoginAttempts::note_failure` outcome into the audit
+/// record + the response error. The boolean we return tells the caller
+/// whether the failure also tripped the lockout (so the response should
+/// be 429 instead of 401).
+async fn record_failure_and_pick_error(
+    state: &AppState,
+    scope: Scope<'_>,
+    subject: &str,
+    target: Option<&str>,
+) -> ApiError {
+    match state
+        .login_attempts
+        .note_failure(subject, &state.lockout_policy)
+    {
+        Ok(()) => {
+            record_audit(
+                state,
+                AuthEvent {
+                    outcome: AuthOutcome::Failed,
+                    scope,
+                    subject,
+                    target,
+                    details: serde_json::json!({}),
+                },
+            )
+            .await;
+            ApiError::Core(CoreError::Unauthorized)
+        }
+        Err(CoreError::TooManyRequests { retry_after_secs }) => {
+            record_audit(
+                state,
+                AuthEvent {
+                    outcome: AuthOutcome::Locked,
+                    scope,
+                    subject,
+                    target,
+                    details: serde_json::json!({ "retry_after_secs": retry_after_secs }),
+                },
+            )
+            .await;
+            ApiError::Core(CoreError::TooManyRequests { retry_after_secs })
+        }
+        Err(other) => ApiError::Core(other),
+    }
+}
 
 /// Master admin login takes a username (default `admin`); email is optional.
 #[derive(Debug, Deserialize, Validate)]
@@ -95,22 +153,51 @@ pub async fn master_admin_login(
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
 
-    let admin = find_master_admin_by_username(state.system.pool(), &req.username)
-        .await?
-        .ok_or(ApiError::Core(CoreError::Unauthorized))?;
+    let subject = master_subject(&req.username);
+    state
+        .login_attempts
+        .check(&subject, &state.lockout_policy)?;
+
+    let admin = match find_master_admin_by_username(state.system.pool(), &req.username).await? {
+        Some(a) => a,
+        None => {
+            return Err(record_failure_and_pick_error(
+                &state,
+                Scope::Master,
+                &subject,
+                Some(&req.username),
+            )
+            .await);
+        }
+    };
 
     // The setup wizard hasn't run yet — surface this as Unauthorized so
     // we don't leak the existence of the seed row. The setup gate
     // already kept this handler unreachable in the uninitialized state,
     // but defense-in-depth keeps the message uniform.
-    let hash = admin
-        .password_hash
-        .as_deref()
-        .ok_or(ApiError::Core(CoreError::Unauthorized))?;
+    let hash = match admin.password_hash.as_deref() {
+        Some(h) => h,
+        None => {
+            return Err(record_failure_and_pick_error(
+                &state,
+                Scope::Master,
+                &subject,
+                Some(&req.username),
+            )
+            .await);
+        }
+    };
 
     if !verify_password(&req.password, hash)? {
-        return Err(ApiError::Core(CoreError::Unauthorized));
+        return Err(record_failure_and_pick_error(
+            &state,
+            Scope::Master,
+            &subject,
+            Some(&req.username),
+        )
+        .await);
     }
+    state.login_attempts.note_success(&subject);
 
     let claims = build_claims(
         admin.id.clone(),
@@ -131,6 +218,17 @@ pub async fn master_admin_login(
     .await?;
 
     tracing::info!(admin_id = %admin.id, username = %admin.username, "master admin login");
+    record_audit(
+        &state,
+        AuthEvent {
+            outcome: AuthOutcome::Success,
+            scope: Scope::Master,
+            subject: &subject,
+            target: Some(&admin.username),
+            details: serde_json::json!({ "admin_id": &admin.id }),
+        },
+    )
+    .await;
 
     Ok(Json(MasterLoginResponse {
         access_token,
@@ -152,19 +250,40 @@ pub async fn realm_admin_login(
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
 
+    let subject = realm_admin_subject(&realm, &req.email);
+    state
+        .login_attempts
+        .check(&subject, &state.lockout_policy)?;
+
     // Look up the realm's pool — if the realm doesn't exist, the row
     // will be missing in system.db. We don't surface that here; just
     // return Unauthorized so an attacker can't enumerate realms.
     let realm_id = RealmId::from(realm.clone());
     let pool = state.realms.pool_for(&realm_id).await?;
 
-    let admin = find_realm_admin_by_email(&pool, &req.email)
-        .await?
-        .ok_or(ApiError::Core(CoreError::Unauthorized))?;
+    let admin = match find_realm_admin_by_email(&pool, &req.email).await? {
+        Some(a) => a,
+        None => {
+            return Err(record_failure_and_pick_error(
+                &state,
+                Scope::Realm(&realm),
+                &subject,
+                Some(&req.email),
+            )
+            .await);
+        }
+    };
 
     if !verify_password(&req.password, &admin.password_hash)? {
-        return Err(ApiError::Core(CoreError::Unauthorized));
+        return Err(record_failure_and_pick_error(
+            &state,
+            Scope::Realm(&realm),
+            &subject,
+            Some(&req.email),
+        )
+        .await);
     }
+    state.login_attempts.note_success(&subject);
 
     let claims = build_claims(
         admin.id.clone(),
@@ -185,6 +304,17 @@ pub async fn realm_admin_login(
     .await?;
 
     tracing::info!(realm = %realm, admin_id = %admin.id, "realm admin login");
+    record_audit(
+        &state,
+        AuthEvent {
+            outcome: AuthOutcome::Success,
+            scope: Scope::Realm(&realm),
+            subject: &subject,
+            target: Some(&admin.email),
+            details: serde_json::json!({ "admin_id": &admin.id }),
+        },
+    )
+    .await;
 
     Ok(Json(LoginResponse {
         access_token,
@@ -205,22 +335,56 @@ pub async fn user_login(
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
 
+    let subject = user_subject(&realm, &app, &req.email);
+    state
+        .login_attempts
+        .check(&subject, &state.lockout_policy)?;
+
     require_app_exists(&state, &realm, &app).await?;
 
     let realm_id = RealmId::from(realm.clone());
     let app_id = AppId::from(app.clone());
     let pool = state.apps.pool_for(&realm_id, &app_id).await?;
 
-    let user = find_user_by_email(&pool, &req.email)
-        .await?
-        .ok_or(ApiError::Core(CoreError::Unauthorized))?;
+    let user = match find_user_by_email(&pool, &req.email).await? {
+        Some(u) => u,
+        None => {
+            return Err(record_failure_and_pick_error(
+                &state,
+                Scope::Realm(&realm),
+                &subject,
+                Some(&req.email),
+            )
+            .await);
+        }
+    };
 
-    let hash = user
-        .password_hash
-        .as_deref()
-        .ok_or(ApiError::Core(CoreError::Unauthorized))?;
+    let hash = match user.password_hash.as_deref() {
+        Some(h) => h,
+        None => {
+            return Err(record_failure_and_pick_error(
+                &state,
+                Scope::Realm(&realm),
+                &subject,
+                Some(&req.email),
+            )
+            .await);
+        }
+    };
     if !verify_password(&req.password, hash)? {
-        return Err(ApiError::Core(CoreError::Unauthorized));
+        return Err(record_failure_and_pick_error(
+            &state,
+            Scope::Realm(&realm),
+            &subject,
+            Some(&req.email),
+        )
+        .await);
+    }
+    // Password ok — but a TOTP-enabled user still has to complete the
+    // second factor before the lockout is considered cleared.
+    let totp_enabled = crate::auth::totp::is_user_totp_enabled(&pool, &user.id).await?;
+    if !totp_enabled {
+        state.login_attempts.note_success(&subject);
     }
 
     // Credential check passed. Fire onUserBeforeLogin — a hook may
@@ -249,7 +413,7 @@ pub async fn user_login(
     // login via /auth/users/login/totp. The user-lifecycle
     // `after_login` event waits for the second step too — semantically
     // login isn't complete until both factors are accepted.
-    if crate::auth::totp::is_user_totp_enabled(&pool, &user.id).await? {
+    if totp_enabled {
         let mfa_token = crate::auth::totp::issue_mfa_challenge(&pool, &user.id).await?;
         tracing::info!(
             realm = %realm,
@@ -284,6 +448,20 @@ pub async fn user_login(
     .await?;
 
     tracing::info!(realm = %realm, app = %app, user_id = %user.id, "user login");
+    record_audit(
+        &state,
+        AuthEvent {
+            outcome: AuthOutcome::Success,
+            scope: Scope::Realm(&realm),
+            subject: &subject,
+            target: Some(&user.email),
+            details: serde_json::json!({
+                "app": &app,
+                "user_id": &user.id,
+            }),
+        },
+    )
+    .await;
 
     // Best-effort observer fire; failures are logged but don't roll
     // back the successful login.

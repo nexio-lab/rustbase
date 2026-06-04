@@ -30,6 +30,12 @@ pub enum CoreError {
     #[error("conflict: {0}")]
     Conflict(String),
 
+    /// Rate limit or account lockout. The wrapped value is the number of
+    /// seconds the client should wait before retrying; surfaced as the
+    /// `Retry-After` HTTP header at the API boundary.
+    #[error("too many requests; retry after {retry_after_secs}s")]
+    TooManyRequests { retry_after_secs: u64 },
+
     #[error("internal error: {0}")]
     Internal(String),
 }

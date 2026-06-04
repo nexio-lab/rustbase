@@ -26,6 +26,7 @@ The HTTP status code is sufficient for clients that don't care about the specifi
 | 409 | `conflict` | Duplicate id, duplicate email, master admin already set, etc. |
 | 413 | `payload_too_large` | File upload exceeds the storage cap. |
 | 422 | (json) | Request couldn't be deserialized at all. Axum/Serde rejection. |
+| 429 | `too_many_requests` | Per-IP rate limit hit, *or* per-subject auth lockout active. The response always carries a `Retry-After` header (seconds). See [Configuration → rate_limit / lockout](../guide/configuration.html#full-reference). |
 | 500 | `internal` | Unhandled error path. Check server logs. |
 | 503 | `uninitialized` | Server hasn't completed first-run setup. Only `/healthz` and `/_/setup` are reachable. |
 

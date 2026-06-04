@@ -295,6 +295,8 @@ mod tests {
             mailer: Arc::new(crate::mailer::LogMailer::new()),
             oauth_kek: Arc::new(rustbase_auth::fresh_kek()),
             storage,
+            login_attempts: crate::security::LoginAttempts::new(),
+            lockout_policy: crate::security::LockoutPolicy::default(),
         };
         (state, dir)
     }
@@ -528,6 +530,105 @@ mod tests {
         )
         .await;
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn repeated_bad_password_eventually_locks_with_429() {
+        let (mut state, _dir, _) = initialized_state_with_admin("hunter22").await;
+        // Tight policy for a fast test: 3 failures, 60-second window,
+        // 60-second lockout.
+        state.lockout_policy = crate::security::LockoutPolicy::from_secs(true, 3, 60, 60);
+
+        let app = build_router(state.clone());
+        let body = serde_json::json!({"username":"admin","password":"wrong"});
+        for _ in 0..2 {
+            let resp = post_json(app.clone(), "/_/auth/admin/login", &body).await;
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        }
+        // Third miss trips the lock — response is 429 with Retry-After.
+        let resp = post_json(app.clone(), "/_/auth/admin/login", &body).await;
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        let retry = resp
+            .headers()
+            .get(axum::http::header::RETRY_AFTER)
+            .expect("Retry-After header missing");
+        assert!(retry.to_str().unwrap().parse::<u64>().unwrap() > 0);
+
+        // Even the correct password now bounces with 429 while locked.
+        let app2 = build_router(state.clone());
+        let correct = serde_json::json!({"username":"admin","password":"hunter22"});
+        let resp = post_json(app2, "/_/auth/admin/login", &correct).await;
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        // The audit log has at least one `login_locked` row for this subject.
+        let rows = rustbase_db::audit::list_recent(state.system.pool(), 50)
+            .await
+            .unwrap();
+        assert!(
+            rows.iter()
+                .any(|e| e.action == "login_locked" && e.actor.as_deref() == Some("master:admin"))
+        );
+        assert!(
+            rows.iter()
+                .any(|e| e.action == "login_failed" && e.actor.as_deref() == Some("master:admin"))
+        );
+    }
+
+    #[tokio::test]
+    async fn good_password_after_failures_clears_lockout_state() {
+        let (mut state, _dir, _) = initialized_state_with_admin("hunter22").await;
+        state.lockout_policy = crate::security::LockoutPolicy::from_secs(true, 3, 60, 60);
+        let app = build_router(state.clone());
+
+        // Two failures, then a success.
+        for _ in 0..2 {
+            let resp = post_json(
+                app.clone(),
+                "/_/auth/admin/login",
+                &serde_json::json!({"username":"admin","password":"wrong"}),
+            )
+            .await;
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        }
+        let resp = post_json(
+            app.clone(),
+            "/_/auth/admin/login",
+            &serde_json::json!({"username":"admin","password":"hunter22"}),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // After the success, two more failures should NOT trip the
+        // lockout — counters reset.
+        for _ in 0..2 {
+            let resp = post_json(
+                app.clone(),
+                "/_/auth/admin/login",
+                &serde_json::json!({"username":"admin","password":"wrong"}),
+            )
+            .await;
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        }
+    }
+
+    #[tokio::test]
+    async fn login_success_emits_audit_row() {
+        let (state, _dir, _) = initialized_state_with_admin("hunter22").await;
+        let app = build_router(state.clone());
+        let resp = post_json(
+            app,
+            "/_/auth/admin/login",
+            &serde_json::json!({"username":"admin","password":"hunter22"}),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let rows = rustbase_db::audit::list_recent(state.system.pool(), 5)
+            .await
+            .unwrap();
+        assert!(
+            rows.iter()
+                .any(|e| e.action == "login_success" && e.actor.as_deref() == Some("master:admin"))
+        );
     }
 
     // ------------- realm CRUD tests -------------
