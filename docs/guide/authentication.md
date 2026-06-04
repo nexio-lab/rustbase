@@ -9,9 +9,9 @@ RustBase supports four ways to authenticate, on top of a layered admin model. Pi
 | Master admin | `system.db` | `POST /_/auth/admin/login` (username + password) |
 | Workspace admin | `<workspace>/workspace.db` | `POST /api/workspaces/:workspace/auth/admin/login` |
 | App admin | `<workspace>/workspace.db`, scoped to apps | (same as workspace) |
-| End-user | `<workspace>/apps/<app>/data.db` | `POST /api/workspaces/:workspace/apps/:app/auth/users/login` |
+| End-user | `<workspace>/workspace.db` | `POST /api/workspaces/:workspace/auth/users/login` |
 
-End-users are scoped to one app. The same email address can register independently in two apps under the same workspace — they're separate identities. Tokens carry the `(workspace, app, user_id)` tuple.
+End-users are **workspace-scoped**. A single `(email, workspace)` pair is one identity across every app in that workspace — sign in once with the workspace, hit any app inside it. Tokens carry the `(workspace, user_id)` tuple; the per-app target comes from the URL path (`/api/workspaces/:workspace/apps/:app/...`) rather than the token claim.
 
 The master admin is created automatically on first boot with username `admin` and a NULL password. The setup wizard at `POST /_/setup` accepts a single `{ "password": "..." }` body to finish initialization.
 
@@ -49,9 +49,9 @@ Newly-issued tokens are RS256.
 Refresh tokens are exchanged at the matching `/auth/refresh` for the principal's scope:
 
 ```http
-POST /_/auth/refresh                              # master admin
-POST /api/workspaces/:workspace/auth/refresh              # workspace / app admin
-POST /api/workspaces/:workspace/apps/:app/auth/users/refresh  # end-user
+POST /_/auth/refresh                               # master admin
+POST /api/workspaces/:workspace/auth/refresh       # workspace / app admin
+POST /api/workspaces/:workspace/auth/users/refresh # end-user
 ```
 
 Each one accepts `{ "refresh_token": "rfsh_..." }` and returns a fresh access + refresh pair. The old refresh token is **invalidated immediately**.
@@ -61,10 +61,10 @@ Each one accepts `{ "refresh_token": "rfsh_..." }` and returns a fresh access + 
 The default end-user flow.
 
 ```http
-POST /api/workspaces/:workspace/apps/:app/auth/users/register
+POST /api/workspaces/:workspace/auth/users/register
 { "email": "u@acme.com", "password": "userpass1" }
 
-POST /api/workspaces/:workspace/apps/:app/auth/users/login
+POST /api/workspaces/:workspace/auth/users/login
 { "email": "u@acme.com", "password": "userpass1" }
 ```
 
@@ -73,8 +73,8 @@ Passwords are hashed with `argon2` by default. The minimum length and required c
 ### Email verification
 
 ```http
-POST /api/workspaces/:workspace/apps/:app/auth/verify-email/request    [user token]
-POST /api/workspaces/:workspace/apps/:app/auth/verify-email/confirm    { "token": "..." }
+POST /api/workspaces/:workspace/auth/verify-email/request    [user token]
+POST /api/workspaces/:workspace/auth/verify-email/confirm    { "token": "..." }
 ```
 
 `request` mails the user a single-use token. `confirm` consumes it and sets `users.verified = true`. Tokens expire after one hour; calling `request` again invalidates earlier pending tokens.
@@ -82,8 +82,8 @@ POST /api/workspaces/:workspace/apps/:app/auth/verify-email/confirm    { "token"
 ### Password reset
 
 ```http
-POST /api/workspaces/:workspace/apps/:app/auth/password-reset/request     { "email": "..." }
-POST /api/workspaces/:workspace/apps/:app/auth/password-reset/confirm     { "token": "...", "new_password": "..." }
+POST /api/workspaces/:workspace/auth/password-reset/request     { "email": "..." }
+POST /api/workspaces/:workspace/auth/password-reset/confirm     { "token": "...", "new_password": "..." }
 ```
 
 Same shape as verify-email: emailed one-shot token, single-use, hour TTL.
@@ -93,8 +93,8 @@ Same shape as verify-email: emailed one-shot token, single-use, hour TTL.
 For "magic link"-style flows.
 
 ```http
-POST /api/workspaces/:workspace/apps/:app/auth/otp/request    { "email": "u@acme.com" }
-POST /api/workspaces/:workspace/apps/:app/auth/otp/login      { "email": "u@acme.com", "code": "123456" }
+POST /api/workspaces/:workspace/auth/otp/request    { "email": "u@acme.com" }
+POST /api/workspaces/:workspace/auth/otp/login      { "email": "u@acme.com", "code": "123456" }
 ```
 
 `request` mails the user a 6-digit code valid for 10 minutes (configurable). `login` exchanges email + code for a fresh access/refresh pair. If the email doesn't exist yet, the user is auto-registered with no password — `users.has_password = false`. That's how you ship a 100% passwordless onboarding.
@@ -104,37 +104,37 @@ POST /api/workspaces/:workspace/apps/:app/auth/otp/login      { "email": "u@acme
 Time-based one-time passwords via [`totp-rs`](https://docs.rs/totp-rs). Enrollment is a two-step dance so a misconfigured authenticator app can't accidentally lock the user out.
 
 ```http
-POST /api/workspaces/:workspace/apps/:app/auth/totp/enroll       [user token]
+POST /api/workspaces/:workspace/auth/totp/enroll       [user token]
   → returns { "secret": "...", "qr_url": "otpauth://..." }
 
-POST /api/workspaces/:workspace/apps/:app/auth/totp/confirm      [user token]
+POST /api/workspaces/:workspace/auth/totp/confirm      [user token]
   { "code": "123456" }
   → 200, TOTP is now active for this user
 
-POST /api/workspaces/:workspace/apps/:app/auth/totp/disable      [user token]
+POST /api/workspaces/:workspace/auth/totp/disable      [user token]
   { "code": "123456" }
 ```
 
 After enrollment, the regular login becomes a two-step flow:
 
 ```http
-POST /api/workspaces/:workspace/apps/:app/auth/users/login
+POST /api/workspaces/:workspace/auth/users/login
   { "email": "...", "password": "..." }
   → 202  { "mfa_required": true, "challenge_id": "..." }
 
-POST /api/workspaces/:workspace/apps/:app/auth/users/login/totp
+POST /api/workspaces/:workspace/auth/users/login/totp
   { "challenge_id": "...", "code": "123456" }
   → 200  { access_token, refresh_token, user }
 ```
 
-App admins can force-unenroll a user with `DELETE /api/workspaces/:workspace/apps/:app/users/:id/totp` (recovery flow).
+Workspace admins can force-unenroll a user with `DELETE /api/workspaces/:workspace/users/:id/totp` (recovery flow).
 
 ## OAuth2 / OIDC
 
-Built on the [`oauth2`](https://docs.rs/oauth2) crate. Providers are configured **per app** by an admin:
+Built on the [`oauth2`](https://docs.rs/oauth2) crate. Providers are configured **per workspace** by an admin — once enabled they apply to every app in the workspace:
 
 ```http
-PUT /api/workspaces/:workspace/apps/:app/auth/oauth/providers/google
+PUT /api/workspaces/:workspace/auth/oauth/providers/google
 {
   "client_id":     "...",
   "client_secret": "...",       // optional on update; preserved if omitted
@@ -154,19 +154,20 @@ The dashboard ships with **Google**, **GitHub**, and **Microsoft** presets — p
 ### End-user flow
 
 ```http
-GET /api/workspaces/:workspace/apps/:app/auth/oauth/google/authorize?redirect_uri=https://app/cb
+GET /api/workspaces/:workspace/auth/oauth/google/authorize?redirect_uri=https://app/cb
   → 200 { authorize_url, state }
   The authorize URL carries client_id, redirect_uri, scope,
   response_type=code, state, code_challenge, code_challenge_method=S256.
 
-POST /api/workspaces/:workspace/apps/:app/auth/oauth/google/callback
+POST /api/workspaces/:workspace/auth/oauth/google/callback
   { "code": "...", "state": "..." }
   → 200  { access_token, refresh_token, user }
 ```
 
-State is single-use and bound to the app. On first sign-in via OAuth,
-a user row is created with `has_password = false`. Subsequent logins
-match by `email` within the same app.
+State is single-use and bound to the workspace. On first sign-in via
+OAuth, a user row is created in `workspace.db` with
+`has_password = false`. Subsequent logins match by `email` within the
+same workspace, so the user can hit any app in it with one identity.
 
 ::: tip PKCE everywhere
 Every flow is **PKCE-protected (RFC 7636, S256)** — the server mints

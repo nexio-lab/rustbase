@@ -1,15 +1,16 @@
-//! Admin CRUD for per-app OAuth provider configuration.
+//! Admin CRUD for per-workspace OAuth provider configuration.
 //!
-//! Four endpoints under `/api/workspaces/:workspace/apps/:app/auth/oauth/providers`:
+//! Four endpoints under `/api/workspaces/:workspace/auth/oauth/providers`:
 //!
 //! - `GET    /`             list providers (summary; no secrets)
 //! - `GET    /:provider`    fetch one provider (summary; no secret)
 //! - `PUT    /:provider`    upsert provider + client_secret
 //! - `DELETE /:provider`    remove the row
 //!
-//! Auth: requires master OR workspace-admin of the target workspace OR app-admin
-//! of the target app — `AdminAuth::require_app_access` enforces the
-//! matrix.
+//! Auth: requires master OR workspace-admin of the target workspace —
+//! `AdminAuth::require_workspace_access` enforces the matrix.
+//! Workspace-shared identity means a provider configured here applies
+//! to every app in the workspace.
 //!
 //! Secrets handling:
 //!
@@ -25,23 +26,16 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
 };
-use rustbase_core::{AppId, CoreError, WorkspaceId};
+use rustbase_core::{CoreError, WorkspaceId};
 use rustbase_db::oauth_providers::{
     self, OAuthProvider, OAuthProviderConfig, OAuthProviderSummary,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::auth::{AdminAuth, require_app_exists};
+use crate::auth::{AdminAuth, require_workspace_exists};
 use crate::error::ApiError;
 use crate::state::AppState;
 
-/// PUT body. `client_secret` is plaintext — server encrypts.
-///
-/// `client_secret` is optional on edit: when absent (or empty), the
-/// existing ciphertext is preserved. Create-without-secret is rejected
-/// with 400 since there's nothing to keep. This avoids forcing the
-/// admin UI to re-show the plaintext secret in an edit form just so
-/// the user can resubmit it.
 #[derive(Debug, Deserialize)]
 pub struct PutProviderBody {
     pub client_id: String,
@@ -67,26 +61,26 @@ impl From<OAuthProviderSummary> for ProviderResponse {
     }
 }
 
-/// `GET /api/workspaces/:workspace/apps/:app/auth/oauth/providers`.
+/// `GET /api/workspaces/:workspace/auth/oauth/providers`.
 pub async fn list(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((workspace, app)): Path<(String, String)>,
+    Path(workspace): Path<String>,
 ) -> Result<Json<Vec<ProviderResponse>>, ApiError> {
-    auth.require_app_access(&workspace, &app)?;
-    let pool = app_pool(&state, &workspace, &app).await?;
+    auth.require_workspace_access(&workspace)?;
+    let pool = workspace_pool(&state, &workspace).await?;
     let rows = oauth_providers::list_providers(&pool).await?;
     Ok(Json(rows.into_iter().map(ProviderResponse::from).collect()))
 }
 
-/// `GET /api/workspaces/:workspace/apps/:app/auth/oauth/providers/:provider`.
+/// `GET /api/workspaces/:workspace/auth/oauth/providers/:provider`.
 pub async fn get(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((workspace, app, provider)): Path<(String, String, String)>,
+    Path((workspace, provider)): Path<(String, String)>,
 ) -> Result<Json<ProviderResponse>, ApiError> {
-    auth.require_app_access(&workspace, &app)?;
-    let pool = app_pool(&state, &workspace, &app).await?;
+    auth.require_workspace_access(&workspace)?;
+    let pool = workspace_pool(&state, &workspace).await?;
     let row = oauth_providers::find_provider(&pool, &provider)
         .await?
         .ok_or(ApiError::Core(CoreError::NotFound {
@@ -100,15 +94,15 @@ pub async fn get(
     }))
 }
 
-/// `PUT /api/workspaces/:workspace/apps/:app/auth/oauth/providers/:provider`.
+/// `PUT /api/workspaces/:workspace/auth/oauth/providers/:provider`.
 pub async fn put(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((workspace, app, provider)): Path<(String, String, String)>,
+    Path((workspace, provider)): Path<(String, String)>,
     Json(body): Json<PutProviderBody>,
 ) -> Result<Json<ProviderResponse>, ApiError> {
-    auth.require_app_access(&workspace, &app)?;
-    let pool = app_pool(&state, &workspace, &app).await?;
+    auth.require_workspace_access(&workspace)?;
+    let pool = workspace_pool(&state, &workspace).await?;
 
     let secret_enc = match body.client_secret.as_deref().filter(|s| !s.is_empty()) {
         Some(plain) => {
@@ -137,7 +131,7 @@ pub async fn put(
     )
     .await?;
 
-    tracing::info!(workspace = %workspace, app = %app, provider = %provider, "OAuth provider upserted");
+    tracing::info!(workspace = %workspace, provider = %provider, "OAuth provider upserted");
     Ok(Json(ProviderResponse {
         provider,
         client_id: body.client_id,
@@ -145,14 +139,14 @@ pub async fn put(
     }))
 }
 
-/// `DELETE /api/workspaces/:workspace/apps/:app/auth/oauth/providers/:provider`.
+/// `DELETE /api/workspaces/:workspace/auth/oauth/providers/:provider`.
 pub async fn delete(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((workspace, app, provider)): Path<(String, String, String)>,
+    Path((workspace, provider)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    auth.require_app_access(&workspace, &app)?;
-    let pool = app_pool(&state, &workspace, &app).await?;
+    auth.require_workspace_access(&workspace)?;
+    let pool = workspace_pool(&state, &workspace).await?;
     let n = oauth_providers::delete_provider(&pool, &provider).await?;
     if n == 0 {
         return Err(ApiError::Core(CoreError::NotFound {
@@ -160,21 +154,14 @@ pub async fn delete(
             id: provider,
         }));
     }
-    tracing::info!(workspace = %workspace, app = %app, provider = %provider, "OAuth provider deleted");
+    tracing::info!(workspace = %workspace, provider = %provider, "OAuth provider deleted");
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn app_pool(
-    state: &AppState,
-    workspace: &str,
-    app: &str,
-) -> Result<sqlx::SqlitePool, ApiError> {
-    require_app_exists(state, workspace, app).await?;
+async fn workspace_pool(state: &AppState, workspace: &str) -> Result<sqlx::SqlitePool, ApiError> {
+    require_workspace_exists(state, workspace).await?;
     Ok(state
-        .apps
-        .pool_for(
-            &WorkspaceId::from(workspace.to_string()),
-            &AppId::from(app.to_string()),
-        )
+        .workspaces
+        .pool_for(&WorkspaceId::from(workspace.to_string()))
         .await?)
 }

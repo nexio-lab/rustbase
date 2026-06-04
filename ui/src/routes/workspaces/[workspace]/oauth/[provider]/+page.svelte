@@ -11,7 +11,6 @@
 	import Breadcrumbs from '$lib/Breadcrumbs.svelte';
 
 	const workspace = $derived(page.params.workspace);
-	const app = $derived(page.params.app);
 	const slug = $derived(page.params.provider);
 	const isNew = $derived(slug === 'new');
 
@@ -89,7 +88,7 @@
 				return;
 			}
 			const got = await api.get<OAuthProvider>(
-				`/api/workspaces/${workspace}/apps/${app}/auth/oauth/providers/${slug}`
+				`/api/workspaces/${workspace}/auth/oauth/providers/${slug}`
 			);
 			providerSlug = got.provider;
 			clientId = got.client_id;
@@ -104,7 +103,6 @@
 
 	$effect(() => {
 		workspace;
-		app;
 		slug;
 		load();
 	});
@@ -143,10 +141,10 @@
 				return;
 			}
 			await api.put<OAuthProvider>(
-				`/api/workspaces/${workspace}/apps/${app}/auth/oauth/providers/${finalSlug}`,
+				`/api/workspaces/${workspace}/auth/oauth/providers/${finalSlug}`,
 				body
 			);
-			await goto(`/workspaces/${workspace}/apps/${app}/oauth`);
+			await goto(`/workspaces/${workspace}/oauth`);
 		} catch (e) {
 			formError = e instanceof ApiError ? e.message : String(e);
 		} finally {
@@ -160,8 +158,8 @@
 		busy = true;
 		formError = null;
 		try {
-			await api.delete(`/api/workspaces/${workspace}/apps/${app}/auth/oauth/providers/${slug}`);
-			await goto(`/workspaces/${workspace}/apps/${app}/oauth`);
+			await api.delete(`/api/workspaces/${workspace}/auth/oauth/providers/${slug}`);
+			await goto(`/workspaces/${workspace}/oauth`);
 		} catch (e) {
 			formError = e instanceof ApiError ? e.message : String(e);
 			busy = false;
@@ -173,8 +171,7 @@
 	items={[
 		{ label: 'Workspaces', href: '/workspaces' },
 		{ label: workspace, href: `/workspaces/${workspace}` },
-		{ label: app, href: `/workspaces/${workspace}/apps/${app}` },
-		{ label: 'OAuth providers', href: `/workspaces/${workspace}/apps/${app}/oauth` },
+		{ label: 'OAuth providers', href: `/workspaces/${workspace}/oauth` },
 		{ label: isNew ? 'New' : slug }
 	]}
 />
@@ -350,7 +347,7 @@
 			<button type="submit" class="btn-primary" disabled={busy}>
 				{busy ? 'Saving…' : isNew ? 'Create provider' : 'Save changes'}
 			</button>
-			<a href="/workspaces/{workspace}/apps/{app}/oauth" class="btn-secondary">Cancel</a>
+			<a href="/workspaces/{workspace}/oauth" class="btn-secondary">Cancel</a>
 		</div>
 	</form>
 {/if}

@@ -179,12 +179,12 @@ pub async fn delete_user(pool: &SqlitePool, id: &str) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::migrations::{APP_MIGRATIONS, apply_migrations};
+    use crate::migrations::{WORKSPACE_MIGRATIONS, apply_migrations};
     use crate::pool::open_memory_pool;
 
     async fn fresh_pool() -> SqlitePool {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(pool.clone(), APP_MIGRATIONS)
+        apply_migrations(pool.clone(), WORKSPACE_MIGRATIONS)
             .await
             .unwrap();
         pool

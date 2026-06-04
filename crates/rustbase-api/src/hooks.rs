@@ -17,7 +17,7 @@ use axum::{
     extract::{Path, State},
 };
 use rustbase_core::{AppId, CoreError, WorkspaceId};
-use rustbase_db::{apps::find_app, workspaces::find_realm};
+use rustbase_db::{apps::find_app, workspaces::find_workspace};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -251,7 +251,7 @@ fn mtime_rfc3339(mt: Option<SystemTime>) -> String {
 }
 
 async fn require_app_exists(state: &AppState, workspace: &str, app: &str) -> Result<(), ApiError> {
-    find_realm(state.system.pool(), workspace)
+    find_workspace(state.system.pool(), workspace)
         .await?
         .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(
             workspace.to_string(),

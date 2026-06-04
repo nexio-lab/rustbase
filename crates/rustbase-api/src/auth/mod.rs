@@ -28,24 +28,20 @@ pub use register::user_register;
 
 use rand_core::{OsRng, RngCore};
 use rustbase_core::{CoreError, WorkspaceId};
-use rustbase_db::{apps::find_app, workspaces::find_realm};
+use rustbase_db::{apps::find_app, workspaces::find_workspace};
 
 use crate::error::ApiError;
 use crate::state::AppState;
 
-/// Verify that `(workspace, app)` exists. Used by every end-user / OAuth
-/// handler: paths come from the URL and must be validated before we
-/// touch the per-app pool.
+/// Verify that `(workspace, app)` exists. Used by every record / file
+/// / collection / per-app handler: paths come from the URL and must
+/// be validated before we touch the per-app pool.
 pub async fn require_app_exists(
     state: &AppState,
     workspace: &str,
     app: &str,
 ) -> Result<(), ApiError> {
-    find_realm(state.system.pool(), workspace)
-        .await?
-        .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(
-            workspace.to_string(),
-        )))?;
+    require_workspace_exists(state, workspace).await?;
     let workspace_pool = state
         .workspaces
         .pool_for(&WorkspaceId::from(workspace.to_string()))
@@ -56,6 +52,17 @@ pub async fn require_app_exists(
             workspace: workspace.to_string(),
             app: app.to_string(),
         }))?;
+    Ok(())
+}
+
+/// Verify that `workspace` exists. Used by every workspace-scoped
+/// end-user / OAuth handler before touching the workspace pool.
+pub async fn require_workspace_exists(state: &AppState, workspace: &str) -> Result<(), ApiError> {
+    find_workspace(state.system.pool(), workspace)
+        .await?
+        .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(
+            workspace.to_string(),
+        )))?;
     Ok(())
 }
 

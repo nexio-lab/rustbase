@@ -1,19 +1,19 @@
-//! Password-reset endpoints.
+//! Password-reset endpoints, workspace-scoped to match the shared
+//! identity pool.
 //!
-//! - `POST /api/workspaces/:workspace/apps/:app/auth/password-reset/request`
-//!   Anonymous. Body: `{ "email": "..." }`. Always answers
-//!   `202 Accepted` with the same generic message so the response
-//!   can't be used to enumerate which addresses are registered. A
-//!   reset token is issued and mailed *only* when the email
-//!   actually resolves to a user in this app; the no-match case
-//!   is silent.
+//! `POST /api/workspaces/:workspace/auth/password-reset/request` is
+//! anonymous. Body: `{ "email": "..." }`. Always answers `202 Accepted`
+//! with the same generic message so the response can't be used to
+//! enumerate which addresses are registered. A reset token is issued
+//! and mailed *only* when the email resolves to a user in this
+//! workspace; the no-match case is silent.
 //!
-//! - `POST /api/workspaces/:workspace/apps/:app/auth/password-reset/confirm`
-//!   Anonymous. Body: `{ "token": "...", "new_password": "..." }`.
-//!   Consumes the token atomically, rehashes the new password, and
-//!   replaces the stored hash. On success, every other pending
-//!   reset token for the same user is invalidated so a parallel
-//!   in-flight request becomes a dead letter.
+//! `POST /api/workspaces/:workspace/auth/password-reset/confirm` is
+//! also anonymous. Body: `{ "token": "...", "new_password": "..." }`.
+//! Consumes the token atomically, rehashes the new password, and
+//! replaces the stored hash. On success, every other pending reset
+//! token for the same user is invalidated so a parallel in-flight
+//! request becomes a dead letter.
 //!
 //! Tokens are 32 random bytes hex-encoded, with a 1-hour TTL — the
 //! reset window is deliberately tighter than email verification.
@@ -25,7 +25,7 @@ use axum::{
 };
 use rand_core::{OsRng, RngCore};
 use rustbase_auth::hash_password;
-use rustbase_core::{AppId, CoreError, EmailMessage, WorkspaceId};
+use rustbase_core::{CoreError, EmailMessage, WorkspaceId};
 use rustbase_db::{
     password_resets::{self, ConsumeOutcome},
     users::{find_user_by_email, set_password_hash},
@@ -33,7 +33,7 @@ use rustbase_db::{
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
-use crate::auth::require_app_exists;
+use crate::auth::require_workspace_exists;
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -64,21 +64,17 @@ pub struct ResetConfirmResponse {
     pub reset: bool,
 }
 
-/// Always returns 202. If the email matches a user, a token is issued
-/// and mailed in the background of this same request; if not, nothing
-/// happens but the caller can't tell the difference.
 pub async fn request(
     State(state): State<AppState>,
-    Path((workspace, app)): Path<(String, String)>,
+    Path(workspace): Path<String>,
     Json(req): Json<ResetRequest>,
 ) -> Result<(StatusCode, Json<ResetRequestResponse>), ApiError> {
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
-    require_app_exists(&state, &workspace, &app).await?;
+    require_workspace_exists(&state, &workspace).await?;
 
     let workspace_id = WorkspaceId::from(workspace.clone());
-    let app_id = AppId::from(app.clone());
-    let pool = state.apps.pool_for(&workspace_id, &app_id).await?;
+    let pool = state.workspaces.pool_for(&workspace_id).await?;
 
     let generic_response = (
         StatusCode::ACCEPTED,
@@ -88,10 +84,8 @@ pub async fn request(
     );
 
     let Some(user) = find_user_by_email(&pool, &req.email).await? else {
-        // Don't leak the absence of the email — same response shape.
         tracing::info!(
             workspace = %workspace,
-            app = %app,
             email = %req.email,
             "password reset requested for unknown email"
         );
@@ -115,17 +109,17 @@ pub async fn request(
     let msg = EmailMessage::new(
         SYSTEM_FROM_ADDRESS,
         &user.email,
-        format!("Reset your password for {workspace}/{app}"),
+        format!("Reset your password for {workspace}"),
         body,
     );
     if let Err(e) = state.mailer.send(msg).await {
         tracing::error!(
-            error = %e, workspace = %workspace, app = %app, user_id = %user.id,
+            error = %e, workspace = %workspace, user_id = %user.id,
             "mailer dropped reset email"
         );
     } else {
         tracing::info!(
-            workspace = %workspace, app = %app, user_id = %user.id,
+            workspace = %workspace, user_id = %user.id,
             "password reset token issued + mailed"
         );
     }
@@ -135,15 +129,14 @@ pub async fn request(
 
 pub async fn confirm(
     State(state): State<AppState>,
-    Path((workspace, app)): Path<(String, String)>,
+    Path(workspace): Path<String>,
     Json(req): Json<ResetConfirm>,
 ) -> Result<Json<ResetConfirmResponse>, ApiError> {
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
-    require_app_exists(&state, &workspace, &app).await?;
+    require_workspace_exists(&state, &workspace).await?;
     let workspace_id = WorkspaceId::from(workspace.clone());
-    let app_id = AppId::from(app.clone());
-    let pool = state.apps.pool_for(&workspace_id, &app_id).await?;
+    let pool = state.workspaces.pool_for(&workspace_id).await?;
 
     let user_id = match password_resets::consume(&pool, &req.token).await? {
         ConsumeOutcome::Ok { user_id } => user_id,
@@ -171,7 +164,6 @@ pub async fn confirm(
     let invalidated = password_resets::invalidate_all_for_user(&pool, &user_id).await?;
     tracing::info!(
         workspace = %workspace,
-        app = %app,
         user_id = %user_id,
         invalidated_siblings = invalidated,
         "password reset confirmed"

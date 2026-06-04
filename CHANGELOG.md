@@ -67,9 +67,35 @@ versioning follows [Semantic Versioning](https://semver.org/).
   types (`RealmId`, `RealmAdmin`, `RealmCtx`, `RealmPoolManager` →
   `Workspace*`), and migration constants (`REALM_MIGRATIONS` →
   `WORKSPACE_MIGRATIONS`).
-- The rename is purely lexical — semantics are unchanged. End-user
-  identity stays per-app for now; workspace-shared identity is the
-  next milestone in this line.
+- **End-user identity moves from per-app to per-workspace.** A single
+  `(email, workspace)` pair is one identity across every app in that
+  workspace. Concretely:
+    - User tables (`users`, `oauth_providers`, `user_oauth_links`,
+      `_email_verifications`, `_password_resets`, `_email_otps`,
+      `_user_totp`, `_mfa_challenges`, `_oauth_states`) move from
+      app-scope `data.db` to workspace-scope `workspace.db`.
+    - Every auth route loses its `/apps/:app/` segment. New paths:
+      `POST /api/workspaces/:workspace/auth/users/login`,
+      `…/auth/users/register`, `…/auth/users/refresh`,
+      `…/auth/verify-email/{request,confirm}`,
+      `…/auth/password-reset/{request,confirm}`,
+      `…/auth/otp/{request,login}`,
+      `…/auth/totp/{enroll,confirm,disable}`,
+      `…/auth/users/login/totp`,
+      `…/auth/oauth/{provider}/{authorize,callback}`,
+      `…/auth/oauth/providers/[/{provider}]`.
+    - Admin user management routes likewise drop the `/apps/:app/`
+      segment: `GET/PATCH/DELETE /api/workspaces/:workspace/users[/{id}…]`.
+    - User access tokens lose the `app` claim. The per-app target
+      now comes from the URL path on data routes
+      (`/api/workspaces/:workspace/apps/:app/...`) rather than the
+      token claim.
+    - `PrincipalAuth::require_user_in_app(workspace, app)` →
+      `require_user_in_workspace(workspace)`; `user_app()` removed.
+    - User-lifecycle hooks (`onUserBeforeLogin`,
+      `onUserAfterLogin`, `onUserAfterRegister`) fan out across
+      every app in the workspace until workspace-scoped hook
+      loading lands — any app's hook can veto the login.
 - No automatic data migration: existing 0.1.x installs need to
   point at a fresh `data/` directory or rename the layout manually
   before upgrading. The maintainer's own dev DB was bootstrapped from

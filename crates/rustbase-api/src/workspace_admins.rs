@@ -12,8 +12,8 @@ use axum::{
 use rustbase_auth::hash_password;
 use rustbase_core::{CoreError, WorkspaceId};
 use rustbase_db::{
-    admins::{find_realm_admin_by_email, insert_realm_admin},
-    workspaces::find_realm,
+    admins::{find_workspace_admin_by_email, insert_realm_admin},
+    workspaces::find_workspace,
 };
 use serde::{Deserialize, Serialize};
 use validator::Validate;
@@ -53,7 +53,7 @@ pub async fn create(
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
 
     // Verify the workspace exists in system.db before touching its DB.
-    find_realm(state.system.pool(), &workspace)
+    find_workspace(state.system.pool(), &workspace)
         .await?
         .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(
             workspace.clone(),
@@ -62,7 +62,7 @@ pub async fn create(
     let workspace_id = WorkspaceId::from(workspace.clone());
     let pool = state.workspaces.pool_for(&workspace_id).await?;
 
-    if find_realm_admin_by_email(&pool, &req.email)
+    if find_workspace_admin_by_email(&pool, &req.email)
         .await?
         .is_some()
     {

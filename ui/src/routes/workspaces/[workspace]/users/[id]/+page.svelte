@@ -5,7 +5,6 @@
 	import Breadcrumbs from '$lib/Breadcrumbs.svelte';
 
 	const workspace = $derived(page.params.workspace);
-	const app = $derived(page.params.app);
 	const id = $derived(page.params.id);
 
 	let user = $state<AdminUserDetail | null>(null);
@@ -17,7 +16,7 @@
 		loading = true;
 		loadError = null;
 		try {
-			user = await api.get<AdminUserDetail>(`/api/workspaces/${workspace}/apps/${app}/users/${id}`);
+			user = await api.get<AdminUserDetail>(`/api/workspaces/${workspace}/users/${id}`);
 		} catch (e) {
 			loadError = e instanceof ApiError ? e.message : String(e);
 		} finally {
@@ -27,7 +26,6 @@
 
 	$effect(() => {
 		workspace;
-		app;
 		id;
 		load();
 	});
@@ -36,7 +34,7 @@
 		if (!user) return;
 		busy = true;
 		try {
-			await api.patch(`/api/workspaces/${workspace}/apps/${app}/users/${id}/verify`, {});
+			await api.patch(`/api/workspaces/${workspace}/users/${id}/verify`, {});
 			await load();
 		} catch (e) {
 			alert(e instanceof ApiError ? e.message : String(e));
@@ -49,7 +47,7 @@
 		if (!confirm('Remove TOTP enrolment for this user?\n\nThey will be able to log in without the second factor until they re-enroll.')) return;
 		busy = true;
 		try {
-			await api.delete(`/api/workspaces/${workspace}/apps/${app}/users/${id}/totp`);
+			await api.delete(`/api/workspaces/${workspace}/users/${id}/totp`);
 			await load();
 		} catch (e) {
 			alert(e instanceof ApiError ? e.message : String(e));
@@ -68,8 +66,8 @@
 			return;
 		busy = true;
 		try {
-			await api.delete(`/api/workspaces/${workspace}/apps/${app}/users/${id}`);
-			await goto(`/workspaces/${workspace}/apps/${app}/users`);
+			await api.delete(`/api/workspaces/${workspace}/users/${id}`);
+			await goto(`/workspaces/${workspace}/users`);
 		} catch (e) {
 			alert(e instanceof ApiError ? e.message : String(e));
 			busy = false;
@@ -81,8 +79,7 @@
 	items={[
 		{ label: 'Workspaces', href: '/workspaces' },
 		{ label: workspace, href: `/workspaces/${workspace}` },
-		{ label: app, href: `/workspaces/${workspace}/apps/${app}` },
-		{ label: 'Users', href: `/workspaces/${workspace}/apps/${app}/users` },
+		{ label: 'Users', href: `/workspaces/${workspace}/users` },
 		{ label: user?.email ?? id.slice(0, 8) }
 	]}
 />

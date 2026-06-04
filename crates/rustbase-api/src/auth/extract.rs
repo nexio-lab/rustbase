@@ -61,7 +61,7 @@ impl AdminAuth {
     /// Master admins can act on every workspace; workspace admins only on the
     /// workspace in their token claim; app admins inherit workspace access from
     /// their app's workspace claim.
-    pub fn require_realm_access(&self, workspace: &str) -> Result<(), ApiError> {
+    pub fn require_workspace_access(&self, workspace: &str) -> Result<(), ApiError> {
         match self.claims.role {
             TokenRole::MasterAdmin => Ok(()),
             TokenRole::WorkspaceAdmin | TokenRole::AppAdmin => {
@@ -140,8 +140,9 @@ impl PrincipalAuth {
         }
     }
 
-    /// Workspace the (user) principal is bound to, or `None` if this is an
-    /// admin principal.
+    /// Workspace the (user) principal is bound to, or `None` if this
+    /// is an admin principal. With workspace-shared identity, user
+    /// tokens carry only a `workspace` claim — no `app`.
     pub fn user_workspace(&self) -> Option<&str> {
         match self.claims.role {
             TokenRole::User => self.claims.workspace.as_deref(),
@@ -149,22 +150,12 @@ impl PrincipalAuth {
         }
     }
 
-    /// App the (user) principal is bound to. Since the refactor that
-    /// moved users from workspace to app, every TokenRole::User token must
-    /// carry both workspace and app claims.
-    pub fn user_app(&self) -> Option<&str> {
-        match self.claims.role {
-            TokenRole::User => self.claims.app.as_deref(),
-            _ => None,
-        }
-    }
-
-    /// Convenience: assert the (user) principal owns `(workspace, app)`.
-    /// Returns `Forbidden` for admins (they don't match a user route),
-    /// for users in another workspace/app, or for tokens missing claims.
-    pub fn require_user_in_app(&self, workspace: &str, app: &str) -> Result<(), ApiError> {
-        match (self.user_workspace(), self.user_app()) {
-            (Some(r), Some(a)) if r == workspace && a == app => Ok(()),
+    /// Convenience: assert the (user) principal owns `workspace`.
+    /// Returns `Forbidden` for admins (they don't match a user route)
+    /// or for users in another workspace.
+    pub fn require_user_in_workspace(&self, workspace: &str) -> Result<(), ApiError> {
+        match self.user_workspace() {
+            Some(w) if w == workspace => Ok(()),
             _ => Err(ApiError::Core(CoreError::Forbidden)),
         }
     }

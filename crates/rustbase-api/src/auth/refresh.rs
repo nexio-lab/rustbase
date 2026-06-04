@@ -5,7 +5,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use rustbase_auth::{TokenRole, build_claims};
-use rustbase_core::{AppId, CoreError, WorkspaceId};
+use rustbase_core::{CoreError, WorkspaceId};
 use rustbase_db::tokens::{
     SubjectKind, find_active_refresh_token, insert_refresh_token, revoke_refresh_token,
 };
@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use super::cookies::{
     CookieFlags, REFRESH_COOKIE, build_access_cookie, build_refresh_cookie, read_cookie,
 };
-use super::{default_access_ttl, default_refresh_ttl, new_refresh_token, require_app_exists};
+use super::{default_access_ttl, default_refresh_ttl, new_refresh_token, require_workspace_exists};
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -112,18 +112,17 @@ pub async fn master_admin_refresh(
 
 pub async fn user_refresh(
     State(state): State<AppState>,
-    Path((workspace, app)): Path<(String, String)>,
+    Path(workspace): Path<String>,
     headers: HeaderMap,
     body: Option<Json<RefreshRequest>>,
 ) -> Result<Response, ApiError> {
-    require_app_exists(&state, &workspace, &app).await?;
+    require_workspace_exists(&state, &workspace).await?;
     let req = body.map(|j| j.0).unwrap_or_default();
     let presented =
         pick_refresh_token(&headers, &req).ok_or(ApiError::Core(CoreError::Unauthorized))?;
 
     let workspace_id = WorkspaceId::from(workspace.clone());
-    let app_id = AppId::from(app.clone());
-    let pool = state.apps.pool_for(&workspace_id, &app_id).await?;
+    let pool = state.workspaces.pool_for(&workspace_id).await?;
 
     let existing = find_active_refresh_token(&pool, &presented, SubjectKind::User)
         .await?
@@ -144,7 +143,8 @@ pub async fn user_refresh(
         existing.subject_id,
         TokenRole::User,
         Some(workspace),
-        Some(app),
+        // Workspace-shared identity → user tokens carry no `app`.
+        None,
         default_access_ttl(),
     );
     let access_token = state.jwt.issue(&claims)?;

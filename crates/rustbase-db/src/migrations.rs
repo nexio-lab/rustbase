@@ -188,10 +188,11 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
     ),
 ];
 
-pub const WORKSPACE_MIGRATIONS: &[Migration] = &[Migration::new(
-    "20260520_000001_initial_workspace",
-    MigrationScope::Workspace,
-    r#"
+pub const WORKSPACE_MIGRATIONS: &[Migration] = &[
+    Migration::new(
+        "20260520_000001_initial_workspace",
+        MigrationScope::Workspace,
+        r#"
     CREATE TABLE apps (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -246,7 +247,106 @@ pub const WORKSPACE_MIGRATIONS: &[Migration] = &[Migration::new(
     );
     CREATE INDEX audit_log_ts ON audit_log(ts);
     "#,
-)];
+    ),
+    Migration::new(
+        // End-user identity is workspace-scoped: one `users` row per email
+        // per workspace, usable across every app in that workspace
+        // (PocketBase / Supabase shape). OAuth providers, OTP, verify-email,
+        // password-reset, TOTP, MFA challenges and OAuth state nonces all
+        // sit alongside. End-user refresh tokens reuse the workspace-level
+        // `_refresh_tokens` table (subject_kind discriminates).
+        "20260606_000001_workspace_user_identity",
+        MigrationScope::Workspace,
+        r#"
+    CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        password_hash TEXT,
+        verified INTEGER NOT NULL DEFAULT 0,
+        last_login TEXT,
+        created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE oauth_providers (
+        provider TEXT PRIMARY KEY,
+        client_id TEXT NOT NULL,
+        client_secret_enc TEXT NOT NULL,
+        config_json TEXT
+    );
+
+    CREATE TABLE user_oauth_links (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL,
+        provider_user_id TEXT NOT NULL,
+        PRIMARY KEY (user_id, provider)
+    );
+
+    CREATE TABLE _email_verifications (
+        token TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        issued_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT
+    );
+    CREATE INDEX email_verifications_user ON _email_verifications(user_id);
+
+    CREATE TABLE _password_resets (
+        token TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        issued_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT
+    );
+    CREATE INDEX password_resets_user ON _password_resets(user_id);
+
+    -- One-time numeric codes for passwordless / 2FA email login.
+    -- Keyed by email rather than user_id so OTP can double as a
+    -- sign-up channel (the user row may not exist yet on first
+    -- request). New requests for the same email invalidate prior
+    -- unconsumed codes (single in-flight code per email).
+    CREATE TABLE _email_otps (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL,
+        email TEXT NOT NULL,
+        issued_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX email_otps_lookup ON _email_otps(email, consumed_at);
+
+    -- CSRF state nonces + PKCE verifier for the OAuth2 authorization
+    -- code flow. Issued by /authorize, consumed at /callback.
+    CREATE TABLE _oauth_states (
+        state TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        redirect_uri TEXT NOT NULL,
+        issued_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT,
+        code_verifier TEXT
+    );
+    CREATE INDEX oauth_states_provider ON _oauth_states(provider, consumed_at);
+
+    CREATE TABLE _user_totp (
+        user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        secret_b32 TEXT NOT NULL,
+        enrolled_at TEXT NOT NULL,
+        confirmed_at TEXT,
+        enabled INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE _mfa_challenges (
+        token TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        issued_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT
+    );
+    CREATE INDEX mfa_challenges_user ON _mfa_challenges(user_id, consumed_at);
+    "#,
+    ),
+];
 
 pub const APP_MIGRATIONS: &[Migration] = &[
     Migration::new(
@@ -300,128 +400,6 @@ pub const APP_MIGRATIONS: &[Migration] = &[
         CREATE INDEX files_created_at ON _files(created_at);
         "#,
     ),
-    // End-user identity moved out of the workspace into the app. Each app
-    // gets its own users table, OAuth provider config, and auxiliary
-    // auth tables. Workspaces still own the admin tiers (workspace/app admins);
-    // they no longer own end-users.
-    Migration::new(
-        "20260601_000001_app_users",
-        MigrationScope::App,
-        r#"
-        CREATE TABLE users (
-            id TEXT PRIMARY KEY,
-            email TEXT NOT NULL UNIQUE,
-            password_hash TEXT,
-            verified INTEGER NOT NULL DEFAULT 0,
-            last_login TEXT,
-            created_at TEXT NOT NULL
-        );
-
-        CREATE TABLE oauth_providers (
-            provider TEXT PRIMARY KEY,
-            client_id TEXT NOT NULL,
-            client_secret_enc TEXT NOT NULL,
-            config_json TEXT
-        );
-
-        CREATE TABLE user_oauth_links (
-            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            provider TEXT NOT NULL,
-            provider_user_id TEXT NOT NULL,
-            PRIMARY KEY (user_id, provider)
-        );
-
-        -- Refresh tokens for end-user subjects. Admin refresh tokens
-        -- stay in the workspace.db _refresh_tokens table.
-        CREATE TABLE _refresh_tokens (
-            token TEXT PRIMARY KEY,
-            subject_kind TEXT NOT NULL,
-            subject_id TEXT NOT NULL,
-            issued_at TEXT NOT NULL,
-            expires_at TEXT NOT NULL,
-            revoked INTEGER NOT NULL DEFAULT 0
-        );
-        CREATE INDEX refresh_tokens_subject ON _refresh_tokens(subject_kind, subject_id);
-
-        CREATE TABLE _email_verifications (
-            token TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            issued_at TEXT NOT NULL,
-            expires_at TEXT NOT NULL,
-            consumed_at TEXT
-        );
-        CREATE INDEX email_verifications_user ON _email_verifications(user_id);
-
-        CREATE TABLE _password_resets (
-            token TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            issued_at TEXT NOT NULL,
-            expires_at TEXT NOT NULL,
-            consumed_at TEXT
-        );
-        CREATE INDEX password_resets_user ON _password_resets(user_id);
-
-        -- One-time numeric codes for passwordless / 2FA email login.
-        -- Keyed by email rather than user_id because OTP doubles as a
-        -- sign-up channel: the user row may not exist yet on first
-        -- request. New requests for the same email invalidate prior
-        -- unconsumed codes (single in-flight code per email).
-        CREATE TABLE _email_otps (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            code TEXT NOT NULL,
-            email TEXT NOT NULL,
-            issued_at TEXT NOT NULL,
-            expires_at TEXT NOT NULL,
-            consumed_at TEXT,
-            attempts INTEGER NOT NULL DEFAULT 0
-        );
-        CREATE INDEX email_otps_lookup ON _email_otps(email, consumed_at);
-
-        -- CSRF state nonces for the OAuth2 authorization code flow.
-        -- Issued by /authorize, consumed at /callback.
-        CREATE TABLE _oauth_states (
-            state TEXT PRIMARY KEY,
-            provider TEXT NOT NULL,
-            redirect_uri TEXT NOT NULL,
-            issued_at TEXT NOT NULL,
-            expires_at TEXT NOT NULL,
-            consumed_at TEXT
-        );
-        CREATE INDEX oauth_states_provider ON _oauth_states(provider, consumed_at);
-
-        -- Per-user TOTP secret + MFA challenges.
-        CREATE TABLE _user_totp (
-            user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-            secret_b32 TEXT NOT NULL,
-            enrolled_at TEXT NOT NULL,
-            confirmed_at TEXT,
-            enabled INTEGER NOT NULL DEFAULT 0
-        );
-
-        CREATE TABLE _mfa_challenges (
-            token TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            issued_at TEXT NOT NULL,
-            expires_at TEXT NOT NULL,
-            consumed_at TEXT
-        );
-        CREATE INDEX mfa_challenges_user ON _mfa_challenges(user_id, consumed_at);
-        "#,
-    ),
-    // PKCE (RFC 7636). Every OAuth `/authorize` mints a `code_verifier`
-    // and persists it alongside the CSRF state; the matching
-    // `code_challenge = base64url(sha256(verifier))` is appended to the
-    // upstream authorize URL. `/callback` reads the verifier back and
-    // sends it on the token exchange. Defends against authorization-
-    // code interception on every provider — pure additive change, no
-    // configuration knobs.
-    Migration::new(
-        "20260604_000001_oauth_pkce",
-        MigrationScope::App,
-        r#"
-        ALTER TABLE _oauth_states ADD COLUMN code_verifier TEXT;
-        "#,
-    ),
 ];
 
 #[cfg(test)]
@@ -457,12 +435,26 @@ mod tests {
             .unwrap();
         assert_eq!(n, WORKSPACE_MIGRATIONS.len());
 
-        // Workspace-scope tables: apps + admin tiers. End-users moved to app.db.
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM apps")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count, 0);
+        // Workspace-scope tables: apps + admin tiers + workspace-shared
+        // user identity (users, oauth providers, OTP, TOTP, MFA).
+        for table in [
+            "apps",
+            "workspace_admins",
+            "app_admins",
+            "users",
+            "oauth_providers",
+            "user_oauth_links",
+            "_email_verifications",
+            "_password_resets",
+            "_email_otps",
+            "_oauth_states",
+            "_user_totp",
+            "_mfa_challenges",
+        ] {
+            let q = format!("SELECT COUNT(*) FROM {table}");
+            let count: i64 = sqlx::query_scalar(&q).fetch_one(&pool).await.unwrap();
+            assert_eq!(count, 0, "table {table} should be empty after migration");
+        }
     }
 
     #[tokio::test]

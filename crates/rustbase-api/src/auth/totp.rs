@@ -1,7 +1,8 @@
 //! TOTP second-factor: enrolment, confirmation, disable.
 //!
 //! Three user-authenticated endpoints under
-//! `/api/workspaces/:workspace/apps/:app/auth/totp/`.
+//! `/api/workspaces/:workspace/auth/totp/`. With workspace-shared
+//! identity, enabling TOTP gates every app in the workspace at once.
 //!
 //! `POST /enroll` starts (or restarts) enrolment. A fresh secret is
 //! stored in `_user_totp` in pending state. The response carries
@@ -31,7 +32,7 @@ use axum::{
 use chrono::Duration;
 use rand_core::{OsRng, RngCore};
 use rustbase_auth::{TokenRole, build_claims};
-use rustbase_core::{AppId, CoreError, WorkspaceId};
+use rustbase_core::{CoreError, WorkspaceId};
 use rustbase_db::{
     mfa_challenges::{self, ConsumeOutcome as MfaConsume},
     tokens::{SubjectKind, insert_refresh_token},
@@ -43,7 +44,9 @@ use totp_rs::{Algorithm, Secret, TOTP};
 
 use crate::auth::PrincipalAuth;
 use crate::auth::login::UserPublic;
-use crate::auth::{default_access_ttl, default_refresh_ttl, new_refresh_token, require_app_exists};
+use crate::auth::{
+    default_access_ttl, default_refresh_ttl, new_refresh_token, require_workspace_exists,
+};
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -78,13 +81,12 @@ pub struct StatusResponse {
 pub async fn enroll(
     auth: PrincipalAuth,
     State(state): State<AppState>,
-    Path((workspace, app)): Path<(String, String)>,
+    Path(workspace): Path<String>,
 ) -> Result<Json<EnrollResponse>, ApiError> {
-    auth.require_user_in_app(&workspace, &app)?;
-    require_app_exists(&state, &workspace, &app).await?;
+    auth.require_user_in_workspace(&workspace)?;
+    require_workspace_exists(&state, &workspace).await?;
     let workspace_id = WorkspaceId::from(workspace.clone());
-    let app_id = AppId::from(app.clone());
-    let pool = state.apps.pool_for(&workspace_id, &app_id).await?;
+    let pool = state.workspaces.pool_for(&workspace_id).await?;
 
     let user = find_user_by_id(&pool, &auth.subject_id)
         .await?
@@ -98,11 +100,11 @@ pub async fn enroll(
     let secret = Secret::generate_secret();
     let secret_b32 = secret.to_encoded().to_string();
 
-    let totp = build_totp(&secret_b32, &workspace, &app, &user.email)?;
+    let totp = build_totp(&secret_b32, &workspace, &user.email)?;
     let otpauth_url = totp.get_url();
 
     user_totp::enroll(&pool, &user.id, &secret_b32).await?;
-    tracing::info!(workspace = %workspace, app = %app, user_id = %user.id, "TOTP enrolment started");
+    tracing::info!(workspace = %workspace, user_id = %user.id, "TOTP enrolment started");
 
     Ok(Json(EnrollResponse {
         secret_b32,
@@ -110,18 +112,17 @@ pub async fn enroll(
     }))
 }
 
-/// `POST /api/workspaces/:workspace/apps/:app/auth/totp/confirm`.
+/// `POST /api/workspaces/:workspace/auth/totp/confirm`.
 pub async fn confirm(
     auth: PrincipalAuth,
     State(state): State<AppState>,
-    Path((workspace, app)): Path<(String, String)>,
+    Path(workspace): Path<String>,
     Json(body): Json<CodeBody>,
 ) -> Result<Json<StatusResponse>, ApiError> {
-    auth.require_user_in_app(&workspace, &app)?;
-    require_app_exists(&state, &workspace, &app).await?;
+    auth.require_user_in_workspace(&workspace)?;
+    require_workspace_exists(&state, &workspace).await?;
     let workspace_id = WorkspaceId::from(workspace.clone());
-    let app_id = AppId::from(app.clone());
-    let pool = state.apps.pool_for(&workspace_id, &app_id).await?;
+    let pool = state.workspaces.pool_for(&workspace_id).await?;
 
     let row = user_totp::find(&pool, &auth.subject_id)
         .await?
@@ -132,7 +133,7 @@ pub async fn confirm(
         .await?
         .ok_or(ApiError::Core(CoreError::Unauthorized))?;
 
-    let totp = build_totp(&row.secret_b32, &workspace, &app, &user.email)?;
+    let totp = build_totp(&row.secret_b32, &workspace, &user.email)?;
     if !check_code(&totp, &body.code)? {
         return Err(ApiError::Core(CoreError::Unauthorized));
     }
@@ -140,22 +141,21 @@ pub async fn confirm(
     if n == 0 {
         return Ok(Json(StatusResponse { status: "enabled" }));
     }
-    tracing::info!(workspace = %workspace, app = %app, user_id = %auth.subject_id, "TOTP confirmed");
+    tracing::info!(workspace = %workspace, user_id = %auth.subject_id, "TOTP confirmed");
     Ok(Json(StatusResponse { status: "enabled" }))
 }
 
-/// `POST /api/workspaces/:workspace/apps/:app/auth/totp/disable`.
+/// `POST /api/workspaces/:workspace/auth/totp/disable`.
 pub async fn disable(
     auth: PrincipalAuth,
     State(state): State<AppState>,
-    Path((workspace, app)): Path<(String, String)>,
+    Path(workspace): Path<String>,
     Json(body): Json<CodeBody>,
 ) -> Result<Json<StatusResponse>, ApiError> {
-    auth.require_user_in_app(&workspace, &app)?;
-    require_app_exists(&state, &workspace, &app).await?;
+    auth.require_user_in_workspace(&workspace)?;
+    require_workspace_exists(&state, &workspace).await?;
     let workspace_id = WorkspaceId::from(workspace.clone());
-    let app_id = AppId::from(app.clone());
-    let pool = state.apps.pool_for(&workspace_id, &app_id).await?;
+    let pool = state.workspaces.pool_for(&workspace_id).await?;
 
     let row = user_totp::find(&pool, &auth.subject_id)
         .await?
@@ -167,12 +167,12 @@ pub async fn disable(
         .await?
         .ok_or(ApiError::Core(CoreError::Unauthorized))?;
 
-    let totp = build_totp(&row.secret_b32, &workspace, &app, &user.email)?;
+    let totp = build_totp(&row.secret_b32, &workspace, &user.email)?;
     if !check_code(&totp, &body.code)? {
         return Err(ApiError::Core(CoreError::Unauthorized));
     }
     user_totp::disable(&pool, &auth.subject_id).await?;
-    tracing::info!(workspace = %workspace, app = %app, user_id = %auth.subject_id, "TOTP disabled");
+    tracing::info!(workspace = %workspace, user_id = %auth.subject_id, "TOTP disabled");
     Ok(Json(StatusResponse { status: "disabled" }))
 }
 
@@ -191,20 +191,19 @@ pub struct LoginTotpResponse {
     pub user: UserPublic,
 }
 
-/// `POST /api/workspaces/:workspace/apps/:app/auth/users/login/totp`.
+/// `POST /api/workspaces/:workspace/auth/users/login/totp`.
 ///
 /// Second step of the 2FA login. Consumes the `mfa_token` issued by
 /// `user_login`, verifies the TOTP code against the user's secret,
 /// and returns full access/refresh tokens on success.
 pub async fn login_totp(
     State(state): State<AppState>,
-    Path((workspace, app)): Path<(String, String)>,
+    Path(workspace): Path<String>,
     Json(body): Json<LoginTotpBody>,
 ) -> Result<Json<LoginTotpResponse>, ApiError> {
-    require_app_exists(&state, &workspace, &app).await?;
+    require_workspace_exists(&state, &workspace).await?;
     let workspace_id = WorkspaceId::from(workspace.clone());
-    let app_id = AppId::from(app.clone());
-    let pool = state.apps.pool_for(&workspace_id, &app_id).await?;
+    let pool = state.workspaces.pool_for(&workspace_id).await?;
 
     let user_id = match mfa_challenges::consume(&pool, &body.mfa_token).await? {
         MfaConsume::Ok { user_id } => user_id,
@@ -230,14 +229,14 @@ pub async fn login_totp(
         .await?
         .ok_or(ApiError::Core(CoreError::Unauthorized))?;
 
-    // Subject mirrors the password step: same key, so the password +
-    // TOTP failure budgets are shared.
-    let subject = format!("workspace:{workspace}:app:{app}:user:{}", &user.email);
+    // Subject mirrors the password step (workspace-scoped) so the
+    // password + TOTP failure budgets are shared.
+    let subject = format!("workspace:{workspace}:user:{}", &user.email);
     state
         .login_attempts
         .check(&subject, &state.lockout_policy)?;
 
-    let totp = build_totp(&row.secret_b32, &workspace, &app, &user.email)?;
+    let totp = build_totp(&row.secret_b32, &workspace, &user.email)?;
     if !check_code(&totp, &body.code)? {
         let err = match state
             .login_attempts
@@ -251,7 +250,7 @@ pub async fn login_totp(
                         scope: crate::auth::audit_events::Scope::Workspace(&workspace),
                         subject: &subject,
                         target: Some(&user.email),
-                        details: serde_json::json!({"flow":"totp","app":&app}),
+                        details: serde_json::json!({"flow":"totp"}),
                     },
                 )
                 .await;
@@ -267,7 +266,6 @@ pub async fn login_totp(
                         target: Some(&user.email),
                         details: serde_json::json!({
                             "flow": "totp",
-                            "app": &app,
                             "retry_after_secs": retry_after_secs,
                         }),
                     },
@@ -287,7 +285,8 @@ pub async fn login_totp(
         user.id.clone(),
         TokenRole::User,
         Some(workspace.clone()),
-        Some(app.clone()),
+        // Workspace-shared identity → user tokens carry no `app`.
+        None,
         default_access_ttl(),
     );
     let access_token = state.jwt.issue(&claims)?;
@@ -299,7 +298,7 @@ pub async fn login_totp(
         default_refresh_ttl(),
     )
     .await?;
-    tracing::info!(workspace = %workspace, app = %app, user_id = %user.id, "user login (TOTP second step)");
+    tracing::info!(workspace = %workspace, user_id = %user.id, "user login (TOTP second step)");
     crate::auth::audit_events::record(
         &state,
         crate::auth::audit_events::AuthEvent {
@@ -309,7 +308,6 @@ pub async fn login_totp(
             target: Some(&user.email),
             details: serde_json::json!({
                 "flow": "totp",
-                "app": &app,
                 "user_id": &user.id,
             }),
         },
@@ -372,12 +370,7 @@ pub async fn user_id_for_email_with_totp(
     Ok(Some((u.id, enabled)))
 }
 
-fn build_totp(
-    secret_b32: &str,
-    workspace: &str,
-    app: &str,
-    account: &str,
-) -> Result<TOTP, ApiError> {
+fn build_totp(secret_b32: &str, workspace: &str, account: &str) -> Result<TOTP, ApiError> {
     let bytes = Secret::Encoded(secret_b32.to_string())
         .to_bytes()
         .map_err(|e| ApiError::Core(CoreError::Internal(format!("decode totp secret: {e:?}"))))?;
@@ -387,7 +380,7 @@ fn build_totp(
         SKEW,
         STEP_SECONDS,
         bytes,
-        Some(format!("{ISSUER} ({workspace}/{app})")),
+        Some(format!("{ISSUER} ({workspace})")),
         account.to_string(),
     )
     .map_err(|e| ApiError::Core(CoreError::Internal(format!("build totp: {e:?}"))))

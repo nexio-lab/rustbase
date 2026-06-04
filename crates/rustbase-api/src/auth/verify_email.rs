@@ -1,19 +1,18 @@
-//! Email-verification endpoints.
+//! Email-verification endpoints, workspace-scoped to match the shared
+//! identity pool.
 //!
-//! Two routes, both under an app scope:
+//! `POST /api/workspaces/:workspace/auth/verify-email/request` —
+//! authenticated end-user asks to receive a verification email. A
+//! fresh token is issued in the workspace DB, mailed to the user's
+//! stored address, and the response indicates whether a mail was
+//! dispatched. Already-verified users receive `200 OK` with an
+//! `already verified` message instead — we don't leak whether a token
+//! row was created.
 //!
-//! - `POST /api/workspaces/:workspace/apps/:app/auth/verify-email/request`
-//!   Authenticated end-user asks to receive a verification email.
-//!   A fresh token is issued in the app DB, mailed to the user's
-//!   stored address, and the response indicates whether a mail was
-//!   dispatched. Already-verified users receive `200 OK` with an
-//!   `already verified` message instead — we don't leak whether a
-//!   token row was created.
-//!
-//! - `POST /api/workspaces/:workspace/apps/:app/auth/verify-email/confirm`
-//!   Anyone can call. Body carries `{ "token": "<opaque>" }`. The
-//!   token is consumed atomically; on success the matching user is
-//!   marked verified.
+//! `POST /api/workspaces/:workspace/auth/verify-email/confirm` — anyone
+//! can call. Body carries `{ "token": "<opaque>" }`. The token is
+//! consumed atomically; on success the matching user is marked
+//! verified.
 //!
 //! Tokens are 32 random bytes encoded as 64 hex chars, with a 24-hour
 //! TTL. The `consume` machinery in `rustbase_db::email_verifications`
@@ -25,14 +24,14 @@ use axum::{
     http::StatusCode,
 };
 use rand_core::{OsRng, RngCore};
-use rustbase_core::{AppId, CoreError, EmailMessage, WorkspaceId};
+use rustbase_core::{CoreError, EmailMessage, WorkspaceId};
 use rustbase_db::{
     email_verifications::{self, ConsumeOutcome},
     users::{find_user_by_id, mark_verified},
 };
 use serde::{Deserialize, Serialize};
 
-use crate::auth::{PrincipalAuth, require_app_exists};
+use crate::auth::{PrincipalAuth, require_workspace_exists};
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -55,21 +54,19 @@ pub struct ConfirmResponse {
     pub user_id: String,
 }
 
-/// Issue + mail a fresh verification token to the calling user's
-/// stored email address.
 pub async fn request(
     auth: PrincipalAuth,
     State(state): State<AppState>,
-    Path((workspace, app)): Path<(String, String)>,
+    Path(workspace): Path<String>,
 ) -> Result<(StatusCode, Json<VerifyRequestResponse>), ApiError> {
-    // Only end users in this app may ask for verification of their own
-    // email; admins and tokens from another app/workspace are rejected.
-    auth.require_user_in_app(&workspace, &app)?;
+    // Only end users in this workspace may ask for verification of
+    // their own email; admin tokens and tokens from another workspace
+    // are rejected.
+    auth.require_user_in_workspace(&workspace)?;
 
-    require_app_exists(&state, &workspace, &app).await?;
+    require_workspace_exists(&state, &workspace).await?;
     let workspace_id = WorkspaceId::from(workspace.clone());
-    let app_id = AppId::from(app.clone());
-    let pool = state.apps.pool_for(&workspace_id, &app_id).await?;
+    let pool = state.workspaces.pool_for(&workspace_id).await?;
 
     let user = find_user_by_id(&pool, &auth.subject_id)
         .await?
@@ -103,7 +100,7 @@ pub async fn request(
     let msg = EmailMessage::new(
         SYSTEM_FROM_ADDRESS,
         &user.email,
-        format!("Verify your email for {workspace}/{app}"),
+        format!("Verify your email for {workspace}"),
         body,
     );
     state
@@ -114,7 +111,6 @@ pub async fn request(
 
     tracing::info!(
         workspace = %workspace,
-        app = %app,
         user_id = %user.id,
         "verification token issued + mailed"
     );
@@ -127,23 +123,19 @@ pub async fn request(
     ))
 }
 
-/// Confirm a verification token. Anyone may call: the token itself is
-/// the proof of email ownership. Idempotent only in the sense that
-/// re-using a consumed token returns 410 Gone.
 pub async fn confirm(
     State(state): State<AppState>,
-    Path((workspace, app)): Path<(String, String)>,
+    Path(workspace): Path<String>,
     Json(req): Json<ConfirmRequest>,
 ) -> Result<Json<ConfirmResponse>, ApiError> {
-    require_app_exists(&state, &workspace, &app).await?;
+    require_workspace_exists(&state, &workspace).await?;
     let workspace_id = WorkspaceId::from(workspace.clone());
-    let app_id = AppId::from(app.clone());
-    let pool = state.apps.pool_for(&workspace_id, &app_id).await?;
+    let pool = state.workspaces.pool_for(&workspace_id).await?;
 
     match email_verifications::consume(&pool, &req.token).await? {
         ConsumeOutcome::Ok { user_id } => {
             mark_verified(&pool, &user_id).await?;
-            tracing::info!(workspace = %workspace, app = %app, user_id = %user_id, "email verified");
+            tracing::info!(workspace = %workspace, user_id = %user_id, "email verified");
             Ok(Json(ConfirmResponse {
                 verified: true,
                 user_id,
@@ -163,8 +155,7 @@ pub async fn confirm(
 }
 
 /// 32 random bytes from the OS RNG, hex-encoded (64 chars). No leading
-/// "vrf_" prefix — the column is opaque to clients anyway and the
-/// shorter shape is friendlier when a user hand-types or copies.
+/// "vrf_" prefix — the column is opaque to clients anyway.
 fn fresh_token() -> String {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);

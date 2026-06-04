@@ -19,7 +19,7 @@ use axum::{
 use rustbase_core::{CoreError, MASTER_WORKSPACE_ID, WorkspaceId};
 use rustbase_db::{
     WORKSPACE_MIGRATIONS, Workspace, apply_migrations, paths,
-    workspaces::{create_realm, delete_realm, find_realm, list_realms, rename_realm},
+    workspaces::{create_realm, delete_realm, find_workspace, list_realms, rename_realm},
 };
 use serde::Deserialize;
 use validator::Validate;
@@ -64,7 +64,10 @@ pub async fn create(
             "workspace id 'master' is reserved".into(),
         )));
     }
-    if find_realm(state.system.pool(), &req.id).await?.is_some() {
+    if find_workspace(state.system.pool(), &req.id)
+        .await?
+        .is_some()
+    {
         return Err(ApiError::Core(CoreError::Conflict(format!(
             "workspace '{}' already exists",
             req.id
@@ -87,7 +90,7 @@ pub async fn get(
     Path(id): Path<String>,
 ) -> Result<Json<Workspace>, ApiError> {
     auth.require_master()?;
-    let workspace = find_realm(state.system.pool(), &id)
+    let workspace = find_workspace(state.system.pool(), &id)
         .await?
         .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(id)))?;
     Ok(Json(workspace))
@@ -112,7 +115,7 @@ pub async fn update(
             other => ApiError::from(other),
         })?;
 
-    let workspace = find_realm(state.system.pool(), &id)
+    let workspace = find_workspace(state.system.pool(), &id)
         .await?
         .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(id)))?;
     Ok(Json(workspace))
@@ -128,7 +131,7 @@ pub async fn delete(
         return Err(ApiError::Core(CoreError::Forbidden));
     }
 
-    let workspace = find_realm(state.system.pool(), &id)
+    let workspace = find_workspace(state.system.pool(), &id)
         .await?
         .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(id.clone())))?;
     if workspace.is_master {

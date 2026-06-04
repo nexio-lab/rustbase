@@ -6,9 +6,9 @@ use axum::{
 use rustbase_auth::{TokenRole, build_claims, verify_password};
 
 use super::cookies::{CookieFlags, build_access_cookie, build_refresh_cookie};
-use rustbase_core::{AppId, CoreError, WorkspaceId};
+use rustbase_core::{CoreError, WorkspaceId};
 use rustbase_db::{
-    admins::{find_master_admin_by_username, find_realm_admin_by_email},
+    admins::{find_master_admin_by_username, find_workspace_admin_by_email},
     tokens::{SubjectKind, insert_refresh_token},
     users::{find_user_by_email, record_last_login},
 };
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use validator::Validate;
 
 use super::audit_events::{AuthEvent, AuthOutcome, Scope, record as record_audit};
-use super::{default_access_ttl, default_refresh_ttl, new_refresh_token, require_app_exists};
+use super::{default_access_ttl, default_refresh_ttl, new_refresh_token, require_workspace_exists};
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -57,8 +57,8 @@ fn master_subject(username: &str) -> String {
 fn workspace_admin_subject(workspace: &str, email: &str) -> String {
     format!("workspace:{workspace}:admin:{email}")
 }
-fn user_subject(workspace: &str, app: &str, email: &str) -> String {
-    format!("workspace:{workspace}:app:{app}:user:{email}")
+fn user_subject(workspace: &str, email: &str) -> String {
+    format!("workspace:{workspace}:user:{email}")
 }
 
 /// Translate a `LoginAttempts::note_failure` outcome into the audit
@@ -300,7 +300,7 @@ pub async fn workspace_admin_login(
     let workspace_id = WorkspaceId::from(workspace.clone());
     let pool = state.workspaces.pool_for(&workspace_id).await?;
 
-    let admin = match find_realm_admin_by_email(&pool, &req.email).await? {
+    let admin = match find_workspace_admin_by_email(&pool, &req.email).await? {
         Some(a) => a,
         None => {
             return Err(record_failure_and_pick_error(
@@ -374,22 +374,21 @@ pub async fn workspace_admin_login(
 
 pub async fn user_login(
     State(state): State<AppState>,
-    Path((workspace, app)): Path<(String, String)>,
+    Path(workspace): Path<String>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Response, ApiError> {
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
 
-    let subject = user_subject(&workspace, &app, &req.email);
+    let subject = user_subject(&workspace, &req.email);
     state
         .login_attempts
         .check(&subject, &state.lockout_policy)?;
 
-    require_app_exists(&state, &workspace, &app).await?;
+    require_workspace_exists(&state, &workspace).await?;
 
     let workspace_id = WorkspaceId::from(workspace.clone());
-    let app_id = AppId::from(app.clone());
-    let pool = state.apps.pool_for(&workspace_id, &app_id).await?;
+    let pool = state.workspaces.pool_for(&workspace_id).await?;
 
     let user = match find_user_by_email(&pool, &req.email).await? {
         Some(u) => u,
@@ -432,26 +431,37 @@ pub async fn user_login(
         state.login_attempts.note_success(&subject);
     }
 
-    // Credential check passed. Fire onUserBeforeLogin — a hook may
-    // throw to abort issuance (e.g. ban-list, geo-fence). Public
-    // user shape only; never expose password_hash to hooks.
+    // Credential check passed. Fire onUserBeforeLogin across every
+    // app in the workspace — any app's hook can veto the login.
+    // Workspace-shared identity means no specific app owns the user;
+    // until workspace-scoped hooks land, per-app handlers each get
+    // a turn so existing setups keep working.
     let public = serde_json::json!({
         "id": &user.id,
         "email": &user.email,
         "verified": user.verified,
     });
-    let hook_req = rustbase_runtime::HookRequest::system(&workspace, &app, "_user");
-    state
-        .hooks
-        .dispatch_user_before_login(&workspace, &app, &hook_req, &public)
-        .await
-        .map_err(|e| match e {
-            rustbase_runtime::RuntimeError::Veto(msg) => {
-                tracing::info!(workspace = %workspace, app = %app, user_id = %user.id, %msg, "login vetoed by hook");
-                ApiError::Core(CoreError::Forbidden)
-            }
-            other => ApiError::Core(CoreError::Internal(other.to_string())),
-        })?;
+    let apps = rustbase_db::apps::list_apps(&pool).await?;
+    for app in &apps {
+        let hook_req = rustbase_runtime::HookRequest::system(&workspace, &app.id, "_user");
+        state
+            .hooks
+            .dispatch_user_before_login(&workspace, &app.id, &hook_req, &public)
+            .await
+            .map_err(|e| match e {
+                rustbase_runtime::RuntimeError::Veto(msg) => {
+                    tracing::info!(
+                        workspace = %workspace,
+                        app = %app.id,
+                        user_id = %user.id,
+                        %msg,
+                        "login vetoed by hook"
+                    );
+                    ApiError::Core(CoreError::Forbidden)
+                }
+                other => ApiError::Core(CoreError::Internal(other.to_string())),
+            })?;
+    }
 
     // TOTP gate: if the user has 2FA enabled, don't issue tokens
     // here. Mint a one-shot mfa_token and let the client complete the
@@ -462,7 +472,6 @@ pub async fn user_login(
         let mfa_token = crate::auth::totp::issue_mfa_challenge(&pool, &user.id).await?;
         tracing::info!(
             workspace = %workspace,
-            app = %app,
             user_id = %user.id,
             "password ok; awaiting TOTP second step"
         );
@@ -481,7 +490,8 @@ pub async fn user_login(
         user.id.clone(),
         TokenRole::User,
         Some(workspace.clone()),
-        Some(app.clone()),
+        // Workspace-shared identity → no `app` claim on user tokens.
+        None,
         default_access_ttl(),
     );
     let access_token = state.jwt.issue(&claims)?;
@@ -495,7 +505,7 @@ pub async fn user_login(
     )
     .await?;
 
-    tracing::info!(workspace = %workspace, app = %app, user_id = %user.id, "user login");
+    tracing::info!(workspace = %workspace, user_id = %user.id, "user login");
     record_audit(
         &state,
         AuthEvent {
@@ -504,21 +514,27 @@ pub async fn user_login(
             subject: &subject,
             target: Some(&user.email),
             details: serde_json::json!({
-                "app": &app,
                 "user_id": &user.id,
             }),
         },
     )
     .await;
 
-    // Best-effort observer fire; failures are logged but don't roll
-    // back the successful login.
-    if let Err(e) = state
-        .hooks
-        .dispatch_user_after_login(&workspace, &app, &hook_req, &public)
-        .await
-    {
-        tracing::warn!(error = %e, workspace = %workspace, app = %app, "user_after_login hook errored");
+    // Best-effort observer fire for every app in the workspace.
+    for app in &apps {
+        let hook_req = rustbase_runtime::HookRequest::system(&workspace, &app.id, "_user");
+        if let Err(e) = state
+            .hooks
+            .dispatch_user_after_login(&workspace, &app.id, &hook_req, &public)
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                workspace = %workspace,
+                app = %app.id,
+                "user_after_login hook errored"
+            );
+        }
     }
 
     let body = UserLoginResponse::Tokens {

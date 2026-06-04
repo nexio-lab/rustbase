@@ -1,8 +1,8 @@
 //! Admin endpoints for end-user management.
 //!
-//! Five routes under `/api/workspaces/{workspace}/apps/{app}/users`, all gated
-//! by `AdminAuth::require_app_access` (master, workspace-admin of the
-//! target workspace, or app-admin of the target app):
+//! Five routes under `/api/workspaces/{workspace}/users`, all gated
+//! by `AdminAuth::require_workspace_access` (master, or workspace
+//! admin of the target workspace):
 //!
 //! - `GET    /`               paginated list with optional `?q=<email_substring>`
 //! - `GET    /:id`            user detail + TOTP status + linked OAuth providers
@@ -10,15 +10,16 @@
 //! - `DELETE /:id/totp`       remove the TOTP row, unlocking a user who lost their device
 //! - `DELETE /:id`            cascade-delete the user
 //!
-//! The self-service flows under `/auth/users/*` are untouched — this
-//! module is purely the admin surface.
+//! Users live at workspace scope (shared identity), so the URL no
+//! longer carries an `app` segment. Admin reads aren't filtered by
+//! app — there's one identity pool per workspace.
 
 use axum::{
     Json,
     extract::{Path, Query, State},
     http::StatusCode,
 };
-use rustbase_core::{AppId, CoreError, WorkspaceId};
+use rustbase_core::{CoreError, WorkspaceId};
 use rustbase_db::{
     oauth_links::{self, OAuthLink},
     user_totp::{self, UserTotp},
@@ -26,7 +27,7 @@ use rustbase_db::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::auth::{AdminAuth, require_app_exists};
+use crate::auth::{AdminAuth, require_workspace_exists};
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -123,15 +124,15 @@ impl From<OAuthLink> for OAuthLinkPublic {
 
 // ---- handlers ----
 
-/// `GET /api/workspaces/:workspace/apps/:app/users`.
+/// `GET /api/workspaces/:workspace/users`.
 pub async fn list(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((workspace, app)): Path<(String, String)>,
+    Path(workspace): Path<String>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<UserListResponse>, ApiError> {
-    auth.require_app_access(&workspace, &app)?;
-    let pool = app_pool(&state, &workspace, &app).await?;
+    auth.require_workspace_access(&workspace)?;
+    let pool = workspace_pool(&state, &workspace).await?;
 
     let needle = q.q.as_deref().unwrap_or("").trim().to_string();
     let per = q.per_page.clamp(1, 200);
@@ -155,14 +156,14 @@ pub async fn list(
     }))
 }
 
-/// `GET /api/workspaces/:workspace/apps/:app/users/:id`.
+/// `GET /api/workspaces/:workspace/users/:id`.
 pub async fn get(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((workspace, app, id)): Path<(String, String, String)>,
+    Path((workspace, id)): Path<(String, String)>,
 ) -> Result<Json<UserDetailResponse>, ApiError> {
-    auth.require_app_access(&workspace, &app)?;
-    let pool = app_pool(&state, &workspace, &app).await?;
+    auth.require_workspace_access(&workspace)?;
+    let pool = workspace_pool(&state, &workspace).await?;
 
     let user = find_user_by_id(&pool, &id)
         .await?
@@ -184,16 +185,15 @@ pub async fn get(
     }))
 }
 
-/// `PATCH /api/workspaces/:workspace/apps/:app/users/:id/verify`. Force the
-/// verified flag on. Idempotent: re-verifying an already-verified user
-/// is a no-op write.
+/// `PATCH /api/workspaces/:workspace/users/:id/verify`. Force the
+/// verified flag on. Idempotent.
 pub async fn verify(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((workspace, app, id)): Path<(String, String, String)>,
+    Path((workspace, id)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    auth.require_app_access(&workspace, &app)?;
-    let pool = app_pool(&state, &workspace, &app).await?;
+    auth.require_workspace_access(&workspace)?;
+    let pool = workspace_pool(&state, &workspace).await?;
 
     if find_user_by_id(&pool, &id).await?.is_none() {
         return Err(ApiError::Core(CoreError::NotFound {
@@ -202,21 +202,19 @@ pub async fn verify(
         }));
     }
     rustbase_db::users::mark_verified(&pool, &id).await?;
-    tracing::info!(workspace = %workspace, app = %app, user_id = %id, "admin force-verified user");
+    tracing::info!(workspace = %workspace, user_id = %id, "admin force-verified user");
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// `DELETE /api/workspaces/:workspace/apps/:app/users/:id/totp`. Used to unlock
-/// a user who lost access to their authenticator app. The user's
-/// password stays untouched; their next login skips the TOTP step until
-/// they re-enroll.
+/// `DELETE /api/workspaces/:workspace/users/:id/totp`. Used to unlock
+/// a user who lost access to their authenticator app.
 pub async fn reset_totp(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((workspace, app, id)): Path<(String, String, String)>,
+    Path((workspace, id)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    auth.require_app_access(&workspace, &app)?;
-    let pool = app_pool(&state, &workspace, &app).await?;
+    auth.require_workspace_access(&workspace)?;
+    let pool = workspace_pool(&state, &workspace).await?;
 
     if find_user_by_id(&pool, &id).await?.is_none() {
         return Err(ApiError::Core(CoreError::NotFound {
@@ -225,20 +223,19 @@ pub async fn reset_totp(
         }));
     }
     user_totp::disable(&pool, &id).await?;
-    tracing::info!(workspace = %workspace, app = %app, user_id = %id, "admin reset TOTP for user");
+    tracing::info!(workspace = %workspace, user_id = %id, "admin reset TOTP for user");
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// `DELETE /api/workspaces/:workspace/apps/:app/users/:id`. Cascade-deletes the
-/// user and every auth-side row referencing them (verifications,
-/// resets, otps, totp, mfa challenges, oauth links).
+/// `DELETE /api/workspaces/:workspace/users/:id`. Cascade-deletes the
+/// user and every auth-side row referencing them.
 pub async fn delete(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((workspace, app, id)): Path<(String, String, String)>,
+    Path((workspace, id)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    auth.require_app_access(&workspace, &app)?;
-    let pool = app_pool(&state, &workspace, &app).await?;
+    auth.require_workspace_access(&workspace)?;
+    let pool = workspace_pool(&state, &workspace).await?;
 
     let n = users::delete_user(&pool, &id).await?;
     if n == 0 {
@@ -247,21 +244,14 @@ pub async fn delete(
             id,
         }));
     }
-    tracing::info!(workspace = %workspace, app = %app, user_id = %id, "admin deleted user");
+    tracing::info!(workspace = %workspace, user_id = %id, "admin deleted user");
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn app_pool(
-    state: &AppState,
-    workspace: &str,
-    app: &str,
-) -> Result<sqlx::SqlitePool, ApiError> {
-    require_app_exists(state, workspace, app).await?;
+async fn workspace_pool(state: &AppState, workspace: &str) -> Result<sqlx::SqlitePool, ApiError> {
+    require_workspace_exists(state, workspace).await?;
     Ok(state
-        .apps
-        .pool_for(
-            &WorkspaceId::from(workspace.to_string()),
-            &AppId::from(app.to_string()),
-        )
+        .workspaces
+        .pool_for(&WorkspaceId::from(workspace.to_string()))
         .await?)
 }

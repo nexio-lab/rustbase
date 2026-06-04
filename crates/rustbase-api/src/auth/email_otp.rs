@@ -1,20 +1,21 @@
 //! Passwordless email-OTP login.
 //!
-//! - `POST /api/workspaces/:workspace/apps/:app/auth/otp/request` body `{ email }`
-//!   Anonymous. Always returns 202 with the same generic message
-//!   regardless of whether the email maps to an existing user — same
-//!   enumeration-resistance posture as `password-reset/request`.
-//!   On a syntactically valid email, a fresh 6-digit code is issued
-//!   (invalidating any prior pending one) and mailed.
+//! `POST /api/workspaces/:workspace/auth/otp/request` body `{ email }`
+//! is anonymous and always returns 202 with the same generic message
+//! regardless of whether the email maps to an existing user — same
+//! enumeration-resistance posture as `password-reset/request`. On a
+//! syntactically valid email, a fresh 6-digit code is issued
+//! (invalidating any prior pending one) and mailed.
 //!
-//! - `POST /api/workspaces/:workspace/apps/:app/auth/otp/login` body
-//!   `{ email, code }`. Anonymous. Atomically consumes the code:
-//!     * Right code → find-or-create user, mark verified=true (the
-//!       OTP delivery proved control of the address), issue access +
-//!       refresh tokens.
-//!     * Wrong code → 401 with `attempts_left` in the body so a
-//!       client can show "3 tries remaining".
-//!     * Expired / locked / unknown email → 410.
+//! `POST /api/workspaces/:workspace/auth/otp/login` body `{ email, code }`
+//! is also anonymous and atomically consumes the code:
+//!
+//! * Right code → find-or-create user, mark verified=true (the OTP
+//!   delivery proved control of the address), issue access + refresh
+//!   tokens.
+//! * Wrong code → 400 with `attempts_left` in the message so a client
+//!   can show "3 tries remaining".
+//! * Expired / locked / unknown email → 409.
 
 use axum::{
     Json,
@@ -23,7 +24,7 @@ use axum::{
 };
 use rand_core::{OsRng, RngCore};
 use rustbase_auth::{TokenRole, build_claims};
-use rustbase_core::{AppId, CoreError, EmailMessage, WorkspaceId};
+use rustbase_core::{CoreError, EmailMessage, WorkspaceId};
 use rustbase_db::{
     email_otps::{self, ConsumeOutcome},
     tokens::{SubjectKind, insert_refresh_token},
@@ -34,7 +35,9 @@ use sqlx::SqlitePool;
 use validator::Validate;
 
 use crate::auth::login::UserPublic;
-use crate::auth::{default_access_ttl, default_refresh_ttl, new_refresh_token, require_app_exists};
+use crate::auth::{
+    default_access_ttl, default_refresh_ttl, new_refresh_token, require_workspace_exists,
+};
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -70,25 +73,18 @@ pub struct OtpLoginResponse {
     pub user: UserPublic,
 }
 
-#[derive(Debug, Serialize)]
-pub struct OtpLoginError {
-    pub code: &'static str,
-    pub attempts_left: Option<i64>,
-}
-
 /// Anonymous code-request endpoint. Always 202 — no enumeration signal.
 pub async fn request(
     State(state): State<AppState>,
-    Path((workspace, app)): Path<(String, String)>,
+    Path(workspace): Path<String>,
     Json(req): Json<OtpRequest>,
 ) -> Result<(StatusCode, Json<OtpRequestResponse>), ApiError> {
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
-    require_app_exists(&state, &workspace, &app).await?;
+    require_workspace_exists(&state, &workspace).await?;
 
     let workspace_id = WorkspaceId::from(workspace.clone());
-    let app_id = AppId::from(app.clone());
-    let pool = state.apps.pool_for(&workspace_id, &app_id).await?;
+    let pool = state.workspaces.pool_for(&workspace_id).await?;
 
     let code = fresh_otp_code();
     email_otps::issue(
@@ -107,12 +103,12 @@ pub async fn request(
     let msg = EmailMessage::new(
         SYSTEM_FROM_ADDRESS,
         &req.email,
-        format!("Your login code for {workspace}/{app}"),
+        format!("Your login code for {workspace}"),
         body,
     );
     if let Err(e) = state.mailer.send(msg).await {
         tracing::error!(
-            error = %e, workspace = %workspace, app = %app, email = %req.email,
+            error = %e, workspace = %workspace, email = %req.email,
             "mailer dropped OTP"
         );
     }
@@ -128,20 +124,20 @@ pub async fn request(
 /// Code-redemption endpoint. Issues login tokens on success.
 pub async fn login(
     State(state): State<AppState>,
-    Path((workspace, app)): Path<(String, String)>,
+    Path(workspace): Path<String>,
     Json(req): Json<OtpLoginRequest>,
 ) -> Result<Json<OtpLoginResponse>, ApiError> {
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
-    require_app_exists(&state, &workspace, &app).await?;
+    require_workspace_exists(&state, &workspace).await?;
     let workspace_id = WorkspaceId::from(workspace.clone());
-    let app_id = AppId::from(app.clone());
-    let pool = state.apps.pool_for(&workspace_id, &app_id).await?;
+    let pool = state.workspaces.pool_for(&workspace_id).await?;
 
     // Share the lockout subject with password and TOTP, so a bad-OTP
     // burst against `alice@x` counts toward the same budget as
-    // password attempts.
-    let subject = format!("workspace:{workspace}:app:{app}:user:{}", &req.email);
+    // password attempts. Subject is now workspace-scoped to match the
+    // shared identity pool.
+    let subject = format!("workspace:{workspace}:user:{}", &req.email);
     state
         .login_attempts
         .check(&subject, &state.lockout_policy)?;
@@ -150,7 +146,7 @@ pub async fn login(
     match outcome {
         ConsumeOutcome::Ok { email } => {
             state.login_attempts.note_success(&subject);
-            let res = issue_tokens_for(&state, &pool, &workspace, &app, &email).await;
+            let res = issue_tokens_for(&state, &pool, &workspace, &email).await;
             if res.is_ok() {
                 crate::auth::audit_events::record(
                     &state,
@@ -159,7 +155,7 @@ pub async fn login(
                         scope: crate::auth::audit_events::Scope::Workspace(&workspace),
                         subject: &subject,
                         target: Some(&email),
-                        details: serde_json::json!({ "flow": "email_otp", "app": &app }),
+                        details: serde_json::json!({ "flow": "email_otp" }),
                     },
                 )
                 .await;
@@ -181,7 +177,6 @@ pub async fn login(
                             target: Some(&req.email),
                             details: serde_json::json!({
                                 "flow": "email_otp",
-                                "app": &app,
                                 "attempts_left": attempts_left,
                             }),
                         },
@@ -201,7 +196,6 @@ pub async fn login(
                             target: Some(&req.email),
                             details: serde_json::json!({
                                 "flow": "email_otp",
-                                "app": &app,
                                 "retry_after_secs": retry_after_secs,
                             }),
                         },
@@ -231,7 +225,6 @@ async fn issue_tokens_for(
     state: &AppState,
     pool: &SqlitePool,
     workspace: &str,
-    app: &str,
     email: &str,
 ) -> Result<Json<OtpLoginResponse>, ApiError> {
     let mut just_signed_up = false;
@@ -248,7 +241,6 @@ async fn issue_tokens_for(
             just_signed_up = true;
             tracing::info!(
                 workspace = %workspace,
-                app = %app,
                 user_id = %fresh.id,
                 email = %email,
                 "user signed up via email OTP"
@@ -262,28 +254,38 @@ async fn issue_tokens_for(
         "email": &user.email,
         "verified": true,
     });
-    let hook_req = rustbase_runtime::HookRequest::system(workspace, app, "_user");
+    // Fan-out hooks across every app in the workspace until
+    // workspace-scoped hook loading lands.
+    let apps = rustbase_db::apps::list_apps(pool).await?;
+    for app in &apps {
+        let hook_req = rustbase_runtime::HookRequest::system(workspace, &app.id, "_user");
+        if just_signed_up
+            && let Err(e) = state
+                .hooks
+                .dispatch_user_after_register(workspace, &app.id, &hook_req, &public)
+                .await
+        {
+            tracing::warn!(error = %e, %workspace, app = %app.id, "user_after_register hook errored");
+        }
 
-    if just_signed_up
-        && let Err(e) = state
+        state
             .hooks
-            .dispatch_user_after_register(workspace, app, &hook_req, &public)
+            .dispatch_user_before_login(workspace, &app.id, &hook_req, &public)
             .await
-    {
-        tracing::warn!(error = %e, %workspace, %app, "user_after_register hook errored");
+            .map_err(|e| match e {
+                rustbase_runtime::RuntimeError::Veto(msg) => {
+                    tracing::info!(
+                        %workspace,
+                        app = %app.id,
+                        user_id = %user.id,
+                        %msg,
+                        "login vetoed by hook"
+                    );
+                    ApiError::Core(CoreError::Forbidden)
+                }
+                other => ApiError::Core(CoreError::Internal(other.to_string())),
+            })?;
     }
-
-    state
-        .hooks
-        .dispatch_user_before_login(workspace, app, &hook_req, &public)
-        .await
-        .map_err(|e| match e {
-            rustbase_runtime::RuntimeError::Veto(msg) => {
-                tracing::info!(%workspace, %app, user_id = %user.id, %msg, "login vetoed by hook");
-                ApiError::Core(CoreError::Forbidden)
-            }
-            other => ApiError::Core(CoreError::Internal(other.to_string())),
-        })?;
 
     record_last_login(pool, &user.id).await?;
 
@@ -291,7 +293,8 @@ async fn issue_tokens_for(
         user.id.clone(),
         TokenRole::User,
         Some(workspace.to_string()),
-        Some(app.to_string()),
+        // Workspace-shared identity → no `app` claim.
+        None,
         default_access_ttl(),
     );
     let access_token = state.jwt.issue(&claims)?;
@@ -304,14 +307,17 @@ async fn issue_tokens_for(
     )
     .await?;
 
-    tracing::info!(workspace = %workspace, app = %app, user_id = %user.id, "user login via email OTP");
+    tracing::info!(workspace = %workspace, user_id = %user.id, "user login via email OTP");
 
-    if let Err(e) = state
-        .hooks
-        .dispatch_user_after_login(workspace, app, &hook_req, &public)
-        .await
-    {
-        tracing::warn!(error = %e, %workspace, %app, "user_after_login hook errored");
+    for app in &apps {
+        let hook_req = rustbase_runtime::HookRequest::system(workspace, &app.id, "_user");
+        if let Err(e) = state
+            .hooks
+            .dispatch_user_after_login(workspace, &app.id, &hook_req, &public)
+            .await
+        {
+            tracing::warn!(error = %e, %workspace, app = %app.id, "user_after_login hook errored");
+        }
     }
 
     Ok(Json(OtpLoginResponse {

@@ -65,9 +65,9 @@ async fn authorize_subscribe(
     coll: &str,
 ) -> Result<(), ApiError> {
     use rustbase_core::{AppId, CoreError, WorkspaceId};
-    use rustbase_db::{apps::find_app, collections::find_collection, workspaces::find_realm};
+    use rustbase_db::{apps::find_app, collections::find_collection, workspaces::find_workspace};
 
-    find_realm(state.system.pool(), workspace)
+    find_workspace(state.system.pool(), workspace)
         .await?
         .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(
             workspace.to_string(),

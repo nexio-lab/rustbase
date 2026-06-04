@@ -17,7 +17,7 @@ use rustbase_core::{AppId, CoreError, WorkspaceId};
 use rustbase_db::{
     apps::find_app,
     audit::{AuditQuery, list_paginated},
-    workspaces::find_realm,
+    workspaces::find_workspace,
 };
 use serde::{Deserialize, Serialize};
 
@@ -107,8 +107,8 @@ pub async fn workspace_list(
     Path(workspace): Path<String>,
     Query(q): Query<AuditListQuery>,
 ) -> Result<Json<ListedAuditResponse>, ApiError> {
-    auth.require_realm_access(&workspace)?;
-    find_realm(state.system.pool(), &workspace)
+    auth.require_workspace_access(&workspace)?;
+    find_workspace(state.system.pool(), &workspace)
         .await?
         .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(
             workspace.clone(),
@@ -128,7 +128,7 @@ pub async fn app_list(
     Query(q): Query<AuditListQuery>,
 ) -> Result<Json<ListedAuditResponse>, ApiError> {
     auth.require_app_access(&workspace, &app)?;
-    find_realm(state.system.pool(), &workspace)
+    find_workspace(state.system.pool(), &workspace)
         .await?
         .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(
             workspace.clone(),

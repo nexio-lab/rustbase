@@ -194,7 +194,7 @@ pub async fn insert_realm_admin(
     })
 }
 
-pub async fn find_realm_admin_by_email(
+pub async fn find_workspace_admin_by_email(
     pool: &SqlitePool,
     email: &str,
 ) -> Result<Option<WorkspaceAdmin>> {
@@ -340,7 +340,7 @@ mod tests {
         let inserted = insert_realm_admin(&pool, "ops@acme.com", "hash", Some("Ops"))
             .await
             .unwrap();
-        let found = find_realm_admin_by_email(&pool, "ops@acme.com")
+        let found = find_workspace_admin_by_email(&pool, "ops@acme.com")
             .await
             .unwrap()
             .unwrap();

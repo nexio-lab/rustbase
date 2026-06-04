@@ -120,28 +120,30 @@ Body shape mirrors workspaces. Creating an app initializes its `data.db` and pic
 
 ## End-user auth
 
-Self-service flows, **no admin token** required. End-users live per-app, so every URL carries an `/apps/:app/` segment:
+Self-service flows, **no admin token** required. End-users are
+workspace-scoped (one `(email, workspace)` pair across every app), so
+every auth URL is workspace-scoped too:
 
 ```http
-POST /api/workspaces/:workspace/apps/:app/auth/users/register
+POST /api/workspaces/:workspace/auth/users/register
 { "email": "u@acme.com", "password": "userpass1" }
 
-POST /api/workspaces/:workspace/apps/:app/auth/users/login
-POST /api/workspaces/:workspace/apps/:app/auth/users/refresh
+POST /api/workspaces/:workspace/auth/users/login
+POST /api/workspaces/:workspace/auth/users/refresh
 
-POST /api/workspaces/:workspace/apps/:app/auth/verify-email/request    [user token]
-POST /api/workspaces/:workspace/apps/:app/auth/verify-email/confirm    { "token": "..." }
+POST /api/workspaces/:workspace/auth/verify-email/request    [user token]
+POST /api/workspaces/:workspace/auth/verify-email/confirm    { "token": "..." }
 
-POST /api/workspaces/:workspace/apps/:app/auth/password-reset/request  { "email": "..." }
-POST /api/workspaces/:workspace/apps/:app/auth/password-reset/confirm  { "token": "...", "new_password": "..." }
+POST /api/workspaces/:workspace/auth/password-reset/request  { "email": "..." }
+POST /api/workspaces/:workspace/auth/password-reset/confirm  { "token": "...", "new_password": "..." }
 
-POST /api/workspaces/:workspace/apps/:app/auth/otp/request             { "email": "..." }
-POST /api/workspaces/:workspace/apps/:app/auth/otp/login               { "email": "...", "code": "123456" }
+POST /api/workspaces/:workspace/auth/otp/request             { "email": "..." }
+POST /api/workspaces/:workspace/auth/otp/login               { "email": "...", "code": "123456" }
 
-POST /api/workspaces/:workspace/apps/:app/auth/totp/enroll             [user token]   → returns secret + QR url
-POST /api/workspaces/:workspace/apps/:app/auth/totp/confirm            [user token]   { "code": "123456" }
-POST /api/workspaces/:workspace/apps/:app/auth/totp/disable            [user token]   { "code": "123456" }
-POST /api/workspaces/:workspace/apps/:app/auth/users/login/totp        { "challenge_id": "...", "code": "123456" }
+POST /api/workspaces/:workspace/auth/totp/enroll             [user token]   → returns secret + QR url
+POST /api/workspaces/:workspace/auth/totp/confirm            [user token]   { "code": "123456" }
+POST /api/workspaces/:workspace/auth/totp/disable            [user token]   { "code": "123456" }
+POST /api/workspaces/:workspace/auth/users/login/totp        { "challenge_id": "...", "code": "123456" }
 ```
 
 See the [authentication guide](/guide/authentication) for what each flow does.
@@ -153,18 +155,19 @@ See the [authentication guide](/guide/authentication) for what each flow does.
 End-user-facing:
 
 ```http
-GET  /api/workspaces/:workspace/apps/:app/auth/oauth/:provider/authorize?redirect_uri=...
-POST /api/workspaces/:workspace/apps/:app/auth/oauth/:provider/callback
+GET  /api/workspaces/:workspace/auth/oauth/:provider/authorize?redirect_uri=...
+POST /api/workspaces/:workspace/auth/oauth/:provider/callback
 { "code": "...", "state": "...", "redirect_uri": "..." }
 ```
 
-Admin-facing — manage which providers are wired up for this app:
+Admin-facing — manage which providers are wired up for this
+workspace (workspace-scoped, applies to every app in it):
 
 ```http
-GET    /api/workspaces/:workspace/apps/:app/auth/oauth/providers              [app admin]
-GET    /api/workspaces/:workspace/apps/:app/auth/oauth/providers/:provider
-PUT    /api/workspaces/:workspace/apps/:app/auth/oauth/providers/:provider
-DELETE /api/workspaces/:workspace/apps/:app/auth/oauth/providers/:provider
+GET    /api/workspaces/:workspace/auth/oauth/providers              [workspace admin]
+GET    /api/workspaces/:workspace/auth/oauth/providers/:provider
+PUT    /api/workspaces/:workspace/auth/oauth/providers/:provider
+DELETE /api/workspaces/:workspace/auth/oauth/providers/:provider
 ```
 
 `PUT` body:
@@ -188,12 +191,14 @@ DELETE /api/workspaces/:workspace/apps/:app/auth/oauth/providers/:provider
 
 ## Admin user management
 
+Workspace-scoped — users are shared across every app in the workspace.
+
 ```http
-GET    /api/workspaces/:workspace/apps/:app/users?page=&per_page=&q=          [app admin]
-GET    /api/workspaces/:workspace/apps/:app/users/:id
-PATCH  /api/workspaces/:workspace/apps/:app/users/:id/verify     { "verified": true }
-DELETE /api/workspaces/:workspace/apps/:app/users/:id/totp                    # force unenroll
-DELETE /api/workspaces/:workspace/apps/:app/users/:id
+GET    /api/workspaces/:workspace/users?page=&per_page=&q=         [workspace admin]
+GET    /api/workspaces/:workspace/users/:id
+PATCH  /api/workspaces/:workspace/users/:id/verify    { "verified": true }
+DELETE /api/workspaces/:workspace/users/:id/totp                   # force unenroll
+DELETE /api/workspaces/:workspace/users/:id
 ```
 
 `q` is a substring match on email.

@@ -23,7 +23,7 @@ use rustbase_db::{
     FileMeta,
     apps::find_app,
     files::{delete_file, find_file, insert_file, list_files},
-    workspaces::find_realm,
+    workspaces::find_workspace,
 };
 
 use crate::auth::AdminAuth;
@@ -181,7 +181,7 @@ async fn open_app_pool(
     workspace: &str,
     app: &str,
 ) -> Result<sqlx::SqlitePool, ApiError> {
-    find_realm(state.system.pool(), workspace)
+    find_workspace(state.system.pool(), workspace)
         .await?
         .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(
             workspace.to_string(),

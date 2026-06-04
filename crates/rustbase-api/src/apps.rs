@@ -20,7 +20,7 @@ use rustbase_db::{
     APP_MIGRATIONS, App, apply_migrations,
     apps::{create_app, delete_app, find_app, list_apps, rename_app},
     paths,
-    workspaces::find_realm,
+    workspaces::find_workspace,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -48,7 +48,7 @@ pub async fn list(
     State(state): State<AppState>,
     Path(workspace): Path<String>,
 ) -> Result<Json<Vec<App>>, ApiError> {
-    auth.require_realm_access(&workspace)?;
+    auth.require_workspace_access(&workspace)?;
     require_realm_exists(&state, &workspace).await?;
     let pool = state
         .workspaces
@@ -63,7 +63,7 @@ pub async fn create(
     Path(workspace): Path<String>,
     Json(req): Json<CreateAppRequest>,
 ) -> Result<(StatusCode, Json<App>), ApiError> {
-    auth.require_realm_access(&workspace)?;
+    auth.require_workspace_access(&workspace)?;
     validate_app_id(&req.id)?;
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
@@ -121,7 +121,7 @@ pub async fn get(
     State(state): State<AppState>,
     Path((workspace, app)): Path<(String, String)>,
 ) -> Result<Json<App>, ApiError> {
-    auth.require_realm_access(&workspace)?;
+    auth.require_workspace_access(&workspace)?;
     require_realm_exists(&state, &workspace).await?;
     let pool = state
         .workspaces
@@ -139,7 +139,7 @@ pub async fn update(
     Path((workspace, app)): Path<(String, String)>,
     Json(req): Json<UpdateAppRequest>,
 ) -> Result<Json<App>, ApiError> {
-    auth.require_realm_access(&workspace)?;
+    auth.require_workspace_access(&workspace)?;
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
     require_realm_exists(&state, &workspace).await?;
@@ -171,7 +171,7 @@ pub async fn delete(
     State(state): State<AppState>,
     Path((workspace, app)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    auth.require_realm_access(&workspace)?;
+    auth.require_workspace_access(&workspace)?;
     require_realm_exists(&state, &workspace).await?;
 
     let workspace_id = WorkspaceId::from(workspace.clone());
@@ -202,7 +202,7 @@ pub async fn delete(
 }
 
 async fn require_realm_exists(state: &AppState, workspace: &str) -> Result<(), ApiError> {
-    find_realm(state.system.pool(), workspace)
+    find_workspace(state.system.pool(), workspace)
         .await?
         .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(
             workspace.to_string(),

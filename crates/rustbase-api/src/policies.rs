@@ -26,7 +26,7 @@ use axum::{
     http::StatusCode,
 };
 use rustbase_core::{AppId, CoreError, PolicyLevel, PolicySpec, WorkspaceId, validate_chain};
-use rustbase_db::{apps::find_app, audit, policies, policy_engine, workspaces::find_realm};
+use rustbase_db::{apps::find_app, audit, policies, policy_engine, workspaces::find_workspace};
 use serde::Serialize;
 use serde_json::json;
 
@@ -163,7 +163,7 @@ pub async fn workspace_list(
     State(state): State<AppState>,
     Path(workspace): Path<String>,
 ) -> Result<Json<Vec<PolicyResponse>>, ApiError> {
-    auth.require_realm_access(&workspace)?;
+    auth.require_workspace_access(&workspace)?;
     require_realm_exists(&state, &workspace).await?;
     let workspace_pool = state
         .workspaces
@@ -186,7 +186,7 @@ pub async fn workspace_get(
     State(state): State<AppState>,
     Path((workspace, field)): Path<(String, String)>,
 ) -> Result<Json<PolicySpec>, ApiError> {
-    auth.require_realm_access(&workspace)?;
+    auth.require_workspace_access(&workspace)?;
     require_realm_exists(&state, &workspace).await?;
     let workspace_pool = state
         .workspaces
@@ -207,7 +207,7 @@ pub async fn workspace_put(
     Path((workspace, field)): Path<(String, String)>,
     Json(spec): Json<PolicySpec>,
 ) -> Result<Json<PutPolicyResponse>, ApiError> {
-    auth.require_realm_access(&workspace)?;
+    auth.require_workspace_access(&workspace)?;
     require_realm_exists(&state, &workspace).await?;
 
     // Walk master → workspace as a chain so the violation, if any, names
@@ -256,7 +256,7 @@ pub async fn workspace_delete(
     State(state): State<AppState>,
     Path((workspace, field)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    auth.require_realm_access(&workspace)?;
+    auth.require_workspace_access(&workspace)?;
     require_realm_exists(&state, &workspace).await?;
     let workspace_pool = state
         .workspaces
@@ -409,7 +409,7 @@ pub async fn app_delete(
 }
 
 async fn require_realm_exists(state: &AppState, workspace: &str) -> Result<(), ApiError> {
-    find_realm(state.system.pool(), workspace)
+    find_workspace(state.system.pool(), workspace)
         .await?
         .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(
             workspace.to_string(),

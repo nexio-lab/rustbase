@@ -93,9 +93,11 @@ The word is overloaded. RustBase's flavour:
   via shared connection pool.
 - **Two grouping levels.** *Workspace* groups apps under a single administrative
   tenant (the agency / org). *App* groups data under a single product.
-- **End-users live per app.** A user registered against `acme/mobile` is a
-  different identity than the same email against `acme/web`. This is the
-  current default; a workspace-shared identity pool is on the v0.4 roadmap.
+- **End-users live per workspace.** One `(email, workspace)` pair is
+  one identity across every app in the workspace — sign in once for
+  `acme`, hit `acme/mobile`, `acme/web`, and any future app with the
+  same token. (App-scoped users were the v0.1.x default; they moved
+  to workspace scope in 0.2.)
 
 What it is *not*:
 

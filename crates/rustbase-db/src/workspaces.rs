@@ -29,7 +29,7 @@ pub async fn ensure_master_realm(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
-pub async fn find_realm(pool: &SqlitePool, id: &str) -> Result<Option<Workspace>> {
+pub async fn find_workspace(pool: &SqlitePool, id: &str) -> Result<Option<Workspace>> {
     let row: Option<Workspace> = sqlx::query_as(
         "SELECT id, name, CAST(is_master AS BOOLEAN) AS is_master, created_at \
          FROM workspaces WHERE id = ?",
@@ -125,7 +125,7 @@ mod tests {
     async fn find_master_workspace_after_ensure() {
         let pool = fresh_pool().await;
         ensure_master_realm(&pool).await.unwrap();
-        let m = find_realm(&pool, MASTER_WORKSPACE_ID)
+        let m = find_workspace(&pool, MASTER_WORKSPACE_ID)
             .await
             .unwrap()
             .unwrap();

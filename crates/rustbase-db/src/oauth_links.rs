@@ -81,13 +81,13 @@ pub async fn list_for_user(pool: &SqlitePool, user_id: &str) -> Result<Vec<OAuth
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::migrations::{APP_MIGRATIONS, apply_migrations};
+    use crate::migrations::{WORKSPACE_MIGRATIONS, apply_migrations};
     use crate::pool::open_memory_pool;
     use crate::users::insert_passwordless_user;
 
     async fn fresh() -> (SqlitePool, String) {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(pool.clone(), APP_MIGRATIONS)
+        apply_migrations(pool.clone(), WORKSPACE_MIGRATIONS)
             .await
             .unwrap();
         let user = insert_passwordless_user(&pool, "ada@x.com").await.unwrap();

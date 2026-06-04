@@ -5,7 +5,6 @@
 	import Breadcrumbs from '$lib/Breadcrumbs.svelte';
 
 	const workspace = $derived(page.params.workspace);
-	const app = $derived(page.params.app);
 
 	let items = $state<AdminUser[]>([]);
 	let total = $state(0);
@@ -29,7 +28,7 @@
 			params.set('per_page', String(perPage));
 			if (appliedQ) params.set('q', appliedQ);
 			const resp = await api.get<AdminUserListResponse>(
-				`/api/workspaces/${workspace}/apps/${app}/users?${params}`
+				`/api/workspaces/${workspace}/users?${params}`
 			);
 			items = resp.items;
 			total = resp.total_items;
@@ -43,7 +42,6 @@
 
 	$effect(() => {
 		workspace;
-		app;
 		curPage = 1;
 		load();
 	});
@@ -69,7 +67,7 @@
 	}
 
 	function openUser(u: AdminUser) {
-		goto(`/workspaces/${workspace}/apps/${app}/users/${u.id}`);
+		goto(`/workspaces/${workspace}/users/${u.id}`);
 	}
 </script>
 
@@ -77,55 +75,14 @@
 	items={[
 		{ label: 'Workspaces', href: '/workspaces' },
 		{ label: workspace, href: `/workspaces/${workspace}` },
-		{ label: app, href: `/workspaces/${workspace}/apps/${app}` },
 		{ label: 'Users' }
 	]}
 />
 
-<div class="mb-2 flex gap-1 border-b border-slate-200 text-sm">
-	<a
-		href="/workspaces/{workspace}/apps/{app}"
-		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
-	>
-		Collections
-	</a>
-	<span class="border-b-2 border-orange-500 px-3 py-1.5 font-medium text-slate-900">Users</span>
-	<a
-		href="/workspaces/{workspace}/apps/{app}/oauth"
-		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
-	>
-		OAuth providers
-	</a>
-	<a
-		href="/workspaces/{workspace}/apps/{app}/policies"
-		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
-	>
-		Policies
-	</a>
-	<a
-		href="/workspaces/{workspace}/apps/{app}/hooks"
-		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
-	>
-		Hooks
-	</a>
-	<a
-		href="/workspaces/{workspace}/apps/{app}/files"
-		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
-	>
-		Files
-	</a>
-	<a
-		href="/workspaces/{workspace}/apps/{app}/audit"
-		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
-	>
-		Audit
-	</a>
-</div>
-
 <div class="mb-4">
 	<h1 class="text-2xl font-semibold tracking-tight text-slate-900">Users</h1>
 	<p class="mt-1 text-sm text-slate-500">
-		{total} user{total === 1 ? '' : 's'} in this app{#if appliedQ}
+		{total} user{total === 1 ? '' : 's'} in this workspace (shared across every app){#if appliedQ}
 			· matching <code>{appliedQ}</code>
 		{/if}
 	</p>

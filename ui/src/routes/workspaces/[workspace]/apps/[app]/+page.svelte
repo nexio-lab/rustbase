@@ -108,18 +108,6 @@
 		Collections
 	</span>
 	<a
-		href="/workspaces/{workspace}/apps/{app}/users"
-		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
-	>
-		Users
-	</a>
-	<a
-		href="/workspaces/{workspace}/apps/{app}/oauth"
-		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
-	>
-		OAuth providers
-	</a>
-	<a
 		href="/workspaces/{workspace}/apps/{app}/policies"
 		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
 	>

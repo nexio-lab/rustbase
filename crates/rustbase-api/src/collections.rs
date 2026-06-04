@@ -24,7 +24,7 @@ use rustbase_db::{
         SchemaDiff, create_collection, delete_collection, find_collection, list_collections,
         patch_collection,
     },
-    workspaces::find_realm,
+    workspaces::find_workspace,
 };
 use serde::{Deserialize, Serialize};
 
@@ -176,7 +176,7 @@ async fn open_app_pool(
     workspace: &str,
     app: &str,
 ) -> Result<sqlx::SqlitePool, ApiError> {
-    find_realm(state.system.pool(), workspace)
+    find_workspace(state.system.pool(), workspace)
         .await?
         .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(
             workspace.to_string(),

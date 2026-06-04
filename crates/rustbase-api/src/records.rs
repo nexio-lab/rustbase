@@ -30,7 +30,7 @@ use rustbase_db::{
     apps::find_app,
     collections::find_collection,
     records::{create_record, delete_record, list_records, update_record},
-    workspaces::find_realm,
+    workspaces::find_workspace,
 };
 use rustbase_realtime::{RealtimeEvent, SubscriptionKey};
 use rustbase_runtime::{HookAuth, HookEvent, HookRequest};
@@ -493,7 +493,7 @@ async fn open_app_and_schema(
     app: &str,
     coll: &str,
 ) -> Result<(sqlx::SqlitePool, rustbase_core::Schema), ApiError> {
-    find_realm(state.system.pool(), workspace)
+    find_workspace(state.system.pool(), workspace)
         .await?
         .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(
             workspace.to_string(),

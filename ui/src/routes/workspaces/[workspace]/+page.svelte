@@ -75,6 +75,18 @@
 <div class="mb-2 flex gap-1 border-b border-slate-200 text-sm">
 	<span class="border-b-2 border-orange-500 px-3 py-1.5 font-medium text-slate-900">Apps</span>
 	<a
+		href="/workspaces/{workspace}/users"
+		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
+	>
+		Users
+	</a>
+	<a
+		href="/workspaces/{workspace}/oauth"
+		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
+	>
+		OAuth providers
+	</a>
+	<a
 		href="/workspaces/{workspace}/policies"
 		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
 	>

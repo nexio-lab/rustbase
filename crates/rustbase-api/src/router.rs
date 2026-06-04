@@ -59,93 +59,92 @@ pub fn build_router(state: AppState) -> Router {
             "/api/workspaces/{workspace}/auth/refresh",
             post(workspace_admin_refresh),
         )
+        // Workspace-shared end-user identity. Users live at workspace
+        // scope (one (email, workspace) pair across every app) and
+        // every auth flow is workspace-scoped to match.
         .route(
-            "/api/workspaces/{workspace}/apps/{app}/auth/users/register",
+            "/api/workspaces/{workspace}/auth/users/register",
             post(user_register),
         )
         .route(
-            "/api/workspaces/{workspace}/apps/{app}/auth/users/login",
+            "/api/workspaces/{workspace}/auth/users/login",
             post(user_login),
         )
         .route(
-            "/api/workspaces/{workspace}/apps/{app}/auth/users/refresh",
+            "/api/workspaces/{workspace}/auth/users/refresh",
             post(user_refresh),
         )
         .route(
-            "/api/workspaces/{workspace}/apps/{app}/auth/verify-email/request",
+            "/api/workspaces/{workspace}/auth/verify-email/request",
             post(crate::auth::verify_email::request),
         )
         .route(
-            "/api/workspaces/{workspace}/apps/{app}/auth/verify-email/confirm",
+            "/api/workspaces/{workspace}/auth/verify-email/confirm",
             post(crate::auth::verify_email::confirm),
         )
         .route(
-            "/api/workspaces/{workspace}/apps/{app}/auth/password-reset/request",
+            "/api/workspaces/{workspace}/auth/password-reset/request",
             post(crate::auth::password_reset::request),
         )
         .route(
-            "/api/workspaces/{workspace}/apps/{app}/auth/password-reset/confirm",
+            "/api/workspaces/{workspace}/auth/password-reset/confirm",
             post(crate::auth::password_reset::confirm),
         )
         .route(
-            "/api/workspaces/{workspace}/apps/{app}/auth/otp/request",
+            "/api/workspaces/{workspace}/auth/otp/request",
             post(crate::auth::email_otp::request),
         )
         .route(
-            "/api/workspaces/{workspace}/apps/{app}/auth/otp/login",
+            "/api/workspaces/{workspace}/auth/otp/login",
             post(crate::auth::email_otp::login),
         )
         .route(
-            "/api/workspaces/{workspace}/apps/{app}/auth/totp/enroll",
+            "/api/workspaces/{workspace}/auth/totp/enroll",
             post(crate::auth::totp::enroll),
         )
         .route(
-            "/api/workspaces/{workspace}/apps/{app}/auth/totp/confirm",
+            "/api/workspaces/{workspace}/auth/totp/confirm",
             post(crate::auth::totp::confirm),
         )
         .route(
-            "/api/workspaces/{workspace}/apps/{app}/auth/totp/disable",
+            "/api/workspaces/{workspace}/auth/totp/disable",
             post(crate::auth::totp::disable),
         )
         .route(
-            "/api/workspaces/{workspace}/apps/{app}/auth/users/login/totp",
+            "/api/workspaces/{workspace}/auth/users/login/totp",
             post(crate::auth::totp::login_totp),
         )
         .route(
-            "/api/workspaces/{workspace}/apps/{app}/auth/oauth/{provider}/authorize",
+            "/api/workspaces/{workspace}/auth/oauth/{provider}/authorize",
             get(crate::auth::oauth::authorize),
         )
         .route(
-            "/api/workspaces/{workspace}/apps/{app}/auth/oauth/{provider}/callback",
+            "/api/workspaces/{workspace}/auth/oauth/{provider}/callback",
             post(crate::auth::oauth::callback),
         )
         .route(
-            "/api/workspaces/{workspace}/apps/{app}/auth/oauth/providers",
+            "/api/workspaces/{workspace}/auth/oauth/providers",
             get(crate::auth::oauth_admin::list),
         )
         .route(
-            "/api/workspaces/{workspace}/apps/{app}/auth/oauth/providers/{provider}",
+            "/api/workspaces/{workspace}/auth/oauth/providers/{provider}",
             get(crate::auth::oauth_admin::get)
                 .put(crate::auth::oauth_admin::put)
                 .delete(crate::auth::oauth_admin::delete),
         )
-        // Admin end-user management. Gated by AdminAuth::require_app_access
-        // inside each handler; self-service flows under /auth/users stay
-        // separate and untouched.
+        // Admin end-user management. Gated by
+        // AdminAuth::require_workspace_access inside each handler.
+        .route("/api/workspaces/{workspace}/users", get(crate::users::list))
         .route(
-            "/api/workspaces/{workspace}/apps/{app}/users",
-            get(crate::users::list),
-        )
-        .route(
-            "/api/workspaces/{workspace}/apps/{app}/users/{id}",
+            "/api/workspaces/{workspace}/users/{id}",
             get(crate::users::get).delete(crate::users::delete),
         )
         .route(
-            "/api/workspaces/{workspace}/apps/{app}/users/{id}/verify",
+            "/api/workspaces/{workspace}/users/{id}/verify",
             axum::routing::patch(crate::users::verify),
         )
         .route(
-            "/api/workspaces/{workspace}/apps/{app}/users/{id}/totp",
+            "/api/workspaces/{workspace}/users/{id}/totp",
             axum::routing::delete(crate::users::reset_totp),
         )
         .route(
@@ -1198,7 +1197,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
         // row gone and folder removed
-        let still = rustbase_db::workspaces::find_realm(state.system.pool(), "acme")
+        let still = rustbase_db::workspaces::find_workspace(state.system.pool(), "acme")
             .await
             .unwrap();
         assert!(still.is_none());
@@ -1958,7 +1957,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/register",
+                "/api/workspaces/acme/auth/users/register",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -1971,7 +1970,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -1993,7 +1992,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/register",
+                "/api/workspaces/acme/auth/users/register",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"otherpass"})),
             ))
@@ -2009,7 +2008,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"wrong"})),
             ))
@@ -2027,15 +2026,11 @@ mod tests {
     async fn read_pending_verification_token(
         state: &AppState,
         workspace: &str,
-        app: &str,
         user_email: &str,
     ) -> String {
         let pool = state
-            .apps
-            .pool_for(
-                &rustbase_core::WorkspaceId::from(workspace.to_string()),
-                &rustbase_core::AppId::from(app.to_string()),
-            )
+            .workspaces
+            .pool_for(&rustbase_core::WorkspaceId::from(workspace.to_string()))
             .await
             .unwrap();
         let row: (String,) = sqlx::query_as(
@@ -2060,7 +2055,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/verify-email/request",
+                "/api/workspaces/acme/auth/verify-email/request",
                 Some(&user_tok),
                 Some(&serde_json::json!({})),
             ))
@@ -2069,12 +2064,12 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::ACCEPTED);
 
         // Step 2: pull the token, confirm it.
-        let token = read_pending_verification_token(&state, "acme", "mobile", "u@acme.com").await;
+        let token = read_pending_verification_token(&state, "acme", "u@acme.com").await;
         let app = build_router(state.clone());
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/verify-email/confirm",
+                "/api/workspaces/acme/auth/verify-email/confirm",
                 None,
                 Some(&serde_json::json!({"token": token})),
             ))
@@ -2086,11 +2081,8 @@ mod tests {
 
         // Step 3: user is now flagged verified — read from the app DB.
         let pool = state
-            .apps
-            .pool_for(
-                &rustbase_core::WorkspaceId::from("acme".to_string()),
-                &rustbase_core::AppId::from("mobile".to_string()),
-            )
+            .workspaces
+            .pool_for(&rustbase_core::WorkspaceId::from("acme".to_string()))
             .await
             .unwrap();
         let user = rustbase_db::users::find_user_by_email(&pool, "u@acme.com")
@@ -2107,7 +2099,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/verify-email/confirm",
+                "/api/workspaces/acme/auth/verify-email/confirm",
                 None,
                 Some(&serde_json::json!({"token": "deadbeef".repeat(8)})),
             ))
@@ -2124,17 +2116,17 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/workspaces/acme/apps/mobile/auth/verify-email/request",
+            "/api/workspaces/acme/auth/verify-email/request",
             Some(&user_tok),
             Some(&serde_json::json!({})),
         ))
         .await
         .unwrap();
-        let token = read_pending_verification_token(&state, "acme", "mobile", "u@acme.com").await;
+        let token = read_pending_verification_token(&state, "acme", "u@acme.com").await;
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/workspaces/acme/apps/mobile/auth/verify-email/confirm",
+            "/api/workspaces/acme/auth/verify-email/confirm",
             None,
             Some(&serde_json::json!({"token": &token})),
         ))
@@ -2146,7 +2138,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/verify-email/confirm",
+                "/api/workspaces/acme/auth/verify-email/confirm",
                 None,
                 Some(&serde_json::json!({"token": &token})),
             ))
@@ -2160,15 +2152,11 @@ mod tests {
     async fn read_pending_reset_token(
         state: &AppState,
         workspace: &str,
-        app: &str,
         user_email: &str,
     ) -> String {
         let pool = state
-            .apps
-            .pool_for(
-                &rustbase_core::WorkspaceId::from(workspace.to_string()),
-                &rustbase_core::AppId::from(app.to_string()),
-            )
+            .workspaces
+            .pool_for(&rustbase_core::WorkspaceId::from(workspace.to_string()))
             .await
             .unwrap();
         let row: (String,) = sqlx::query_as(
@@ -2194,7 +2182,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/password-reset/request",
+                "/api/workspaces/acme/auth/password-reset/request",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com"})),
             ))
@@ -2203,12 +2191,12 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::ACCEPTED);
 
         // 2. Pull token + confirm with new password.
-        let token = read_pending_reset_token(&state, "acme", "mobile", "u@acme.com").await;
+        let token = read_pending_reset_token(&state, "acme", "u@acme.com").await;
         let app = build_router(state.clone());
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/password-reset/confirm",
+                "/api/workspaces/acme/auth/password-reset/confirm",
                 None,
                 Some(&serde_json::json!({"token": token, "new_password": "totallyNew!42"})),
             ))
@@ -2223,7 +2211,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"totallyNew!42"})),
             ))
@@ -2236,7 +2224,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -2254,7 +2242,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/password-reset/request",
+                "/api/workspaces/acme/auth/password-reset/request",
                 None,
                 Some(&serde_json::json!({"email":"ghost@nowhere.com"})),
             ))
@@ -2263,11 +2251,8 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::ACCEPTED);
 
         let pool = state
-            .apps
-            .pool_for(
-                &rustbase_core::WorkspaceId::from("acme".to_string()),
-                &rustbase_core::AppId::from("mobile".to_string()),
-            )
+            .workspaces
+            .pool_for(&rustbase_core::WorkspaceId::from("acme".to_string()))
             .await
             .unwrap();
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM _password_resets")
@@ -2285,24 +2270,24 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/workspaces/acme/apps/mobile/auth/password-reset/request",
+            "/api/workspaces/acme/auth/password-reset/request",
             None,
             Some(&serde_json::json!({"email":"u@acme.com"})),
         ))
         .await
         .unwrap();
-        let first = read_pending_reset_token(&state, "acme", "mobile", "u@acme.com").await;
+        let first = read_pending_reset_token(&state, "acme", "u@acme.com").await;
 
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/workspaces/acme/apps/mobile/auth/password-reset/request",
+            "/api/workspaces/acme/auth/password-reset/request",
             None,
             Some(&serde_json::json!({"email":"u@acme.com"})),
         ))
         .await
         .unwrap();
-        let second = read_pending_reset_token(&state, "acme", "mobile", "u@acme.com").await;
+        let second = read_pending_reset_token(&state, "acme", "u@acme.com").await;
         assert_ne!(first, second);
 
         // Consume the second; the first must then be dead.
@@ -2310,7 +2295,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/password-reset/confirm",
+                "/api/workspaces/acme/auth/password-reset/confirm",
                 None,
                 Some(&serde_json::json!({"token": &second, "new_password": "brandnew!9"})),
             ))
@@ -2322,7 +2307,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/password-reset/confirm",
+                "/api/workspaces/acme/auth/password-reset/confirm",
                 None,
                 Some(&serde_json::json!({"token": &first, "new_password": "another!7"})),
             ))
@@ -2337,18 +2322,18 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/workspaces/acme/apps/mobile/auth/password-reset/request",
+            "/api/workspaces/acme/auth/password-reset/request",
             None,
             Some(&serde_json::json!({"email":"u@acme.com"})),
         ))
         .await
         .unwrap();
-        let token = read_pending_reset_token(&state, "acme", "mobile", "u@acme.com").await;
+        let token = read_pending_reset_token(&state, "acme", "u@acme.com").await;
         let app = build_router(state);
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/password-reset/confirm",
+                "/api/workspaces/acme/auth/password-reset/confirm",
                 None,
                 Some(&serde_json::json!({"token": token, "new_password": "short"})),
             ))
@@ -2359,18 +2344,10 @@ mod tests {
 
     // ------------- email OTP flow -------------
 
-    async fn read_pending_otp_code(
-        state: &AppState,
-        workspace: &str,
-        app: &str,
-        email: &str,
-    ) -> String {
+    async fn read_pending_otp_code(state: &AppState, workspace: &str, email: &str) -> String {
         let pool = state
-            .apps
-            .pool_for(
-                &rustbase_core::WorkspaceId::from(workspace.to_string()),
-                &rustbase_core::AppId::from(app.to_string()),
-            )
+            .workspaces
+            .pool_for(&rustbase_core::WorkspaceId::from(workspace.to_string()))
             .await
             .unwrap();
         let row: (String,) = sqlx::query_as(
@@ -2402,7 +2379,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/otp/request",
+                "/api/workspaces/acme/auth/otp/request",
                 None,
                 Some(&serde_json::json!({"email":"new@acme.com"})),
             ))
@@ -2411,12 +2388,12 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::ACCEPTED);
 
         // 2. Pull the code from the DB, redeem it.
-        let code = read_pending_otp_code(&state, "acme", "mobile", "new@acme.com").await;
+        let code = read_pending_otp_code(&state, "acme", "new@acme.com").await;
         let app = build_router(state.clone());
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/otp/login",
+                "/api/workspaces/acme/auth/otp/login",
                 None,
                 Some(&serde_json::json!({"email":"new@acme.com","code":code})),
             ))
@@ -2430,11 +2407,8 @@ mod tests {
 
         // 3. The auto-created user exists with no password and is verified.
         let pool = state
-            .apps
-            .pool_for(
-                &rustbase_core::WorkspaceId::from("acme".to_string()),
-                &rustbase_core::AppId::from("mobile".to_string()),
-            )
+            .workspaces
+            .pool_for(&rustbase_core::WorkspaceId::from("acme".to_string()))
             .await
             .unwrap();
         let user = rustbase_db::users::find_user_by_email(&pool, "new@acme.com")
@@ -2451,7 +2425,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/workspaces/acme/apps/mobile/auth/otp/request",
+            "/api/workspaces/acme/auth/otp/request",
             None,
             Some(&serde_json::json!({"email":"a@acme.com"})),
         ))
@@ -2462,7 +2436,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/otp/login",
+                "/api/workspaces/acme/auth/otp/login",
                 None,
                 Some(&serde_json::json!({"email":"a@acme.com","code":"000000"})),
             ))
@@ -2481,24 +2455,24 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/workspaces/acme/apps/mobile/auth/otp/request",
+            "/api/workspaces/acme/auth/otp/request",
             None,
             Some(&serde_json::json!({"email":"a@acme.com"})),
         ))
         .await
         .unwrap();
-        let first = read_pending_otp_code(&state, "acme", "mobile", "a@acme.com").await;
+        let first = read_pending_otp_code(&state, "acme", "a@acme.com").await;
 
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/workspaces/acme/apps/mobile/auth/otp/request",
+            "/api/workspaces/acme/auth/otp/request",
             None,
             Some(&serde_json::json!({"email":"a@acme.com"})),
         ))
         .await
         .unwrap();
-        let second = read_pending_otp_code(&state, "acme", "mobile", "a@acme.com").await;
+        let second = read_pending_otp_code(&state, "acme", "a@acme.com").await;
 
         assert_ne!(first, second, "second request must mint a fresh code");
 
@@ -2507,7 +2481,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/otp/login",
+                "/api/workspaces/acme/auth/otp/login",
                 None,
                 Some(&serde_json::json!({"email":"a@acme.com","code":&first})),
             ))
@@ -2520,7 +2494,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/otp/login",
+                "/api/workspaces/acme/auth/otp/login",
                 None,
                 Some(&serde_json::json!({"email":"a@acme.com","code":&second})),
             ))
@@ -2539,7 +2513,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/otp/login",
+                "/api/workspaces/acme/auth/otp/login",
                 None,
                 Some(&serde_json::json!({"email":"ghost@acme.com","code":"123456"})),
             ))
@@ -2558,18 +2532,18 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/workspaces/acme/apps/mobile/auth/otp/request",
+            "/api/workspaces/acme/auth/otp/request",
             None,
             Some(&serde_json::json!({"email":"u@acme.com"})),
         ))
         .await
         .unwrap();
-        let code = read_pending_otp_code(&state, "acme", "mobile", "u@acme.com").await;
+        let code = read_pending_otp_code(&state, "acme", "u@acme.com").await;
         let app = build_router(state.clone());
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/otp/login",
+                "/api/workspaces/acme/auth/otp/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","code":code})),
             ))
@@ -2579,11 +2553,8 @@ mod tests {
 
         // Password row should be untouched after OTP login.
         let pool = state
-            .apps
-            .pool_for(
-                &rustbase_core::WorkspaceId::from("acme".to_string()),
-                &rustbase_core::AppId::from("mobile".to_string()),
-            )
+            .workspaces
+            .pool_for(&rustbase_core::WorkspaceId::from("acme".to_string()))
             .await
             .unwrap();
         let user = rustbase_db::users::find_user_by_email(&pool, "u@acme.com")
@@ -2656,16 +2627,14 @@ mod tests {
     async fn seed_provider(
         state: &AppState,
         workspace: &str,
-        app: &str,
+        _app: &str,
         provider: &str,
         base_url: &str,
     ) {
+        // OAuth providers moved to workspace scope with shared identity.
         let pool = state
-            .apps
-            .pool_for(
-                &rustbase_core::WorkspaceId::from(workspace.to_string()),
-                &rustbase_core::AppId::from(app.to_string()),
-            )
+            .workspaces
+            .pool_for(&rustbase_core::WorkspaceId::from(workspace.to_string()))
             .await
             .unwrap();
         let secret_enc = rustbase_auth::encrypt(b"test-secret", state.oauth_kek.as_ref()).unwrap();
@@ -2699,7 +2668,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
+                "/api/workspaces/acme/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
                 None,
                 None,
             ))
@@ -2727,7 +2696,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/ghost/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
+                "/api/workspaces/acme/auth/oauth/ghost/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
                 None,
                 None,
             ))
@@ -2750,7 +2719,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
+                "/api/workspaces/acme/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
                 None,
                 None,
             ))
@@ -2767,7 +2736,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/google/callback",
+                "/api/workspaces/acme/auth/oauth/google/callback",
                 None,
                 Some(&serde_json::json!({"code":"unused", "state": nonce})),
             ))
@@ -2803,7 +2772,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
+                "/api/workspaces/acme/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
                 None,
                 None,
             ))
@@ -2816,7 +2785,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/google/callback",
+                "/api/workspaces/acme/auth/oauth/google/callback",
                 None,
                 Some(&serde_json::json!({"code":"unused", "state": nonce})),
             ))
@@ -2830,11 +2799,8 @@ mod tests {
 
         // 3. The link row exists, and the user was created passwordless.
         let pool = state
-            .apps
-            .pool_for(
-                &rustbase_core::WorkspaceId::from("acme".to_string()),
-                &rustbase_core::AppId::from("mobile".to_string()),
-            )
+            .workspaces
+            .pool_for(&rustbase_core::WorkspaceId::from("acme".to_string()))
             .await
             .unwrap();
         let link =
@@ -2870,7 +2836,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
+                "/api/workspaces/acme/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
                 None,
                 None,
             ))
@@ -2882,7 +2848,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/google/callback",
+                "/api/workspaces/acme/auth/oauth/google/callback",
                 None,
                 Some(&serde_json::json!({"code":"unused", "state": nonce})),
             ))
@@ -2891,11 +2857,8 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
 
         let pool = state
-            .apps
-            .pool_for(
-                &rustbase_core::WorkspaceId::from("acme".to_string()),
-                &rustbase_core::AppId::from("mobile".to_string()),
-            )
+            .workspaces
+            .pool_for(&rustbase_core::WorkspaceId::from("acme".to_string()))
             .await
             .unwrap();
         // Still exactly one user with that email.
@@ -2933,7 +2896,7 @@ mod tests {
         let nonce = json_body(
             app.oneshot(req_with_auth(
                 "GET",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
+                "/api/workspaces/acme/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
                 None,
                 None,
             ))
@@ -2950,7 +2913,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/google/callback",
+                "/api/workspaces/acme/auth/oauth/google/callback",
                 None,
                 Some(&serde_json::json!({"code":"unused", "state": &nonce})),
             ))
@@ -2963,7 +2926,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/google/callback",
+                "/api/workspaces/acme/auth/oauth/google/callback",
                 None,
                 Some(&serde_json::json!({"code":"unused", "state": &nonce})),
             ))
@@ -2982,7 +2945,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/google/callback",
+                "/api/workspaces/acme/auth/oauth/google/callback",
                 None,
                 Some(&serde_json::json!({"code":"unused", "state":"forged-or-stale"})),
             ))
@@ -3001,7 +2964,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/verify-email/request",
+                "/api/workspaces/acme/auth/verify-email/request",
                 Some(&admin_tok),
                 Some(&serde_json::json!({})),
             ))
@@ -3157,11 +3120,8 @@ mod tests {
                 .bind("u@acme.com")
                 .fetch_one(
                     &state
-                        .apps
-                        .pool_for(
-                            &rustbase_core::WorkspaceId::from("acme"),
-                            &rustbase_core::AppId::from("mobile"),
-                        )
+                        .workspaces
+                        .pool_for(&rustbase_core::WorkspaceId::from("acme"))
                         .await
                         .unwrap(),
                 )
@@ -3327,7 +3287,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -3340,7 +3300,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/refresh",
+                "/api/workspaces/acme/auth/users/refresh",
                 None,
                 Some(&serde_json::json!({"refresh_token": first})),
             ))
@@ -3356,7 +3316,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/refresh",
+                "/api/workspaces/acme/auth/users/refresh",
                 None,
                 Some(&serde_json::json!({"refresh_token": first})),
             ))
@@ -3612,7 +3572,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/register",
+                "/api/workspaces/acme/auth/users/register",
                 None,
                 Some(&serde_json::json!({"email":"ada@acme.com","password":"hunter22"})),
             ))
@@ -3646,7 +3606,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -3679,7 +3639,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/auth/users/login",
                 None,
                 // Credentials are CORRECT — the hook is what blocks.
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
@@ -3706,7 +3666,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/workspaces/acme/apps/mobile/auth/users/login",
+            "/api/workspaces/acme/auth/users/login",
             None,
             Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
         ))
@@ -3742,7 +3702,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/workspaces/acme/apps/mobile/auth/otp/request",
+            "/api/workspaces/acme/auth/otp/request",
             None,
             Some(&serde_json::json!({"email":"fresh@acme.com"})),
         ))
@@ -3750,11 +3710,8 @@ mod tests {
         .unwrap();
         let code = {
             let pool = state
-                .apps
-                .pool_for(
-                    &rustbase_core::WorkspaceId::from("acme".to_string()),
-                    &rustbase_core::AppId::from("mobile".to_string()),
-                )
+                .workspaces
+                .pool_for(&rustbase_core::WorkspaceId::from("acme".to_string()))
                 .await
                 .unwrap();
             let row: (String,) = sqlx::query_as(
@@ -3772,7 +3729,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/otp/login",
+                "/api/workspaces/acme/auth/otp/login",
                 None,
                 Some(&serde_json::json!({"email":"fresh@acme.com","code":code})),
             ))
@@ -4029,7 +3986,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/totp/enroll",
+                "/api/workspaces/acme/auth/totp/enroll",
                 Some(&user_tok),
                 Some(&serde_json::json!({})),
             ))
@@ -4053,7 +4010,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/totp/enroll",
+                "/api/workspaces/acme/auth/totp/enroll",
                 Some(&user_tok),
                 Some(&serde_json::json!({})),
             ))
@@ -4070,7 +4027,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/totp/confirm",
+                "/api/workspaces/acme/auth/totp/confirm",
                 Some(&user_tok),
                 Some(&serde_json::json!({"code": code})),
             ))
@@ -4081,11 +4038,8 @@ mod tests {
 
         // Row should now be enabled.
         let pool = state
-            .apps
-            .pool_for(
-                &rustbase_core::WorkspaceId::from("acme".to_string()),
-                &rustbase_core::AppId::from("mobile".to_string()),
-            )
+            .workspaces
+            .pool_for(&rustbase_core::WorkspaceId::from("acme".to_string()))
             .await
             .unwrap();
         let user = rustbase_db::users::find_user_by_email(&pool, "u@acme.com")
@@ -4105,7 +4059,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/workspaces/acme/apps/mobile/auth/totp/enroll",
+            "/api/workspaces/acme/auth/totp/enroll",
             Some(&user_tok),
             Some(&serde_json::json!({})),
         ))
@@ -4116,7 +4070,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/totp/confirm",
+                "/api/workspaces/acme/auth/totp/confirm",
                 Some(&user_tok),
                 Some(&serde_json::json!({"code": "000000"})),
             ))
@@ -4125,11 +4079,8 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
         let pool = state
-            .apps
-            .pool_for(
-                &rustbase_core::WorkspaceId::from("acme".to_string()),
-                &rustbase_core::AppId::from("mobile".to_string()),
-            )
+            .workspaces
+            .pool_for(&rustbase_core::WorkspaceId::from("acme".to_string()))
             .await
             .unwrap();
         let user = rustbase_db::users::find_user_by_email(&pool, "u@acme.com")
@@ -4153,7 +4104,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/totp/enroll",
+                "/api/workspaces/acme/auth/totp/enroll",
                 Some(&user_tok),
                 Some(&serde_json::json!({})),
             ))
@@ -4168,7 +4119,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/workspaces/acme/apps/mobile/auth/totp/confirm",
+            "/api/workspaces/acme/auth/totp/confirm",
             Some(&user_tok),
             Some(&serde_json::json!({"code": code})),
         ))
@@ -4184,7 +4135,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -4206,7 +4157,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -4223,7 +4174,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/login/totp",
+                "/api/workspaces/acme/auth/users/login/totp",
                 None,
                 Some(&serde_json::json!({"mfa_token": mfa_token, "code": code})),
             ))
@@ -4244,7 +4195,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -4261,7 +4212,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/login/totp",
+                "/api/workspaces/acme/auth/users/login/totp",
                 None,
                 Some(&serde_json::json!({"mfa_token": &mfa_token, "code": &code})),
             ))
@@ -4274,7 +4225,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/login/totp",
+                "/api/workspaces/acme/auth/users/login/totp",
                 None,
                 Some(&serde_json::json!({"mfa_token": &mfa_token, "code": &code})),
             ))
@@ -4292,7 +4243,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -4307,7 +4258,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/login/totp",
+                "/api/workspaces/acme/auth/users/login/totp",
                 None,
                 Some(&serde_json::json!({"mfa_token": mfa_token, "code": code1})),
             ))
@@ -4324,7 +4275,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/totp/disable",
+                "/api/workspaces/acme/auth/totp/disable",
                 Some(&user_tok),
                 Some(&serde_json::json!({"code": code2})),
             ))
@@ -4337,7 +4288,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -4374,7 +4325,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "PUT",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
+                "/api/workspaces/acme/auth/oauth/providers/google",
                 Some(&master_tok),
                 Some(&provider_body()),
             ))
@@ -4394,7 +4345,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
+                "/api/workspaces/acme/auth/oauth/providers/google",
                 Some(&master_tok),
                 None,
             ))
@@ -4417,7 +4368,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "PUT",
-            "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
+            "/api/workspaces/acme/auth/oauth/providers/google",
             Some(&master_tok),
             Some(&provider_body()),
         ))
@@ -4427,11 +4378,8 @@ mod tests {
         // Read the raw row: client_secret_enc must NOT contain the
         // plaintext anywhere. AES-GCM ciphertext is opaque bytes.
         let pool = state
-            .apps
-            .pool_for(
-                &rustbase_core::WorkspaceId::from("acme".to_string()),
-                &rustbase_core::AppId::from("mobile".to_string()),
-            )
+            .workspaces
+            .pool_for(&rustbase_core::WorkspaceId::from("acme".to_string()))
             .await
             .unwrap();
         let (ct,): (Vec<u8>,) =
@@ -4461,7 +4409,7 @@ mod tests {
             let app = build_router(state.clone());
             app.oneshot(req_with_auth(
                 "PUT",
-                &format!("/api/workspaces/acme/apps/mobile/auth/oauth/providers/{name}"),
+                &format!("/api/workspaces/acme/auth/oauth/providers/{name}"),
                 Some(&master_tok),
                 Some(&body),
             ))
@@ -4473,7 +4421,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/providers",
+                "/api/workspaces/acme/auth/oauth/providers",
                 Some(&master_tok),
                 None,
             ))
@@ -4499,7 +4447,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "PUT",
-            "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
+            "/api/workspaces/acme/auth/oauth/providers/google",
             Some(&master_tok),
             Some(&provider_body()),
         ))
@@ -4510,7 +4458,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "DELETE",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
+                "/api/workspaces/acme/auth/oauth/providers/google",
                 Some(&master_tok),
                 None,
             ))
@@ -4523,7 +4471,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "DELETE",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
+                "/api/workspaces/acme/auth/oauth/providers/google",
                 Some(&master_tok),
                 None,
             ))
@@ -4536,7 +4484,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
+                "/api/workspaces/acme/auth/oauth/providers/google",
                 Some(&master_tok),
                 None,
             ))
@@ -4554,7 +4502,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "PUT",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
+                "/api/workspaces/acme/auth/oauth/providers/google",
                 Some(&workspace_tok),
                 Some(&provider_body()),
             ))
@@ -4571,7 +4519,7 @@ mod tests {
         let user_resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -4586,7 +4534,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "PUT",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
+                "/api/workspaces/acme/auth/oauth/providers/google",
                 Some(&user_tok),
                 Some(&provider_body()),
             ))
@@ -4616,7 +4564,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "PUT",
-            "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
+            "/api/workspaces/acme/auth/oauth/providers/google",
             Some(&master_tok),
             Some(&body),
         ))
@@ -4628,7 +4576,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
+                "/api/workspaces/acme/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
                 None,
                 None,
             ))
@@ -4641,7 +4589,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/google/callback",
+                "/api/workspaces/acme/auth/oauth/google/callback",
                 None,
                 Some(&serde_json::json!({"code":"unused","state":nonce})),
             ))
@@ -4663,7 +4611,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "PUT",
-            "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
+            "/api/workspaces/acme/auth/oauth/providers/google",
             Some(&master_tok),
             Some(&provider_body()),
         ))
@@ -4678,7 +4626,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "PUT",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
+                "/api/workspaces/acme/auth/oauth/providers/google",
                 Some(&master_tok),
                 Some(&body),
             ))
@@ -4689,11 +4637,8 @@ mod tests {
         // Pull the raw ciphertext and decrypt with the server's KEK —
         // it should still match the ORIGINAL secret.
         let pool = state
-            .apps
-            .pool_for(
-                &rustbase_core::WorkspaceId::from("acme".to_string()),
-                &rustbase_core::AppId::from("mobile".to_string()),
-            )
+            .workspaces
+            .pool_for(&rustbase_core::WorkspaceId::from("acme".to_string()))
             .await
             .unwrap();
         let (ct,): (Vec<u8>,) =
@@ -4709,7 +4654,7 @@ mod tests {
         let detail = json_body(
             app.oneshot(req_with_auth(
                 "GET",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
+                "/api/workspaces/acme/auth/oauth/providers/google",
                 Some(&master_tok),
                 None,
             ))
@@ -4730,7 +4675,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "PUT",
-                "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
+                "/api/workspaces/acme/auth/oauth/providers/google",
                 Some(&master_tok),
                 Some(&body),
             ))
@@ -4749,7 +4694,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/workspaces/acme/apps/mobile/auth/users/register",
+            "/api/workspaces/acme/auth/users/register",
             None,
             Some(&serde_json::json!({"email":"alice@acme.com","password":"alicepass1"})),
         ))
@@ -4758,7 +4703,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/workspaces/acme/apps/mobile/auth/users/register",
+            "/api/workspaces/acme/auth/users/register",
             None,
             Some(&serde_json::json!({"email":"bob@acme.com","password":"bobpass1"})),
         ))
@@ -4774,7 +4719,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/workspaces/acme/apps/mobile/users?per_page=10",
+                "/api/workspaces/acme/users?per_page=10",
                 Some(&tok),
                 None,
             ))
@@ -4789,7 +4734,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/workspaces/acme/apps/mobile/users?q=alice",
+                "/api/workspaces/acme/users?q=alice",
                 Some(&tok),
                 None,
             ))
@@ -4808,7 +4753,7 @@ mod tests {
         let list = json_body(
             app.oneshot(req_with_auth(
                 "GET",
-                "/api/workspaces/acme/apps/mobile/users?q=alice",
+                "/api/workspaces/acme/users?q=alice",
                 Some(&tok),
                 None,
             ))
@@ -4822,7 +4767,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                &format!("/api/workspaces/acme/apps/mobile/users/{alice_id}"),
+                &format!("/api/workspaces/acme/users/{alice_id}"),
                 Some(&tok),
                 None,
             ))
@@ -4844,7 +4789,7 @@ mod tests {
         let list = json_body(
             app.oneshot(req_with_auth(
                 "GET",
-                "/api/workspaces/acme/apps/mobile/users?q=alice",
+                "/api/workspaces/acme/users?q=alice",
                 Some(&tok),
                 None,
             ))
@@ -4858,7 +4803,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "PATCH",
-                &format!("/api/workspaces/acme/apps/mobile/users/{alice_id}/verify"),
+                &format!("/api/workspaces/acme/users/{alice_id}/verify"),
                 Some(&tok),
                 Some(&serde_json::json!({})),
             ))
@@ -4870,7 +4815,7 @@ mod tests {
         let detail = json_body(
             app.oneshot(req_with_auth(
                 "GET",
-                &format!("/api/workspaces/acme/apps/mobile/users/{alice_id}"),
+                &format!("/api/workspaces/acme/users/{alice_id}"),
                 Some(&tok),
                 None,
             ))
@@ -4888,7 +4833,7 @@ mod tests {
         let alice_id = json_body(
             app.oneshot(req_with_auth(
                 "GET",
-                "/api/workspaces/acme/apps/mobile/users?q=alice",
+                "/api/workspaces/acme/users?q=alice",
                 Some(&tok),
                 None,
             ))
@@ -4904,7 +4849,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "DELETE",
-                &format!("/api/workspaces/acme/apps/mobile/users/{alice_id}"),
+                &format!("/api/workspaces/acme/users/{alice_id}"),
                 Some(&tok),
                 None,
             ))
@@ -4916,7 +4861,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "DELETE",
-                &format!("/api/workspaces/acme/apps/mobile/users/{alice_id}"),
+                &format!("/api/workspaces/acme/users/{alice_id}"),
                 Some(&tok),
                 None,
             ))
@@ -4929,7 +4874,7 @@ mod tests {
         let list = json_body(
             app.oneshot(req_with_auth(
                 "GET",
-                "/api/workspaces/acme/apps/mobile/users",
+                "/api/workspaces/acme/users",
                 Some(&tok),
                 None,
             ))
@@ -4944,11 +4889,8 @@ mod tests {
     async fn admin_reset_totp_clears_pending_enrolment() {
         let (state, _dir, tok) = state_with_two_users().await;
         let pool = state
-            .apps
-            .pool_for(
-                &rustbase_core::WorkspaceId::from("acme".to_string()),
-                &rustbase_core::AppId::from("mobile".to_string()),
-            )
+            .workspaces
+            .pool_for(&rustbase_core::WorkspaceId::from("acme".to_string()))
             .await
             .unwrap();
         let alice = rustbase_db::users::find_user_by_email(&pool, "alice@acme.com")
@@ -4970,7 +4912,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "DELETE",
-                &format!("/api/workspaces/acme/apps/mobile/users/{}/totp", alice.id),
+                &format!("/api/workspaces/acme/users/{}/totp", alice.id),
                 Some(&tok),
                 None,
             ))
@@ -4993,7 +4935,7 @@ mod tests {
             build_router(state.clone())
                 .oneshot(req_with_auth(
                     "POST",
-                    "/api/workspaces/acme/apps/mobile/auth/users/login",
+                    "/api/workspaces/acme/auth/users/login",
                     None,
                     Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
                 ))
@@ -5009,7 +4951,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/workspaces/acme/apps/mobile/users",
+                "/api/workspaces/acme/users",
                 Some(&user_tok),
                 None,
             ))
@@ -5234,7 +5176,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/workspaces/acme/apps/mobile/auth/users/register",
+            "/api/workspaces/acme/auth/users/register",
             None,
             Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
         ))
@@ -5244,7 +5186,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/workspaces/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
