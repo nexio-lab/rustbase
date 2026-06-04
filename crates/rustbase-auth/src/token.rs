@@ -4,7 +4,7 @@ use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, deco
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// JWT claims carried by every RustBaas access token.
+/// JWT claims carried by every RustBase access token.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Claims {
     /// Subject id — `UserId` or `AdminId` depending on `role`.

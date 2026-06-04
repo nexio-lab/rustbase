@@ -1,4 +1,4 @@
-//! File storage for RustBaas.
+//! File storage for RustBase.
 //!
 //! Wraps `object_store` to give a stable, async API the rest of the
 //! workspace can use. Backends:

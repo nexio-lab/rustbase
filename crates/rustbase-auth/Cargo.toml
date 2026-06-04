@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Authentication for RustBaas: JWT tokens, password hashing, OAuth2, OTP."
+description = "Authentication for RustBase: JWT tokens, password hashing, OAuth2, OTP."
 
 [dependencies]
 rustbase-core.workspace = true

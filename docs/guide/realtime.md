@@ -72,7 +72,7 @@ Any object you publish is delivered as an event named `custom` (or whatever stri
 
 Limitations:
 
-- **Single-node.** Two RustBaas instances don't share a broker. If you scale out (you really shouldn't, but…), put a sticky-session load balancer in front.
+- **Single-node.** Two RustBase instances don't share a broker. If you scale out (you really shouldn't, but…), put a sticky-session load balancer in front.
 - **At-most-once.** A subscriber that disconnects between events doesn't get them on reconnect — there's no log/journal. If you need durable subscriptions, poll the collection.
 - **No filters on the broker.** Apply filters client-side.
 

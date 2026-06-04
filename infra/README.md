@@ -1,7 +1,7 @@
 # Shared dev infrastructure
 
 Docker services that any local app can talk to — not specific to
-RustBaas. Currently:
+RustBase. Currently:
 
 - **MailHog** — capture-only SMTP relay + web UI. Stops mail from
   escaping during development. Inbox is in-memory; restart wipes it.
@@ -27,7 +27,7 @@ so it won't collide with project-specific containers.
 | MinIO S3     | `localhost:9000` | point your app's `[storage.s3].endpoint` here |
 | MinIO console| <http://localhost:9001> | browse buckets (login `minioadmin` / `minioadmin`) |
 
-## Wiring RustBaas to MailHog
+## Wiring RustBase to MailHog
 
 Drop this into `rustbase.toml` (or set the env vars below):
 
@@ -44,7 +44,7 @@ Equivalent env: `RUSTBASE_MAIL__SMTP__HOST=localhost`,
 After a `verify-email/request` or `password-reset/request`, the
 message appears at <http://localhost:8025>.
 
-## Wiring RustBaas to MinIO
+## Wiring RustBase to MinIO
 
 ```toml
 [storage.s3]

@@ -1,6 +1,6 @@
 # Hooks (JS/TS)
 
-RustBaas embeds [`rquickjs`](https://github.com/DelSkayn/rquickjs) — a QuickJS Rust binding — to run JavaScript and (transpiled) TypeScript hook files at runtime. No Node.js is required; the QuickJS engine ships with the binary.
+RustBase embeds [`rquickjs`](https://github.com/DelSkayn/rquickjs) — a QuickJS Rust binding — to run JavaScript and (transpiled) TypeScript hook files at runtime. No Node.js is required; the QuickJS engine ships with the binary.
 
 Drop a file into `data/hooks/<realm>/<app>/` and a hook lights up the next time the app's runtime loads (which happens on app creation, on server boot, and on every dashboard **Reload** or write through the [hooks REST endpoint](/reference/rest-api#hook-source-files)).
 

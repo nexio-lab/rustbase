@@ -62,4 +62,4 @@ RUST_LOG=info,rustbase_api=debug ./rustbase
 
 ## Idempotency
 
-None of the destructive endpoints (`DELETE /api/...`) support an `Idempotency-Key` header today. Retries are safe (deleting a missing thing → 404, no destructive side-effect). For creates, generate the id client-side if you need idempotent retries — RustBaas will respect the supplied `id` field on most create endpoints.
+None of the destructive endpoints (`DELETE /api/...`) support an `Idempotency-Key` header today. Retries are safe (deleting a missing thing → 404, no destructive side-effect). For creates, generate the id client-side if you need idempotent retries — RustBase will respect the supplied `id` field on most create endpoints.

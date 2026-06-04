@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "SQLite persistence layer for RustBaas: per-scope pool management, migrations, CRUD, filter → SQL."
+description = "SQLite persistence layer for RustBase: per-scope pool management, migrations, CRUD, filter → SQL."
 
 [dependencies]
 rustbase-core.workspace = true

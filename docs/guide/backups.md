@@ -1,13 +1,13 @@
 # Backups (Litestream)
 
-[Litestream](https://litestream.io) is a sidecar that streams WAL changes from SQLite to S3 (or any S3-compatible bucket) **continuously**. RustBaas ships first-class integration: turn it on in `rustbase.toml`, point it at a bucket, and your `system.db`, every `realm.db`, and every app `data.db` are replicated.
+[Litestream](https://litestream.io) is a sidecar that streams WAL changes from SQLite to S3 (or any S3-compatible bucket) **continuously**. RustBase ships first-class integration: turn it on in `rustbase.toml`, point it at a bucket, and your `system.db`, every `realm.db`, and every app `data.db` are replicated.
 
 ## Why Litestream
 
 SQLite snapshots are atomic at file-copy boundaries. Litestream pipes the WAL out as it's written, so:
 
 - **RPO** (recovery point objective) is sub-second.
-- **RTO** (recovery time objective) is "download the bucket, restart RustBaas."
+- **RTO** (recovery time objective) is "download the bucket, restart RustBase."
 - Cost is tiny — object storage + a few KB/s of egress.
 
 For a single-node BaaS that lives or dies by its SQLite files, this is the right backup model.
@@ -22,13 +22,13 @@ prefix                 = "prod"
 replicate_interval_sec = 10
 ```
 
-When `enabled = true`, RustBaas on boot:
+When `enabled = true`, RustBase on boot:
 
 1. Walks `data/` for every `*.db` file.
 2. Generates `data/litestream.yml` with one entry per DB.
-3. Starts Litestream as a child process and forwards its logs into RustBaas's tracing output.
+3. Starts Litestream as a child process and forwards its logs into RustBase's tracing output.
 
-You don't run Litestream yourself — RustBaas manages it.
+You don't run Litestream yourself — RustBase manages it.
 
 ## Bucket layout
 
@@ -95,8 +95,8 @@ Hooks aren't replicated by Litestream because they're not databases. Treat them 
 
 There isn't one. SQLite is a single-writer database; replicas are passive. If the primary host dies, you restore to a new host. That's the model.
 
-If you need a hot failover with sub-second cutover, RustBaas is not the right shape — you want a Postgres cluster.
+If you need a hot failover with sub-second cutover, RustBase is not the right shape — you want a Postgres cluster.
 
 ## Disabling
 
-Set `enabled = false` (or delete the `[litestream]` section) and restart. RustBaas shuts the sidecar down and doesn't recreate `data/litestream.yml`. Existing data in the bucket stays put until you clean it up.
+Set `enabled = false` (or delete the `[litestream]` section) and restart. RustBase shuts the sidecar down and doesn't recreate `data/litestream.yml`. Existing data in the bucket stays put until you clean it up.

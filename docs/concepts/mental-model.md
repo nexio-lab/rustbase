@@ -1,6 +1,6 @@
 # Mental model
 
-Everything in RustBaas fits into a three-level hierarchy:
+Everything in RustBase fits into a three-level hierarchy:
 
 ```
 System
@@ -19,11 +19,11 @@ The system is the server itself. It tracks:
 - **Master-scope policy bounds** (see [hierarchical policies](/concepts/hierarchical-policies)).
 - The **master audit log**.
 
-There is exactly one `system.db` per RustBaas instance.
+There is exactly one `system.db` per RustBase instance.
 
 ## The master realm
 
-On first boot, RustBaas creates a single privileged realm called **the master realm**. Its rules:
+On first boot, RustBase creates a single privileged realm called **the master realm**. Its rules:
 
 - Cannot be deleted (its name and slug can be renamed by master admins).
 - Owns the master admin(s).

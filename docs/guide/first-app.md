@@ -120,7 +120,7 @@ Reload the app's hooks through the dashboard (Hooks → Reload) or restart the s
 
 ## Next steps
 
-You've just touched every layer of RustBaas. From here:
+You've just touched every layer of RustBase. From here:
 
 - **Tune access rules** — [collections & records](/guide/collections#access-rules)
 - **Add OAuth or TOTP** — [authentication](/guide/authentication)

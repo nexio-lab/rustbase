@@ -1,6 +1,6 @@
 # Storage layout
 
-RustBaas keeps one SQLite file per scope and one filesystem directory per scope's files. The whole working directory looks like:
+RustBase keeps one SQLite file per scope and one filesystem directory per scope's files. The whole working directory looks like:
 
 ```
 data/

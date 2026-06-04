@@ -1,6 +1,6 @@
 # Roadmap
 
-A rough sketch of where RustBaas is heading. **Nothing here is a
+A rough sketch of where RustBase is heading. **Nothing here is a
 commitment.** Order and scope shift based on contributor interest,
 sponsor support, and what feedback comes in via
 [Discussions](https://github.com/pjonaszik/rustbase/discussions) and
@@ -20,7 +20,7 @@ Theme: *make v0.1 production-grade.*
 - **Cross-platform CI** — add macOS-arm64 and Windows runners to `ci.yml`
   so the release matrix isn't the first place these targets see compilation.
 - **OpenAPI spec generation** — emit a stable `openapi.yaml` from the
-  axum routes so SDK generators can target RustBaas.
+  axum routes so SDK generators can target RustBase.
 - **Coverage signal** — `cargo-llvm-cov` + a Codecov badge in the README.
 - **Docker GHCR image** — already wired in `release.yml`; verify it works
   end-to-end on the first patch release.
@@ -29,7 +29,7 @@ Theme: *make v0.1 production-grade.*
 
 ## v0.3 — DX + ergonomics
 
-Theme: *make RustBaas pleasant to build against.*
+Theme: *make RustBase pleasant to build against.*
 
 - **JS / TS SDK** — official client generated from the OpenAPI spec.
 - **CLI tool** (`rustbase admin ...`) — for prod ops without the
@@ -43,7 +43,7 @@ Theme: *make RustBaas pleasant to build against.*
 
 ## v0.4 — multi-region + scale
 
-Theme: *let RustBaas hold up under load.*
+Theme: *let RustBase hold up under load.*
 
 - **Read replicas** via Litestream + per-app replica routing.
 - **Background job queue** in the hook runtime, with retries + dead-letter
@@ -66,9 +66,9 @@ Theme: *commit to the API contract.*
 ## Beyond v1.0 (speculative)
 
 - **Plugin SDK** for native Rust extensions (alternative to JS hooks).
-- **Multi-tenant Kubernetes operator** for orchestrating many RustBaas
+- **Multi-tenant Kubernetes operator** for orchestrating many RustBase
   instances.
-- **Hosted RustBaas Cloud** — optional managed deployment for users who
+- **Hosted RustBase Cloud** — optional managed deployment for users who
   want the OSS without the ops.
 
 ## Out of scope

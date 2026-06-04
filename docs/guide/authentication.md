@@ -1,6 +1,6 @@
 # Authentication
 
-RustBaas supports four ways to authenticate, on top of a layered admin model. Pick whichever fits your client.
+RustBase supports four ways to authenticate, on top of a layered admin model. Pick whichever fits your client.
 
 ## Identities at a glance
 

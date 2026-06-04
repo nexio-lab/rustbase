@@ -1,6 +1,6 @@
 # Filter syntax
 
-RustBaas ships a unified filter language used by:
+RustBase ships a unified filter language used by:
 
 - `?filter=` query strings on list endpoints.
 - Per-collection access rules (the `filter` template).

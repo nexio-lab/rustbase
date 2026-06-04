@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "In-process pub/sub broker for RustBaas realtime subscriptions."
+description = "In-process pub/sub broker for RustBase realtime subscriptions."
 
 [dependencies]
 rustbase-core.workspace = true

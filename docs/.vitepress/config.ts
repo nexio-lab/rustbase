@@ -6,9 +6,9 @@ const base = process.env.DOCS_BASE ?? '/rustbase/';
 
 export default defineConfig({
 	base,
-	title: 'RustBaas',
+	title: 'RustBase',
 	description:
-		'A multi-tenant Backend-as-a-Service in Rust — realms, apps, collections, auth, hooks, files, realtime.',
+		'Multi-tenant backend. Single binary. Real isolation. A Backend-as-a-Service in Rust for builders who run multiple small apps under one tenant — SQLite per app, JS hooks without Node.js.',
 	cleanUrls: true,
 	lastUpdated: true,
 	// localhost links in examples shouldn't fail the build.
@@ -42,7 +42,8 @@ export default defineConfig({
 					items: [
 						{ text: 'Introduction', link: '/guide/introduction' },
 						{ text: 'Getting started', link: '/guide/getting-started' },
-						{ text: 'First app', link: '/guide/first-app' }
+						{ text: 'First app', link: '/guide/first-app' },
+						{ text: 'Compare vs PocketBase / Supabase / Appwrite', link: '/guide/comparison' }
 					]
 				},
 				{
@@ -81,6 +82,7 @@ export default defineConfig({
 				{
 					text: 'Concepts',
 					items: [
+						{ text: 'Positioning', link: '/concepts/positioning' },
 						{ text: 'Mental model', link: '/concepts/mental-model' },
 						{
 							text: 'Hierarchical policies',

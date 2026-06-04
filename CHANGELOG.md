@@ -19,7 +19,7 @@ versioning follows [Semantic Versioning](https://semver.org/).
   for new contributors.
 - `ROADMAP.md` with the public sketch of v0.2 → v1.0.
 - Logo (`docs/public/logo.svg`) and favicons (32px / 192px / SVG) in
-  RustBaas orange.
+  RustBase orange.
 - Social-preview image (`docs/public/social-preview.png`, 1280×640)
   wired into the docs `og:image` / Twitter card meta tags.
 - README header now embeds a real dashboard sign-in screenshot.

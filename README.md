@@ -1,14 +1,14 @@
 <div align="center">
 
-<img src="docs/public/logo-512.png" alt="RustBaas" width="120" />
+<img src="docs/public/logo-512.png" alt="RustBase" width="120" />
 
-# RustBaas
+# RustBase
 
-**One binary. One data folder. Your backend.**
+**Multi-tenant backend. Single binary. Real isolation.**
 
 A multi-tenant Backend-as-a-Service in Rust. Drop one executable on a server, run the setup wizard, and you have realms, apps, collections, auth, realtime, file storage, a dashboard, and a REST API.
 
-<img src="docs/public/screenshot-dashboard.png" alt="RustBaas dashboard sign-in page" width="780" />
+<img src="docs/public/screenshot-dashboard.png" alt="RustBase dashboard sign-in page" width="780" />
 </div>
 
 <div align="center">
@@ -39,34 +39,64 @@ A multi-tenant Backend-as-a-Service in Rust. Drop one executable on a server, ru
 
 ---
 
-## Why
+## Who this is for
 
-You want a backend. You don't want to wire up Postgres, Redis, S3, an auth
-service, a queue, a cron runner, and an admin UI before you can ship your first
-feature. RustBaas gives you all of that in one binary, backed by SQLite, with a
-dashboard at `/_/` for everything you'd otherwise need a custom admin panel
-for.
+You ship **multiple small apps** under one organisational tenant — agency
+projects for several clients, an indie portfolio of side products, a fleet of
+internal tools — and you want **real isolation** between them without running a
+fleet of containers.
+
+Concretely, RustBase suits you if:
+
+- You'd otherwise deploy one PocketBase per app (and dread the ops).
+- You'd otherwise reach for Supabase but don't want a managed Postgres bill,
+  RLS soup, or Edge Functions running someone else's JS runtime.
+- You'd otherwise build "one Postgres + Redis + S3 + auth-service + admin UI"
+  stack but you ship by yourself and your time is the constraint.
+
+RustBase gives you, in one binary, the multi-tenant primitive
+(`System → Realm → App`) baked into the storage layer. Each `App` gets its own
+SQLite file. Delete an app — `rm -rf` its folder. Take a backup — `tar` the
+folder. No managed services, no orchestration, no container Tetris.
+
+See [Positioning](https://pjonaszik.github.io/rustbase/concepts/positioning)
+and [the comparison vs PocketBase / Supabase / Appwrite](https://pjonaszik.github.io/rustbase/guide/comparison)
+in the docs for the honest tradeoffs.
 
 ## Features
 
-- **Three-level tenancy** — `System → Realm → App`. Each app owns its own
-  schema, end-user pool, OAuth config, files, and hooks.
-- **Auth** — email + password, email OTP (passwordless), TOTP second factor,
-  and OAuth2 / OIDC (Google, GitHub, Microsoft presets shipped).
+- **Multi-tenant by design** — `System → Realm → App`. Each app's data lives
+  in its own SQLite file under `data/realms/<realm>/apps/<app>/data.db`,
+  with its own user pool, OAuth providers, files, hooks, and audit log.
 - **Three admin tiers** — master, realm, and app admins, each scoped exactly
   to what they manage.
+- **Auth that fits a SaaS** — email + password, email OTP (passwordless), TOTP
+  second factor, and OAuth2 / OIDC (Google, GitHub, Microsoft presets shipped).
 - **Realtime** — SSE subscriptions on every collection. Hooks publish on
   every create / update / delete.
 - **File storage** — local disk or any S3-compatible bucket (AWS, R2, MinIO)
   via `object_store`.
 - **JS/TS hooks** — embedded QuickJS runtime. Drop a `.js` or `.ts` file into
-  `data/hooks/<realm>/<app>/` and lifecycle handlers, cron jobs, and custom
-  HTTP routes light up. No Node.js required.
+  `data/hooks/<realm>/<app>/` and lifecycle handlers, custom HTTP routes, and
+  scheduled jobs light up. No Node.js required, ever.
 - **Hierarchical policies** — master sets bounds, realms tighten, apps pick
   values. Auto-clamp + audit when a parent narrows.
 - **Audit log per scope**, append-only.
 - **Embedded SvelteKit dashboard** at `/_/`, served straight from the binary.
 - **Optional Litestream replication** to any S3 endpoint.
+
+## Status
+
+`v0.1` ships the core surface — auth, collections, hooks, files, realtime,
+dashboard, CI/release pipeline, multi-arch Docker image. `v0.2` adds the
+production-hardening pack (rate limits, JWKS, PKCE, observability). See
+[`ROADMAP.md`](ROADMAP.md) for the trajectory and [`CHANGELOG.md`](CHANGELOG.md)
+for what landed.
+
+Not yet a fit for: high-write workloads (>100 RPS sustained, the SQLite write
+lock kicks in), multi-region deployments, or compliance-sensitive workloads
+without an external review. See the [deployment guide](https://pjonaszik.github.io/rustbase/guide/deployment)
+for what "production" means here in concrete terms.
 
 ## Quick start
 
@@ -160,17 +190,17 @@ public issue for those.
 
 ## Support us
 
-RustBaas is built and maintained on personal time. If it helps you ship — or
+RustBase is built and maintained on personal time. If it helps you ship — or
 if you just want to encourage more work on it — contributions are welcome
 through PayPal. The link is a payment link, so you enter the amount yourself
 (no fixed tiers, no recurring trap, just a one-off transfer of whatever feels
 right):
 
-[**→ Support RustBaas on PayPal**](https://www.paypal.com/ncp/payment/5L8KUWE8F2PSU)
+[**→ Support RustBase on PayPal**](https://www.paypal.com/ncp/payment/5L8KUWE8F2PSU)
 
 <p align="center">
   <a href="https://www.paypal.com/ncp/payment/5L8KUWE8F2PSU">
-    <img src="docs/public/donation-qrcode.png" alt="Scan to support RustBaas via PayPal" width="180" />
+    <img src="docs/public/donation-qrcode.png" alt="Scan to support RustBase via PayPal" width="180" />
   </a>
   <br>
   <em>Scan to support — opens the PayPal payment page.</em>

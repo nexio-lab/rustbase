@@ -38,7 +38,7 @@
 </script>
 
 <svelte:head>
-	<title>RustBaas</title>
+	<title>RustBase</title>
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
@@ -47,7 +47,7 @@
 		<div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
 			<a href="/" class="flex items-center gap-2 text-slate-900">
 				<span class="inline-block h-2.5 w-2.5 rounded-sm bg-orange-500"></span>
-				<span class="text-sm font-semibold tracking-tight">RustBaas</span>
+				<span class="text-sm font-semibold tracking-tight">RustBase</span>
 			</a>
 			<nav class="flex items-center gap-1 text-sm">
 				<a class="nav-link" href="/realms">Realms</a>

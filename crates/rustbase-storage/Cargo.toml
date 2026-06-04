@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "File storage abstraction (local + S3-compatible) for RustBaas."
+description = "File storage abstraction (local + S3-compatible) for RustBase."
 
 [dependencies]
 rustbase-core.workspace = true

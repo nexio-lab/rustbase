@@ -97,7 +97,7 @@ host = "smtp.example.com"
 port = 587
 username = "alerts@example.com"
 password = "${SMTP_PASSWORD}"
-from = "RustBaas <noreply@example.com>"
+from = "RustBase <noreply@example.com>"
 
 [storage]
 backend = "local"               # or "s3"

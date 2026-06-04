@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "HTTP API (REST + SSE + WebSocket) for RustBaas."
+description = "HTTP API (REST + SSE + WebSocket) for RustBase."
 
 [dependencies]
 rustbase-core.workspace = true

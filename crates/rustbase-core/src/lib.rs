@@ -1,4 +1,4 @@
-//! Core domain types for RustBaas. This crate is IO-free.
+//! Core domain types for RustBase. This crate is IO-free.
 //!
 //! Houses the canonical id newtypes, the `Record` and `Schema` types, the
 //! `FilterNode` AST (parser lives alongside in the next layer), the

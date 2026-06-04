@@ -1,10 +1,10 @@
 # Introduction
 
-RustBaas is a **multi-tenant Backend-as-a-Service** packaged as a single statically-linked Rust binary that operates against a `data/` directory of SQLite files — one per scope — plus an embedded JS/TS hook runtime.
+RustBase is a **multi-tenant Backend-as-a-Service** packaged as a single statically-linked Rust binary that operates against a `data/` directory of SQLite files — one per scope — plus an embedded JS/TS hook runtime.
 
 ## What you get
 
-Out of the box, every RustBaas instance ships with:
+Out of the box, every RustBase instance ships with:
 
 - **Realms** — organization boundaries. Each realm groups its apps under one set of administrators, branding, and policies.
 - **Apps** — data products. Each app has its own schema (collections), records, files, hooks, access rules, **end-user pool**, and OAuth provider configuration.
@@ -20,9 +20,9 @@ Out of the box, every RustBaas instance ships with:
 
 ## What it isn't
 
-RustBaas is **not** a horizontally-scaled, multi-region system. SQLite is a single-writer database. Read replicas are out of scope. If you need a fleet of stateless API servers in front of Postgres, this isn't your tool.
+RustBase is **not** a horizontally-scaled, multi-region system. SQLite is a single-writer database. Read replicas are out of scope. If you need a fleet of stateless API servers in front of Postgres, this isn't your tool.
 
-What RustBaas **is** great at:
+What RustBase **is** great at:
 
 - Small-to-medium SaaS where you want operational simplicity.
 - Internal tools and side projects.

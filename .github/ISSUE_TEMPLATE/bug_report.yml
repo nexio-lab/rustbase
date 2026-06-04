@@ -49,7 +49,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: RustBaas version
+      label: RustBase version
       placeholder: "v0.1.0 (or `git rev-parse HEAD` if running from source)"
     validations:
       required: true

@@ -8,7 +8,7 @@ Inside a JS/TS hook file, `$app` is a global the runtime injects. This page is t
 $app.log(...args: unknown[]): void;
 ```
 
-Each argument is stringified and joined with spaces; the resulting line lands in RustBaas's `tracing::info!` output and in `drain_logs`.
+Each argument is stringified and joined with spaces; the resulting line lands in RustBase's `tracing::info!` output and in `drain_logs`.
 
 ## Records
 

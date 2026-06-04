@@ -2,8 +2,8 @@
 layout: home
 
 hero:
-  name: RustBaas
-  text: One binary. One data folder. Your backend.
+  name: RustBase
+  text: Multi-tenant backend. Single binary. Real isolation.
   tagline: A multi-tenant Backend-as-a-Service in Rust — realms, apps, collections, auth, hooks, files, realtime, and a built-in dashboard.
   actions:
     - theme: brand
@@ -43,11 +43,11 @@ features:
     details: axum + sqlx + tokio. Zero unsafe. Property-tested config engine. Comprehensive test suite that runs on every commit.
 ---
 
-## Why RustBaas?
+## Why RustBase?
 
 You want a backend. You don't want to wire up Postgres, Redis, S3, an auth service, a queue, a cron runner, and an admin UI before you can ship your first feature.
 
-RustBaas gives you all of that in one binary, with a `data/` directory you can `scp` or `tar` for backups and a dashboard at `/_/` for everything you'd otherwise need a custom admin panel for.
+RustBase gives you all of that in one binary, with a `data/` directory you can `scp` or `tar` for backups and a dashboard at `/_/` for everything you'd otherwise need a custom admin panel for.
 
 ```sh
 # Run it
@@ -66,14 +66,14 @@ That's it. The setup wizard creates the master admin on first visit, the API is 
 
 ## Support us
 
-RustBaas is built and maintained on personal time. If it helps you ship — or if you just want to encourage more work on it — contributions are welcome through PayPal. The link is a payment link, so you set the amount yourself.
+RustBase is built and maintained on personal time. If it helps you ship — or if you just want to encourage more work on it — contributions are welcome through PayPal. The link is a payment link, so you set the amount yourself.
 
 <div align="center">
 
-[**→ Support RustBaas on PayPal**](https://www.paypal.com/ncp/payment/5L8KUWE8F2PSU)
+[**→ Support RustBase on PayPal**](https://www.paypal.com/ncp/payment/5L8KUWE8F2PSU)
 
 <a href="https://www.paypal.com/ncp/payment/5L8KUWE8F2PSU">
-  <img src="https://pjonaszik.github.io/rustbase/donation-qrcode.png" alt="Scan to support RustBaas via PayPal" width="200" />
+  <img src="https://pjonaszik.github.io/rustbase/donation-qrcode.png" alt="Scan to support RustBase via PayPal" width="200" />
 </a>
 
 <em>Scan with your phone — opens the PayPal payment page.</em>

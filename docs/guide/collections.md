@@ -46,7 +46,7 @@ POST /api/realms/:realm/apps/:app/collections
 }
 ```
 
-Behind the scenes RustBaas issues a `CREATE TABLE` and an `INSERT` into `_collections`. Reserved table names (`_collections`, `_access_rules`, `_files`, `_email_verifications`, `_password_resets`, `_email_otps`, `_oauth_states`, `_oauth_links`, `_oauth_providers`, `users`, `master_admins`, `realm_admins`, `audit_log`, `policies`) are rejected.
+Behind the scenes RustBase issues a `CREATE TABLE` and an `INSERT` into `_collections`. Reserved table names (`_collections`, `_access_rules`, `_files`, `_email_verifications`, `_password_resets`, `_email_otps`, `_oauth_states`, `_oauth_links`, `_oauth_providers`, `users`, `master_admins`, `realm_admins`, `audit_log`, `policies`) are rejected.
 
 ## Patch a schema
 

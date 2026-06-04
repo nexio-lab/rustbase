@@ -12,7 +12,7 @@ System
         └── App  (data product — collections, records, files, end-users, OAuth live here)
 ```
 
-- One `system.db` per RustBaas instance.
+- One `system.db` per RustBase instance.
 - One `realm.db` per realm, holding the apps registry + admin tiers.
 - One `data.db` per app, holding collections / records / users / OAuth.
 

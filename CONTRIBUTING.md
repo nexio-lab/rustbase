@@ -1,4 +1,4 @@
-# Contributing to RustBaas
+# Contributing to RustBase
 
 Thanks for taking an interest. This doc covers how to set up a working tree,
 the conventions the code expects, and how to send work upstream.
@@ -95,7 +95,7 @@ The first dashboard visit walks the master-admin setup wizard.
   filter translator parameterizes every literal.
 - **Use `thiserror` for crate-level error enums, `anyhow` only at binary boundaries.**
 - **Don't add AI attribution** anywhere — commits, code comments, doc strings,
-  identifiers, trailers. RustBaas is a human-maintained project.
+  identifiers, trailers. RustBase is a human-maintained project.
 - **Comments explain *why*, not *what*.** Skip comments that paraphrase the
   code. Note hidden constraints, surprising invariants, workarounds, and
   references to issues / RFCs.

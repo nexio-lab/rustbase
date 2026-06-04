@@ -1,6 +1,6 @@
 # Configuration
 
-RustBaas reads its config from `rustbase.toml` in the working directory. Every key is also overridable by an `RUSTBASE_*` environment variable — env wins over file.
+RustBase reads its config from `rustbase.toml` in the working directory. Every key is also overridable by an `RUSTBASE_*` environment variable — env wins over file.
 
 ## Bare minimum
 
@@ -49,7 +49,7 @@ port = 587
 tls  = "start_tls"   # "none" | "start_tls" | "implicit"
 username = "alerts@example.com"
 password = "${SMTP_PASSWORD}"   # env interpolation works in strings
-from = "RustBaas <noreply@example.com>"
+from = "RustBase <noreply@example.com>"
 
 # ------------------------------------------------------------------
 # Optional S3-compatible file storage. Absent → files live under

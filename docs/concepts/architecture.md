@@ -1,6 +1,6 @@
 # Architecture
 
-RustBaas is split into one workspace with eight Rust crates plus a SvelteKit dashboard. The crate boundaries are real boundaries — each one has a single responsibility and a one-direction dependency graph.
+RustBase is split into one workspace with eight Rust crates plus a SvelteKit dashboard. The crate boundaries are real boundaries — each one has a single responsibility and a one-direction dependency graph.
 
 ## Crate map
 

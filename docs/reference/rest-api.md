@@ -32,7 +32,7 @@ Content-Type: application/json
 { "password": "hunter22" }
 ```
 
-RustBaas auto-seeds a master admin row at first boot with `username = "admin"` and a NULL password. The setup wizard sets that password. Returns 201 on success, 409 if the password has already been set.
+RustBase auto-seeds a master admin row at first boot with `username = "admin"` and a NULL password. The setup wizard sets that password. Returns 201 on success, 409 if the password has already been set.
 
 While the server is uninitialized, every other route returns **503 uninitialized** — that's the setup gate.
 
