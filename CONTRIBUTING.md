@@ -134,7 +134,7 @@ GitHub Actions runs the same checks on every PR. Merging requires green CI.
 - **Unit tests** live in the same file under `#[cfg(test)] mod tests { ... }`.
 - **DB tests** use `sqlite::memory:` for speed. Apply the right migration set:
   - `SYSTEM_MIGRATIONS` for system-DB tests.
-  - `REALM_MIGRATIONS` for realm-DB tests (apps + admin tiers + policies + audit).
+  - `WORKSPACE_MIGRATIONS` for workspace-DB tests (apps + admin tiers + policies + audit).
   - `APP_MIGRATIONS` for app-DB tests (collections, records, users, OAuth, …).
 - **Property tests** live in `tests/` of each crate where they exist (notably
   the auto-clamp engine in `rustbase-db`).

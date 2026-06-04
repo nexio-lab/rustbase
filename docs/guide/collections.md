@@ -32,7 +32,7 @@ Every field has `required`, `default`, and (for strings/numbers) bounds. Validat
 ## Create a collection
 
 ```http
-POST /api/realms/:realm/apps/:app/collections
+POST /api/workspaces/:workspace/apps/:app/collections
 {
   "schema": {
     "id": "posts",
@@ -46,12 +46,12 @@ POST /api/realms/:realm/apps/:app/collections
 }
 ```
 
-Behind the scenes RustBase issues a `CREATE TABLE` and an `INSERT` into `_collections`. Reserved table names (`_collections`, `_access_rules`, `_files`, `_email_verifications`, `_password_resets`, `_email_otps`, `_oauth_states`, `_oauth_links`, `_oauth_providers`, `users`, `master_admins`, `realm_admins`, `audit_log`, `policies`) are rejected.
+Behind the scenes RustBase issues a `CREATE TABLE` and an `INSERT` into `_collections`. Reserved table names (`_collections`, `_access_rules`, `_files`, `_email_verifications`, `_password_resets`, `_email_otps`, `_oauth_states`, `_oauth_links`, `_oauth_providers`, `users`, `master_admins`, `workspace_admins`, `audit_log`, `policies`) are rejected.
 
 ## Patch a schema
 
 ```http
-PATCH /api/realms/:realm/apps/:app/collections/posts
+PATCH /api/workspaces/:workspace/apps/:app/collections/posts
 {
   "schema": {
     "id": "posts",
@@ -72,7 +72,7 @@ Adding a field issues `ALTER TABLE ADD COLUMN`. Removing a field is destructive 
 ### Create
 
 ```http
-POST /api/realms/:realm/apps/:app/collections/posts/records
+POST /api/workspaces/:workspace/apps/:app/collections/posts/records
 { "title": "Hello", "body": "first" }
 ```
 
@@ -93,26 +93,26 @@ IDs are v7 UUIDs — lexicographically sortable by creation time.
 ### Read
 
 ```http
-GET /api/realms/:realm/apps/:app/collections/posts/records/:id
+GET /api/workspaces/:workspace/apps/:app/collections/posts/records/:id
 ```
 
 ### Update
 
 ```http
-PATCH /api/realms/:realm/apps/:app/collections/posts/records/:id
+PATCH /api/workspaces/:workspace/apps/:app/collections/posts/records/:id
 { "body": "edited" }                # partial; omitted fields stay put
 ```
 
 ### Delete
 
 ```http
-DELETE /api/realms/:realm/apps/:app/collections/posts/records/:id
+DELETE /api/workspaces/:workspace/apps/:app/collections/posts/records/:id
 ```
 
 ### List + filter + paginate
 
 ```http
-GET /api/realms/:realm/apps/:app/collections/posts/records?page=1&per_page=30&filter=pinned = true
+GET /api/workspaces/:workspace/apps/:app/collections/posts/records?page=1&per_page=30&filter=pinned = true
 ```
 
 Response:
@@ -141,16 +141,16 @@ Creating a collection with `kind: "auth"` automatically adds:
 | `last_login` | datetime | updated on every successful login |
 | `oauth_providers` | json | array of linked provider records |
 
-Each app has its own `users` table — two apps in the same realm can share an email address but the rows are independent identities. If you want one identity that spans products, run them as a single app.
+Each app has its own `users` table — two apps in the same workspace can share an email address but the rows are independent identities. If you want one identity that spans products, run them as a single app.
 
 ## Access rules
 
 Every collection has five actions (`list`, `get`, `create`, `update`, `delete`), each governed by an access rule.
 
 ```http
-GET    /api/realms/:realm/apps/:app/collections/:coll/access_rules
-PUT    /api/realms/:realm/apps/:app/collections/:coll/access_rules/:action
-DELETE /api/realms/:realm/apps/:app/collections/:coll/access_rules/:action
+GET    /api/workspaces/:workspace/apps/:app/collections/:coll/access_rules
+PUT    /api/workspaces/:workspace/apps/:app/collections/:coll/access_rules/:action
+DELETE /api/workspaces/:workspace/apps/:app/collections/:coll/access_rules/:action
 ```
 
 Rule templates:

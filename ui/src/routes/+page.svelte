@@ -4,9 +4,9 @@
 
 	// Root redirect. The layout-level guard already pushes
 	// unauthenticated users to /login; authenticated users land on
-	// /realms (master) or, eventually, on their realm dashboard.
+	// /workspaces (master) or, eventually, on their workspace dashboard.
 	$effect(() => {
-		if (auth.isAuthenticated) goto('/realms', { replaceState: true });
+		if (auth.isAuthenticated) goto('/workspaces', { replaceState: true });
 		else goto('/login', { replaceState: true });
 	});
 </script>

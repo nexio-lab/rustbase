@@ -6,7 +6,7 @@
 //! the JS runtime.
 
 use async_trait::async_trait;
-use rustbase_core::{AppId, FilterNode, RealmId, parse_filter};
+use rustbase_core::{AppId, FilterNode, WorkspaceId, parse_filter};
 use rustbase_db::{
     AppPoolManager, DbError, ListPage,
     collections::find_collection,
@@ -17,17 +17,21 @@ use serde_json::Value as Json;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// Per-(realm, app) bridge. Cheaply cloneable: the pool manager is
+/// Per-(workspace, app) bridge. Cheaply cloneable: the pool manager is
 /// already `Arc`'d.
 pub struct ApiBridge {
-    realm: RealmId,
+    workspace: WorkspaceId,
     app: AppId,
     apps: Arc<AppPoolManager>,
 }
 
 impl ApiBridge {
-    pub fn new(realm: RealmId, app: AppId, apps: Arc<AppPoolManager>) -> Self {
-        Self { realm, app, apps }
+    pub fn new(workspace: WorkspaceId, app: AppId, apps: Arc<AppPoolManager>) -> Self {
+        Self {
+            workspace,
+            app,
+            apps,
+        }
     }
 
     /// Wrap `self` in a `SyncBridge` so the rquickjs callbacks can
@@ -38,7 +42,7 @@ impl ApiBridge {
 
     async fn pool(&self) -> RtResult<sqlx::SqlitePool> {
         self.apps
-            .pool_for(&self.realm, &self.app)
+            .pool_for(&self.workspace, &self.app)
             .await
             .map_err(|e| RuntimeError::Js(format!("pool: {e}")))
     }

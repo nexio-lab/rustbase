@@ -267,7 +267,7 @@ mod tests {
         let decoded = issuer.verify(&token).unwrap();
         assert_eq!(decoded.sub, "user-1");
         assert_eq!(decoded.role, TokenRole::User);
-        assert_eq!(decoded.realm.as_deref(), Some("acme"));
+        assert_eq!(decoded.workspace.as_deref(), Some("acme"));
     }
 
     #[test]

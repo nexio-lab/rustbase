@@ -1,7 +1,7 @@
 //! TOTP second-factor: enrolment, confirmation, disable.
 //!
 //! Three user-authenticated endpoints under
-//! `/api/realms/:realm/apps/:app/auth/totp/`.
+//! `/api/workspaces/:workspace/apps/:app/auth/totp/`.
 //!
 //! `POST /enroll` starts (or restarts) enrolment. A fresh secret is
 //! stored in `_user_totp` in pending state. The response carries
@@ -31,7 +31,7 @@ use axum::{
 use chrono::Duration;
 use rand_core::{OsRng, RngCore};
 use rustbase_auth::{TokenRole, build_claims};
-use rustbase_core::{AppId, CoreError, RealmId};
+use rustbase_core::{AppId, CoreError, WorkspaceId};
 use rustbase_db::{
     mfa_challenges::{self, ConsumeOutcome as MfaConsume},
     tokens::{SubjectKind, insert_refresh_token},
@@ -71,20 +71,20 @@ pub struct StatusResponse {
     pub status: &'static str,
 }
 
-/// `POST /api/realms/:realm/auth/totp/enroll`.
+/// `POST /api/workspaces/:workspace/auth/totp/enroll`.
 ///
 /// Authenticated end-user starts enrolment. A fresh secret replaces
 /// any prior row (whether pending or enabled).
 pub async fn enroll(
     auth: PrincipalAuth,
     State(state): State<AppState>,
-    Path((realm, app)): Path<(String, String)>,
+    Path((workspace, app)): Path<(String, String)>,
 ) -> Result<Json<EnrollResponse>, ApiError> {
-    auth.require_user_in_app(&realm, &app)?;
-    require_app_exists(&state, &realm, &app).await?;
-    let realm_id = RealmId::from(realm.clone());
+    auth.require_user_in_app(&workspace, &app)?;
+    require_app_exists(&state, &workspace, &app).await?;
+    let workspace_id = WorkspaceId::from(workspace.clone());
     let app_id = AppId::from(app.clone());
-    let pool = state.apps.pool_for(&realm_id, &app_id).await?;
+    let pool = state.apps.pool_for(&workspace_id, &app_id).await?;
 
     let user = find_user_by_id(&pool, &auth.subject_id)
         .await?
@@ -98,11 +98,11 @@ pub async fn enroll(
     let secret = Secret::generate_secret();
     let secret_b32 = secret.to_encoded().to_string();
 
-    let totp = build_totp(&secret_b32, &realm, &app, &user.email)?;
+    let totp = build_totp(&secret_b32, &workspace, &app, &user.email)?;
     let otpauth_url = totp.get_url();
 
     user_totp::enroll(&pool, &user.id, &secret_b32).await?;
-    tracing::info!(realm = %realm, app = %app, user_id = %user.id, "TOTP enrolment started");
+    tracing::info!(workspace = %workspace, app = %app, user_id = %user.id, "TOTP enrolment started");
 
     Ok(Json(EnrollResponse {
         secret_b32,
@@ -110,18 +110,18 @@ pub async fn enroll(
     }))
 }
 
-/// `POST /api/realms/:realm/apps/:app/auth/totp/confirm`.
+/// `POST /api/workspaces/:workspace/apps/:app/auth/totp/confirm`.
 pub async fn confirm(
     auth: PrincipalAuth,
     State(state): State<AppState>,
-    Path((realm, app)): Path<(String, String)>,
+    Path((workspace, app)): Path<(String, String)>,
     Json(body): Json<CodeBody>,
 ) -> Result<Json<StatusResponse>, ApiError> {
-    auth.require_user_in_app(&realm, &app)?;
-    require_app_exists(&state, &realm, &app).await?;
-    let realm_id = RealmId::from(realm.clone());
+    auth.require_user_in_app(&workspace, &app)?;
+    require_app_exists(&state, &workspace, &app).await?;
+    let workspace_id = WorkspaceId::from(workspace.clone());
     let app_id = AppId::from(app.clone());
-    let pool = state.apps.pool_for(&realm_id, &app_id).await?;
+    let pool = state.apps.pool_for(&workspace_id, &app_id).await?;
 
     let row = user_totp::find(&pool, &auth.subject_id)
         .await?
@@ -132,7 +132,7 @@ pub async fn confirm(
         .await?
         .ok_or(ApiError::Core(CoreError::Unauthorized))?;
 
-    let totp = build_totp(&row.secret_b32, &realm, &app, &user.email)?;
+    let totp = build_totp(&row.secret_b32, &workspace, &app, &user.email)?;
     if !check_code(&totp, &body.code)? {
         return Err(ApiError::Core(CoreError::Unauthorized));
     }
@@ -140,22 +140,22 @@ pub async fn confirm(
     if n == 0 {
         return Ok(Json(StatusResponse { status: "enabled" }));
     }
-    tracing::info!(realm = %realm, app = %app, user_id = %auth.subject_id, "TOTP confirmed");
+    tracing::info!(workspace = %workspace, app = %app, user_id = %auth.subject_id, "TOTP confirmed");
     Ok(Json(StatusResponse { status: "enabled" }))
 }
 
-/// `POST /api/realms/:realm/apps/:app/auth/totp/disable`.
+/// `POST /api/workspaces/:workspace/apps/:app/auth/totp/disable`.
 pub async fn disable(
     auth: PrincipalAuth,
     State(state): State<AppState>,
-    Path((realm, app)): Path<(String, String)>,
+    Path((workspace, app)): Path<(String, String)>,
     Json(body): Json<CodeBody>,
 ) -> Result<Json<StatusResponse>, ApiError> {
-    auth.require_user_in_app(&realm, &app)?;
-    require_app_exists(&state, &realm, &app).await?;
-    let realm_id = RealmId::from(realm.clone());
+    auth.require_user_in_app(&workspace, &app)?;
+    require_app_exists(&state, &workspace, &app).await?;
+    let workspace_id = WorkspaceId::from(workspace.clone());
     let app_id = AppId::from(app.clone());
-    let pool = state.apps.pool_for(&realm_id, &app_id).await?;
+    let pool = state.apps.pool_for(&workspace_id, &app_id).await?;
 
     let row = user_totp::find(&pool, &auth.subject_id)
         .await?
@@ -167,12 +167,12 @@ pub async fn disable(
         .await?
         .ok_or(ApiError::Core(CoreError::Unauthorized))?;
 
-    let totp = build_totp(&row.secret_b32, &realm, &app, &user.email)?;
+    let totp = build_totp(&row.secret_b32, &workspace, &app, &user.email)?;
     if !check_code(&totp, &body.code)? {
         return Err(ApiError::Core(CoreError::Unauthorized));
     }
     user_totp::disable(&pool, &auth.subject_id).await?;
-    tracing::info!(realm = %realm, app = %app, user_id = %auth.subject_id, "TOTP disabled");
+    tracing::info!(workspace = %workspace, app = %app, user_id = %auth.subject_id, "TOTP disabled");
     Ok(Json(StatusResponse { status: "disabled" }))
 }
 
@@ -191,20 +191,20 @@ pub struct LoginTotpResponse {
     pub user: UserPublic,
 }
 
-/// `POST /api/realms/:realm/apps/:app/auth/users/login/totp`.
+/// `POST /api/workspaces/:workspace/apps/:app/auth/users/login/totp`.
 ///
 /// Second step of the 2FA login. Consumes the `mfa_token` issued by
 /// `user_login`, verifies the TOTP code against the user's secret,
 /// and returns full access/refresh tokens on success.
 pub async fn login_totp(
     State(state): State<AppState>,
-    Path((realm, app)): Path<(String, String)>,
+    Path((workspace, app)): Path<(String, String)>,
     Json(body): Json<LoginTotpBody>,
 ) -> Result<Json<LoginTotpResponse>, ApiError> {
-    require_app_exists(&state, &realm, &app).await?;
-    let realm_id = RealmId::from(realm.clone());
+    require_app_exists(&state, &workspace, &app).await?;
+    let workspace_id = WorkspaceId::from(workspace.clone());
     let app_id = AppId::from(app.clone());
-    let pool = state.apps.pool_for(&realm_id, &app_id).await?;
+    let pool = state.apps.pool_for(&workspace_id, &app_id).await?;
 
     let user_id = match mfa_challenges::consume(&pool, &body.mfa_token).await? {
         MfaConsume::Ok { user_id } => user_id,
@@ -232,12 +232,12 @@ pub async fn login_totp(
 
     // Subject mirrors the password step: same key, so the password +
     // TOTP failure budgets are shared.
-    let subject = format!("realm:{realm}:app:{app}:user:{}", &user.email);
+    let subject = format!("workspace:{workspace}:app:{app}:user:{}", &user.email);
     state
         .login_attempts
         .check(&subject, &state.lockout_policy)?;
 
-    let totp = build_totp(&row.secret_b32, &realm, &app, &user.email)?;
+    let totp = build_totp(&row.secret_b32, &workspace, &app, &user.email)?;
     if !check_code(&totp, &body.code)? {
         let err = match state
             .login_attempts
@@ -248,7 +248,7 @@ pub async fn login_totp(
                     &state,
                     crate::auth::audit_events::AuthEvent {
                         outcome: crate::auth::audit_events::AuthOutcome::Failed,
-                        scope: crate::auth::audit_events::Scope::Realm(&realm),
+                        scope: crate::auth::audit_events::Scope::Workspace(&workspace),
                         subject: &subject,
                         target: Some(&user.email),
                         details: serde_json::json!({"flow":"totp","app":&app}),
@@ -262,7 +262,7 @@ pub async fn login_totp(
                     &state,
                     crate::auth::audit_events::AuthEvent {
                         outcome: crate::auth::audit_events::AuthOutcome::Locked,
-                        scope: crate::auth::audit_events::Scope::Realm(&realm),
+                        scope: crate::auth::audit_events::Scope::Workspace(&workspace),
                         subject: &subject,
                         target: Some(&user.email),
                         details: serde_json::json!({
@@ -286,7 +286,7 @@ pub async fn login_totp(
     let claims = build_claims(
         user.id.clone(),
         TokenRole::User,
-        Some(realm.clone()),
+        Some(workspace.clone()),
         Some(app.clone()),
         default_access_ttl(),
     );
@@ -299,12 +299,12 @@ pub async fn login_totp(
         default_refresh_ttl(),
     )
     .await?;
-    tracing::info!(realm = %realm, app = %app, user_id = %user.id, "user login (TOTP second step)");
+    tracing::info!(workspace = %workspace, app = %app, user_id = %user.id, "user login (TOTP second step)");
     crate::auth::audit_events::record(
         &state,
         crate::auth::audit_events::AuthEvent {
             outcome: crate::auth::audit_events::AuthOutcome::Success,
-            scope: crate::auth::audit_events::Scope::Realm(&realm),
+            scope: crate::auth::audit_events::Scope::Workspace(&workspace),
             subject: &subject,
             target: Some(&user.email),
             details: serde_json::json!({
@@ -372,7 +372,12 @@ pub async fn user_id_for_email_with_totp(
     Ok(Some((u.id, enabled)))
 }
 
-fn build_totp(secret_b32: &str, realm: &str, app: &str, account: &str) -> Result<TOTP, ApiError> {
+fn build_totp(
+    secret_b32: &str,
+    workspace: &str,
+    app: &str,
+    account: &str,
+) -> Result<TOTP, ApiError> {
     let bytes = Secret::Encoded(secret_b32.to_string())
         .to_bytes()
         .map_err(|e| ApiError::Core(CoreError::Internal(format!("decode totp secret: {e:?}"))))?;
@@ -382,7 +387,7 @@ fn build_totp(secret_b32: &str, realm: &str, app: &str, account: &str) -> Result
         SKEW,
         STEP_SECONDS,
         bytes,
-        Some(format!("{ISSUER} ({realm}/{app})")),
+        Some(format!("{ISSUER} ({workspace}/{app})")),
         account.to_string(),
     )
     .map_err(|e| ApiError::Core(CoreError::Internal(format!("build totp: {e:?}"))))

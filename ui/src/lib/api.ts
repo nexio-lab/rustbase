@@ -105,7 +105,7 @@ export type MasterLoginResponse = {
 	admin: MasterAdmin;
 };
 
-export type Realm = {
+export type Workspace = {
 	id: string;
 	name: string;
 	created_at: string;
@@ -263,7 +263,7 @@ export type PolicyResponse = {
 };
 
 export type ClampOutcome = {
-	realm: string;
+	workspace: string;
 	app: string | null;
 	field: string;
 	before: PolicySpec;

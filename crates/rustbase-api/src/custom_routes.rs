@@ -11,7 +11,7 @@
 //! That handler is reachable at:
 //!
 //! ```text
-//! GET /api/realms/<realm>/apps/<app>/custom/hello?name=...
+//! GET /api/workspaces/<workspace>/apps/<app>/custom/hello?name=...
 //! ```
 //!
 //! The axum side here strips the `/custom` prefix from the URL,
@@ -34,13 +34,13 @@ use crate::error::ApiError;
 use crate::state::AppState;
 
 /// Catch-all handler mounted at
-/// `/api/realms/{realm}/apps/{app}/custom/{*path}` in the router.
+/// `/api/workspaces/{workspace}/apps/{app}/custom/{*path}` in the router.
 ///
 /// `path` is whatever followed `/custom/`. We prepend a `/` so the
 /// JS shim sees the same path it registered (`routerAdd("…", "/hello", …)`).
 pub async fn handle(
     State(state): State<AppState>,
-    Path((realm, app, rest)): Path<(String, String, String)>,
+    Path((workspace, app, rest)): Path<(String, String, String)>,
     method: Method,
     headers: HeaderMap,
     Query(query): Query<BTreeMap<String, String>>,
@@ -79,7 +79,7 @@ pub async fn handle(
 
     let resp = state
         .hooks
-        .invoke_custom_route(&realm, &app, method.as_str(), &path, &ctx)
+        .invoke_custom_route(&workspace, &app, method.as_str(), &path, &ctx)
         .await
         .map_err(|e| ApiError::Core(CoreError::Internal(format!("custom route: {e}"))))?;
 

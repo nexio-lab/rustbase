@@ -1,8 +1,8 @@
 //! Per-scope policy storage.
 //!
-//! Each scope (system, realm, app) has its own `policies` table —
+//! Each scope (system, workspace, app) has its own `policies` table —
 //! same shape, just in a different DB. This module is generic over
-//! the pool; callers pick `system.db`, the realm's `realm.db`, or an
+//! the pool; callers pick `system.db`, the workspace's `workspace.db`, or an
 //! app's `data.db`.
 //!
 //! `PolicySpec` is serialized as JSON in the `policy_json` column.

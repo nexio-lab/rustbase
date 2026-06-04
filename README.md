@@ -6,7 +6,7 @@
 
 **Multi-tenant backend. Single binary. Real isolation.**
 
-A multi-tenant Backend-as-a-Service in Rust. Drop one executable on a server, run the setup wizard, and you have realms, apps, collections, auth, realtime, file storage, a dashboard, and a REST API.
+A multi-tenant Backend-as-a-Service in Rust. Drop one executable on a server, run the setup wizard, and you have workspaces, apps, collections, auth, realtime, file storage, a dashboard, and a REST API.
 
 <img src="docs/public/screenshot-dashboard.png" alt="RustBase dashboard sign-in page" width="780" />
 </div>
@@ -55,7 +55,7 @@ Concretely, RustBase suits you if:
   stack but you ship by yourself and your time is the constraint.
 
 RustBase gives you, in one binary, the multi-tenant primitive
-(`System → Realm → App`) baked into the storage layer. Each `App` gets its own
+(`System → Workspace → App`) baked into the storage layer. Each `App` gets its own
 SQLite file. Delete an app — `rm -rf` its folder. Take a backup — `tar` the
 folder. No managed services, no orchestration, no container Tetris.
 
@@ -65,10 +65,10 @@ in the docs for the honest tradeoffs.
 
 ## Features
 
-- **Multi-tenant by design** — `System → Realm → App`. Each app's data lives
-  in its own SQLite file under `data/realms/<realm>/apps/<app>/data.db`,
+- **Multi-tenant by design** — `System → Workspace → App`. Each app's data lives
+  in its own SQLite file under `data/workspaces/<workspace>/apps/<app>/data.db`,
   with its own user pool, OAuth providers, files, hooks, and audit log.
-- **Three admin tiers** — master, realm, and app admins, each scoped exactly
+- **Three admin tiers** — master, workspace, and app admins, each scoped exactly
   to what they manage.
 - **Auth that fits a SaaS** — email + password, email OTP (passwordless), TOTP
   second factor, and OAuth2 / OIDC (Google, GitHub, Microsoft presets shipped).
@@ -77,9 +77,9 @@ in the docs for the honest tradeoffs.
 - **File storage** — local disk or any S3-compatible bucket (AWS, R2, MinIO)
   via `object_store`.
 - **JS/TS hooks** — embedded QuickJS runtime. Drop a `.js` or `.ts` file into
-  `data/hooks/<realm>/<app>/` and lifecycle handlers, custom HTTP routes, and
+  `data/hooks/<workspace>/<app>/` and lifecycle handlers, custom HTTP routes, and
   scheduled jobs light up. No Node.js required, ever.
-- **Hierarchical policies** — master sets bounds, realms tighten, apps pick
+- **Hierarchical policies** — master sets bounds, workspaces tighten, apps pick
   values. Auto-clamp + audit when a parent narrows.
 - **Audit log per scope**, append-only.
 - **Embedded SvelteKit dashboard** at `/_/`, served straight from the binary.
@@ -125,8 +125,8 @@ Then:
 1. Open <http://localhost:8080/_/> in your browser.
 2. The server auto-seeded an `admin` master-admin row at first boot with no
    password — the **setup wizard** asks you to set one. Submit it.
-3. You're signed in. Create your first realm and your first app.
-4. Hit the REST API: `/api/realms/<realm>/apps/<app>/collections/...`.
+3. You're signed in. Create your first workspace and your first app.
+4. Hit the REST API: `/api/workspaces/<workspace>/apps/<app>/collections/...`.
 
 The full walkthrough lives at
 [**docs / first-app**](https://pjonaszik.github.io/rustbase/guide/first-app).
@@ -152,7 +152,7 @@ conventions.
 
 ```
 System
-  └── Realm  (organization boundary — admins live here)
+  └── Workspace  (organization boundary — admins live here)
         └── App  (data product — collections, records, files, end-users, OAuth live here)
 ```
 
@@ -160,16 +160,16 @@ Storage layout:
 
 ```
 data/
-  system.db                     # realms registry, master admins
-  realms/
-    <realm_id>/
-      realm.db                  # apps, realm/app admins, admin refresh tokens
+  system.db                     # workspaces registry, master admins
+  workspaces/
+    <workspace_id>/
+      workspace.db                  # apps, workspace/app admins, admin refresh tokens
       apps/
         <app_id>/
           data.db               # collections, records, users, oauth, app audit
           storage/              # file blobs
   hooks/
-    <realm_id>/<app_id>/        # JS/TS hook source
+    <workspace_id>/<app_id>/        # JS/TS hook source
 ```
 
 One binary. One `data/` folder. Backups are object storage; restores are a

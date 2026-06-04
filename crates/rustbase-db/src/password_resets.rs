@@ -1,7 +1,7 @@
 //! One-shot password-reset tokens.
 //!
 //! Mirror of `email_verifications` for the "I forgot my password"
-//! flow. Lives in the realm DB. Token is issued when the user asks
+//! flow. Lives in the workspace DB. Token is issued when the user asks
 //! to reset, mailed to the address on file, and presented back on
 //! the confirm endpoint along with the new password. The atomic
 //! consume() machinery prevents replay.

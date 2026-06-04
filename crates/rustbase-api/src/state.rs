@@ -1,7 +1,7 @@
 use crate::security::{LockoutPolicy, LoginAttempts};
 use rustbase_auth::{JwtIssuer, RevocationSet, SigningKey};
 use rustbase_core::Mailer;
-use rustbase_db::{AppPoolManager, RealmPoolManager, SystemPool};
+use rustbase_db::{AppPoolManager, SystemPool, WorkspacePoolManager};
 use rustbase_realtime::RealtimeBroker;
 use rustbase_runtime::HookEngine;
 use rustbase_storage::Storage;
@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[derive(Clone)]
 pub struct AppState {
     pub system: Arc<SystemPool>,
-    pub realms: Arc<RealmPoolManager>,
+    pub workspaces: Arc<WorkspacePoolManager>,
     pub apps: Arc<AppPoolManager>,
     pub revocations: RevocationSet,
     /// Legacy HS256 signing key. Kept around until the post-0.1.x
@@ -28,10 +28,10 @@ pub struct AppState {
     pub jwt: Arc<JwtIssuer>,
     /// In-process pub/sub broker for record CRUD events.
     pub broker: RealtimeBroker,
-    /// Embedded JS hook runtime, keyed per (realm, app).
+    /// Embedded JS hook runtime, keyed per (workspace, app).
     pub hooks: HookEngine,
     /// Root of the on-disk data tree. Used by handlers that need to
-    /// resolve a realm or app folder for delete / storage operations.
+    /// resolve a workspace or app folder for delete / storage operations.
     pub data_dir: Arc<PathBuf>,
     /// Cached "has at least one master admin." Flipped from `false` to
     /// `true` exactly once when the setup wizard completes; on subsequent
@@ -41,7 +41,7 @@ pub struct AppState {
     /// messages in memory; in production it's an SMTP-backed impl.
     pub mailer: Arc<dyn Mailer>,
     /// 32-byte KEK that encrypts at-rest secrets stored across the
-    /// system / realm / app DBs — currently the OAuth provider
+    /// system / workspace / app DBs — currently the OAuth provider
     /// `client_secret`. Persisted in `system.db._secrets.oauth_kek`
     /// (generated once on first boot, then re-loaded). Stored as an
     /// `Arc<[u8; 32]>` so handlers can clone the slice cheaply.
@@ -49,7 +49,7 @@ pub struct AppState {
     /// File storage backend. Either a local directory rooted at
     /// `data_dir` or an S3-compatible bucket — picked by config at
     /// boot. Handlers use it with scoped keys of the form
-    /// `realms/<realm>/apps/<app>/storage/<file_id>`.
+    /// `workspaces/<workspace>/apps/<app>/storage/<file_id>`.
     pub storage: Storage,
     /// Per-subject failed-login counters that drive the auth lockout.
     /// Cloned cheaply (DashMap behind an `Arc`).

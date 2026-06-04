@@ -1,6 +1,6 @@
 //! One-shot email-verification tokens.
 //!
-//! Lives in the realm DB. A token is issued when the user asks to
+//! Lives in the workspace DB. A token is issued when the user asks to
 //! verify their email, mailed to them, and presented back on the
 //! confirm endpoint. Tokens carry an explicit TTL and a
 //! `consumed_at` column — using one flips `consumed_at`, and a

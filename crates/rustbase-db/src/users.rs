@@ -1,4 +1,4 @@
-//! End-user storage. One row per user inside a realm's `realm.db`.
+//! End-user storage. One row per user inside a workspace's `workspace.db`.
 
 use crate::error::Result;
 use chrono::{DateTime, Utc};
@@ -120,7 +120,7 @@ pub async fn set_password_hash(pool: &SqlitePool, id: &str, hash: &str) -> Resul
 }
 
 /// Admin-facing search. `email_like` is wrapped in `%…%` if non-empty;
-/// an empty string lists every user in the realm. Ordered by
+/// an empty string lists every user in the workspace. Ordered by
 /// `created_at DESC` so the most recent signups land on page 1.
 pub async fn list_users(
     pool: &SqlitePool,

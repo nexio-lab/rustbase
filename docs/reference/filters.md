@@ -55,7 +55,7 @@ When the filter runs as an access rule, the request context is exposed:
 |---|---|
 | `@request.auth.id` | the authenticated principal's id (empty string for anonymous) |
 | `@request.auth.email` | the principal's email (empty for non-end-users) |
-| `@request.auth.role` | one of `master_admin`, `realm_admin`, `app_admin`, `user`, `""` |
+| `@request.auth.role` | one of `master_admin`, `workspace_admin`, `app_admin`, `user`, `""` |
 | `@request.body.<field>` | the field's value on the incoming write (for create/update only) |
 
 So a "user can only update their own posts" rule is:

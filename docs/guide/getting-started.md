@@ -47,13 +47,13 @@ Visit **http://localhost:8080/_/** in your browser. The server auto-seeded a mas
 
 That's it — you're now signed in as the `admin` master admin.
 
-## Create your first realm and app
+## Create your first workspace and app
 
 From the dashboard:
 
-1. Click **Realms** in the top nav.
-2. Click **+ New realm**, give it an id (`acme`) and a name (`Acme Inc.`). The setup wizard already created the special **master realm**, but production data goes into the realms you create.
-3. Open the new realm, click **+ New app**, give it an id (`web`) and a name (`Web`).
+1. Click **Workspaces** in the top nav.
+2. Click **+ New workspace**, give it an id (`acme`) and a name (`Acme Inc.`). The setup wizard already created the special **master workspace**, but production data goes into the workspaces you create.
+3. Open the new workspace, click **+ New app**, give it an id (`web`) and a name (`Web`).
 4. Open the app, click **+ New collection**. Pick `base` for plain records or `auth` for end-users.
 5. Add fields to the schema using the inline editor. Required fields and types validate at write time.
 
@@ -68,12 +68,12 @@ After your first writes, the working directory looks like this:
 ├── rustbase                    # the binary
 ├── rustbase.toml               # optional config
 └── data/
-    ├── system.db               # realms registry, master admins
-    └── realms/
+    ├── system.db               # workspaces registry, master admins
+    └── workspaces/
         ├── master/
-        │   └── realm.db
+        │   └── workspace.db
         └── acme/
-            ├── realm.db        # apps, realm/app admins, admin refresh tokens, policies
+            ├── workspace.db        # apps, workspace/app admins, admin refresh tokens, policies
             └── apps/
                 └── web/
                     ├── data.db # collections, records, access rules, users, oauth, refresh tokens
@@ -89,7 +89,7 @@ Drop a `rustbase.toml` next to the binary to override defaults:
 ```toml
 data_dir = "./data"
 bind = "0.0.0.0:8080"
-realm_pool_cap = 32
+workspace_pool_cap = 32
 app_pool_cap = 64
 
 [smtp]

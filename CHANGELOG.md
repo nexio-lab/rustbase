@@ -53,6 +53,27 @@ versioning follows [Semantic Versioning](https://semver.org/).
   (`issue`, `verify`, `jwks`). HS256 tokens issued before the upgrade
   continue to verify until they expire on their own; the legacy HMAC
   key is kept as a verification-only fallback.
+
+### Changed — BREAKING
+
+- **Concept renamed: `Realm` → `Workspace`.** Every public surface
+  follows: REST routes (`/api/realms/...` → `/api/workspaces/...`),
+  dashboard URLs (`/_/realms/...` → `/_/workspaces/...`), on-disk
+  layout (`data/realms/<id>/realm.db` → `data/workspaces/<id>/workspace.db`),
+  DB tables (`realms` → `workspaces`, `realm_admins` →
+  `workspace_admins`), JSON config keys (`realm_pool_cap` →
+  `workspace_pool_cap`), error codes (`realm_not_found` →
+  `workspace_not_found`), JWT claims (`realm` → `workspace`), Rust
+  types (`RealmId`, `RealmAdmin`, `RealmCtx`, `RealmPoolManager` →
+  `Workspace*`), and migration constants (`REALM_MIGRATIONS` →
+  `WORKSPACE_MIGRATIONS`).
+- The rename is purely lexical — semantics are unchanged. End-user
+  identity stays per-app for now; workspace-shared identity is the
+  next milestone in this line.
+- No automatic data migration: existing 0.1.x installs need to
+  point at a fresh `data/` directory or rename the layout manually
+  before upgrading. The maintainer's own dev DB was bootstrapped from
+  scratch.
 - **PKCE (RFC 7636) on every OAuth flow.** `/authorize` mints a
   32-byte `code_verifier`, persists it alongside the CSRF state,
   sends `code_challenge=S256(verifier)` + `code_challenge_method=S256`
@@ -112,7 +133,7 @@ versioning follows [Semantic Versioning](https://semver.org/).
   honest 405s — the rule is path-prefixed.
 - `crates/rustbase-server/src/dashboard.rs::asset` falls back to
   `index.html` for paths that look like client-side routes (no extension,
-  no `_app/` prefix), so deep links like `/_/realms/acme/apps/web`
+  no `_app/` prefix), so deep links like `/_/workspaces/acme/apps/web`
   reload cleanly.
 - `ui/src/lib/nav.ts` introduces a `goto` helper that prefixes
   SvelteKit's configured `base` to absolute-path hrefs. Every

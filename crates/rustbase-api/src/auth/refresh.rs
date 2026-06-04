@@ -5,7 +5,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use rustbase_auth::{TokenRole, build_claims};
-use rustbase_core::{AppId, CoreError, RealmId};
+use rustbase_core::{AppId, CoreError, WorkspaceId};
 use rustbase_db::tokens::{
     SubjectKind, find_active_refresh_token, insert_refresh_token, revoke_refresh_token,
 };
@@ -112,18 +112,18 @@ pub async fn master_admin_refresh(
 
 pub async fn user_refresh(
     State(state): State<AppState>,
-    Path((realm, app)): Path<(String, String)>,
+    Path((workspace, app)): Path<(String, String)>,
     headers: HeaderMap,
     body: Option<Json<RefreshRequest>>,
 ) -> Result<Response, ApiError> {
-    require_app_exists(&state, &realm, &app).await?;
+    require_app_exists(&state, &workspace, &app).await?;
     let req = body.map(|j| j.0).unwrap_or_default();
     let presented =
         pick_refresh_token(&headers, &req).ok_or(ApiError::Core(CoreError::Unauthorized))?;
 
-    let realm_id = RealmId::from(realm.clone());
+    let workspace_id = WorkspaceId::from(workspace.clone());
     let app_id = AppId::from(app.clone());
-    let pool = state.apps.pool_for(&realm_id, &app_id).await?;
+    let pool = state.apps.pool_for(&workspace_id, &app_id).await?;
 
     let existing = find_active_refresh_token(&pool, &presented, SubjectKind::User)
         .await?
@@ -143,7 +143,7 @@ pub async fn user_refresh(
     let claims = build_claims(
         existing.subject_id,
         TokenRole::User,
-        Some(realm),
+        Some(workspace),
         Some(app),
         default_access_ttl(),
     );
@@ -156,19 +156,19 @@ pub async fn user_refresh(
     Ok(with_session_cookies(&state, body))
 }
 
-pub async fn realm_admin_refresh(
+pub async fn workspace_admin_refresh(
     State(state): State<AppState>,
-    Path(realm): Path<String>,
+    Path(workspace): Path<String>,
     headers: HeaderMap,
     body: Option<Json<RefreshRequest>>,
 ) -> Result<Response, ApiError> {
     let req = body.map(|j| j.0).unwrap_or_default();
     let presented =
         pick_refresh_token(&headers, &req).ok_or(ApiError::Core(CoreError::Unauthorized))?;
-    let realm_id = RealmId::from(realm.clone());
-    let pool = state.realms.pool_for(&realm_id).await?;
+    let workspace_id = WorkspaceId::from(workspace.clone());
+    let pool = state.workspaces.pool_for(&workspace_id).await?;
 
-    let existing = find_active_refresh_token(&pool, &presented, SubjectKind::RealmAdmin)
+    let existing = find_active_refresh_token(&pool, &presented, SubjectKind::WorkspaceAdmin)
         .await?
         .ok_or(ApiError::Core(CoreError::Unauthorized))?;
 
@@ -177,7 +177,7 @@ pub async fn realm_admin_refresh(
     let new_refresh = insert_refresh_token(
         &pool,
         &new_refresh_token(),
-        SubjectKind::RealmAdmin,
+        SubjectKind::WorkspaceAdmin,
         &existing.subject_id,
         default_refresh_ttl(),
     )
@@ -185,8 +185,8 @@ pub async fn realm_admin_refresh(
 
     let claims = build_claims(
         existing.subject_id,
-        TokenRole::RealmAdmin,
-        Some(realm),
+        TokenRole::WorkspaceAdmin,
+        Some(workspace),
         None,
         default_access_ttl(),
     );

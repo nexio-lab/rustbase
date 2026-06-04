@@ -6,7 +6,7 @@ Unless noted, mutating routes require an `Authorization: Bearer <jwt>` header ca
 
 ## Conventions
 
-- `:realm`, `:app`, `:id`, `:field`, etc. are URL parameters.
+- `:workspace`, `:app`, `:id`, `:field`, etc. are URL parameters.
 - Pagination params are always `?page=N&per_page=M`. `per_page` caps at 200.
 - Filter params are always `?filter=<expr>`. See the [filter syntax](/reference/filters).
 - All timestamps are RFC 3339 (`2026-05-27T10:00:00Z`).
@@ -65,33 +65,33 @@ max-age=3600`).
 
 ---
 
-## Realm admin auth
+## Workspace admin auth
 
 ```http
-POST /api/realms/:realm/auth/admin/login
-POST /api/realms/:realm/auth/refresh
+POST /api/workspaces/:workspace/auth/admin/login
+POST /api/workspaces/:workspace/auth/refresh
 ```
 
-Same shape as master, but scoped to a single realm.
+Same shape as master, but scoped to a single workspace.
 
 ```http
-POST /api/realms/:realm/admins      [master only]
+POST /api/workspaces/:workspace/admins      [master only]
 { "email": "ops@acme.com", "password": "secretpw", "name": "Ops",
-  "app_ids": [] }                   # empty = realm-wide; non-empty = app-scoped
+  "app_ids": [] }                   # empty = workspace-wide; non-empty = app-scoped
 ```
 
-Creates a realm or app admin. Only a master admin can call this.
+Creates a workspace or app admin. Only a master admin can call this.
 
 ---
 
-## Realms
+## Workspaces
 
 ```http
-GET    /api/realms
-POST   /api/realms                          [master]
-GET    /api/realms/:id
-PATCH  /api/realms/:id                      [master]
-DELETE /api/realms/:id                      [master, non-master only]
+GET    /api/workspaces
+POST   /api/workspaces                          [master]
+GET    /api/workspaces/:id
+PATCH  /api/workspaces/:id                      [master]
+DELETE /api/workspaces/:id                      [master, non-master only]
 ```
 
 Body shape:
@@ -100,21 +100,21 @@ Body shape:
 { "id": "acme", "name": "Acme Inc." }
 ```
 
-`PATCH` accepts `{name}`. Deleting cascades: all apps, users, files, policies, audit entries under the realm vanish in one transaction.
+`PATCH` accepts `{name}`. Deleting cascades: all apps, users, files, policies, audit entries under the workspace vanish in one transaction.
 
 ---
 
 ## Apps
 
 ```http
-GET    /api/realms/:realm/apps
-POST   /api/realms/:realm/apps                      [realm admin]
-GET    /api/realms/:realm/apps/:app
-PATCH  /api/realms/:realm/apps/:app                 [realm admin]
-DELETE /api/realms/:realm/apps/:app                 [realm admin]
+GET    /api/workspaces/:workspace/apps
+POST   /api/workspaces/:workspace/apps                      [workspace admin]
+GET    /api/workspaces/:workspace/apps/:app
+PATCH  /api/workspaces/:workspace/apps/:app                 [workspace admin]
+DELETE /api/workspaces/:workspace/apps/:app                 [workspace admin]
 ```
 
-Body shape mirrors realms. Creating an app initializes its `data.db` and picks up any JS/TS hooks already on disk under `data/hooks/<realm>/<app>/`.
+Body shape mirrors workspaces. Creating an app initializes its `data.db` and picks up any JS/TS hooks already on disk under `data/hooks/<workspace>/<app>/`.
 
 ---
 
@@ -123,25 +123,25 @@ Body shape mirrors realms. Creating an app initializes its `data.db` and picks u
 Self-service flows, **no admin token** required. End-users live per-app, so every URL carries an `/apps/:app/` segment:
 
 ```http
-POST /api/realms/:realm/apps/:app/auth/users/register
+POST /api/workspaces/:workspace/apps/:app/auth/users/register
 { "email": "u@acme.com", "password": "userpass1" }
 
-POST /api/realms/:realm/apps/:app/auth/users/login
-POST /api/realms/:realm/apps/:app/auth/users/refresh
+POST /api/workspaces/:workspace/apps/:app/auth/users/login
+POST /api/workspaces/:workspace/apps/:app/auth/users/refresh
 
-POST /api/realms/:realm/apps/:app/auth/verify-email/request    [user token]
-POST /api/realms/:realm/apps/:app/auth/verify-email/confirm    { "token": "..." }
+POST /api/workspaces/:workspace/apps/:app/auth/verify-email/request    [user token]
+POST /api/workspaces/:workspace/apps/:app/auth/verify-email/confirm    { "token": "..." }
 
-POST /api/realms/:realm/apps/:app/auth/password-reset/request  { "email": "..." }
-POST /api/realms/:realm/apps/:app/auth/password-reset/confirm  { "token": "...", "new_password": "..." }
+POST /api/workspaces/:workspace/apps/:app/auth/password-reset/request  { "email": "..." }
+POST /api/workspaces/:workspace/apps/:app/auth/password-reset/confirm  { "token": "...", "new_password": "..." }
 
-POST /api/realms/:realm/apps/:app/auth/otp/request             { "email": "..." }
-POST /api/realms/:realm/apps/:app/auth/otp/login               { "email": "...", "code": "123456" }
+POST /api/workspaces/:workspace/apps/:app/auth/otp/request             { "email": "..." }
+POST /api/workspaces/:workspace/apps/:app/auth/otp/login               { "email": "...", "code": "123456" }
 
-POST /api/realms/:realm/apps/:app/auth/totp/enroll             [user token]   → returns secret + QR url
-POST /api/realms/:realm/apps/:app/auth/totp/confirm            [user token]   { "code": "123456" }
-POST /api/realms/:realm/apps/:app/auth/totp/disable            [user token]   { "code": "123456" }
-POST /api/realms/:realm/apps/:app/auth/users/login/totp        { "challenge_id": "...", "code": "123456" }
+POST /api/workspaces/:workspace/apps/:app/auth/totp/enroll             [user token]   → returns secret + QR url
+POST /api/workspaces/:workspace/apps/:app/auth/totp/confirm            [user token]   { "code": "123456" }
+POST /api/workspaces/:workspace/apps/:app/auth/totp/disable            [user token]   { "code": "123456" }
+POST /api/workspaces/:workspace/apps/:app/auth/users/login/totp        { "challenge_id": "...", "code": "123456" }
 ```
 
 See the [authentication guide](/guide/authentication) for what each flow does.
@@ -153,18 +153,18 @@ See the [authentication guide](/guide/authentication) for what each flow does.
 End-user-facing:
 
 ```http
-GET  /api/realms/:realm/apps/:app/auth/oauth/:provider/authorize?redirect_uri=...
-POST /api/realms/:realm/apps/:app/auth/oauth/:provider/callback
+GET  /api/workspaces/:workspace/apps/:app/auth/oauth/:provider/authorize?redirect_uri=...
+POST /api/workspaces/:workspace/apps/:app/auth/oauth/:provider/callback
 { "code": "...", "state": "...", "redirect_uri": "..." }
 ```
 
 Admin-facing — manage which providers are wired up for this app:
 
 ```http
-GET    /api/realms/:realm/apps/:app/auth/oauth/providers              [app admin]
-GET    /api/realms/:realm/apps/:app/auth/oauth/providers/:provider
-PUT    /api/realms/:realm/apps/:app/auth/oauth/providers/:provider
-DELETE /api/realms/:realm/apps/:app/auth/oauth/providers/:provider
+GET    /api/workspaces/:workspace/apps/:app/auth/oauth/providers              [app admin]
+GET    /api/workspaces/:workspace/apps/:app/auth/oauth/providers/:provider
+PUT    /api/workspaces/:workspace/apps/:app/auth/oauth/providers/:provider
+DELETE /api/workspaces/:workspace/apps/:app/auth/oauth/providers/:provider
 ```
 
 `PUT` body:
@@ -189,11 +189,11 @@ DELETE /api/realms/:realm/apps/:app/auth/oauth/providers/:provider
 ## Admin user management
 
 ```http
-GET    /api/realms/:realm/apps/:app/users?page=&per_page=&q=          [app admin]
-GET    /api/realms/:realm/apps/:app/users/:id
-PATCH  /api/realms/:realm/apps/:app/users/:id/verify     { "verified": true }
-DELETE /api/realms/:realm/apps/:app/users/:id/totp                    # force unenroll
-DELETE /api/realms/:realm/apps/:app/users/:id
+GET    /api/workspaces/:workspace/apps/:app/users?page=&per_page=&q=          [app admin]
+GET    /api/workspaces/:workspace/apps/:app/users/:id
+PATCH  /api/workspaces/:workspace/apps/:app/users/:id/verify     { "verified": true }
+DELETE /api/workspaces/:workspace/apps/:app/users/:id/totp                    # force unenroll
+DELETE /api/workspaces/:workspace/apps/:app/users/:id
 ```
 
 `q` is a substring match on email.
@@ -203,11 +203,11 @@ DELETE /api/realms/:realm/apps/:app/users/:id
 ## Collections
 
 ```http
-GET    /api/realms/:realm/apps/:app/collections
-POST   /api/realms/:realm/apps/:app/collections        [app admin]
-GET    /api/realms/:realm/apps/:app/collections/:name
-PATCH  /api/realms/:realm/apps/:app/collections/:name  [app admin]
-DELETE /api/realms/:realm/apps/:app/collections/:name  [app admin]
+GET    /api/workspaces/:workspace/apps/:app/collections
+POST   /api/workspaces/:workspace/apps/:app/collections        [app admin]
+GET    /api/workspaces/:workspace/apps/:app/collections/:name
+PATCH  /api/workspaces/:workspace/apps/:app/collections/:name  [app admin]
+DELETE /api/workspaces/:workspace/apps/:app/collections/:name  [app admin]
 ```
 
 Body shape:
@@ -237,11 +237,11 @@ Creating an `auth` collection auto-adds the columns documented in the [collectio
 ## Records
 
 ```http
-GET    /api/realms/:realm/apps/:app/collections/:coll/records?page=&per_page=&filter=
-POST   /api/realms/:realm/apps/:app/collections/:coll/records
-GET    /api/realms/:realm/apps/:app/collections/:coll/records/:id
-PATCH  /api/realms/:realm/apps/:app/collections/:coll/records/:id
-DELETE /api/realms/:realm/apps/:app/collections/:coll/records/:id
+GET    /api/workspaces/:workspace/apps/:app/collections/:coll/records?page=&per_page=&filter=
+POST   /api/workspaces/:workspace/apps/:app/collections/:coll/records
+GET    /api/workspaces/:workspace/apps/:app/collections/:coll/records/:id
+PATCH  /api/workspaces/:workspace/apps/:app/collections/:coll/records/:id
+DELETE /api/workspaces/:workspace/apps/:app/collections/:coll/records/:id
 ```
 
 Body is the record's field map (no nesting under `fields`):
@@ -275,9 +275,9 @@ Access rules apply per `(collection, action)` pair — see [collections](/guide/
 ## Access rules
 
 ```http
-GET    /api/realms/:realm/apps/:app/collections/:coll/access_rules
-PUT    /api/realms/:realm/apps/:app/collections/:coll/access_rules/:action
-DELETE /api/realms/:realm/apps/:app/collections/:coll/access_rules/:action
+GET    /api/workspaces/:workspace/apps/:app/collections/:coll/access_rules
+PUT    /api/workspaces/:workspace/apps/:app/collections/:coll/access_rules/:action
+DELETE /api/workspaces/:workspace/apps/:app/collections/:coll/access_rules/:action
 ```
 
 `action` is one of `list`, `get`, `create`, `update`, `delete`.
@@ -298,17 +298,17 @@ Body of `PUT`:
 ## Files
 
 ```http
-GET    /api/realms/:realm/apps/:app/files
-POST   /api/realms/:realm/apps/:app/files
-GET    /api/realms/:realm/apps/:app/files/:id
-GET    /api/realms/:realm/apps/:app/files/:id/meta
-DELETE /api/realms/:realm/apps/:app/files/:id
+GET    /api/workspaces/:workspace/apps/:app/files
+POST   /api/workspaces/:workspace/apps/:app/files
+GET    /api/workspaces/:workspace/apps/:app/files/:id
+GET    /api/workspaces/:workspace/apps/:app/files/:id/meta
+DELETE /api/workspaces/:workspace/apps/:app/files/:id
 ```
 
 Upload:
 
 ```http
-POST /api/realms/:realm/apps/:app/files
+POST /api/workspaces/:workspace/apps/:app/files
 Authorization: Bearer <token>
 X-Filename: kitten.png
 Content-Type: image/png
@@ -327,7 +327,7 @@ Download returns the raw bytes with the stored `Content-Type` and an `X-Filename
 Server-Sent Events:
 
 ```http
-GET /api/realms/:realm/apps/:app/collections/:coll/events
+GET /api/workspaces/:workspace/apps/:app/collections/:coll/events
 Authorization: Bearer <token>
 ```
 
@@ -340,7 +340,7 @@ Event types: `record_created`, `record_updated`, `record_deleted`. Each carries 
 JS hooks register their own endpoints via `routerAdd`. Mount point:
 
 ```http
-ANY /api/realms/:realm/apps/:app/custom/*path
+ANY /api/workspaces/:workspace/apps/:app/custom/*path
 ```
 
 The matcher delegates to the JS shim's `$app.routerAdd` table; missing handlers return 404. See [hooks](/guide/hooks#custom-http-routes).
@@ -355,15 +355,15 @@ GET    /api/system/policies/:field
 PUT    /api/system/policies/:field                          # body: PolicySpec
 DELETE /api/system/policies/:field
 
-GET    /api/realms/:realm/policies                          [realm admin]
-GET    /api/realms/:realm/policies/:field
-PUT    /api/realms/:realm/policies/:field
-DELETE /api/realms/:realm/policies/:field
+GET    /api/workspaces/:workspace/policies                          [workspace admin]
+GET    /api/workspaces/:workspace/policies/:field
+PUT    /api/workspaces/:workspace/policies/:field
+DELETE /api/workspaces/:workspace/policies/:field
 
-GET    /api/realms/:realm/apps/:app/policies                [app admin]
-GET    /api/realms/:realm/apps/:app/policies/:field
-PUT    /api/realms/:realm/apps/:app/policies/:field
-DELETE /api/realms/:realm/apps/:app/policies/:field
+GET    /api/workspaces/:workspace/apps/:app/policies                [app admin]
+GET    /api/workspaces/:workspace/apps/:app/policies/:field
+PUT    /api/workspaces/:workspace/apps/:app/policies/:field
+DELETE /api/workspaces/:workspace/apps/:app/policies/:field
 ```
 
 Body of `PUT` is a `PolicySpec`:
@@ -384,8 +384,8 @@ Response of `PUT` includes a `cascaded` array describing any child values that w
 
 ```http
 GET /api/system/audit?page=&per_page=&action=&actor=                   [master]
-GET /api/realms/:realm/audit?page=&per_page=&action=&actor=            [realm admin]
-GET /api/realms/:realm/apps/:app/audit?page=&per_page=&action=&actor=  [app admin]
+GET /api/workspaces/:workspace/audit?page=&per_page=&action=&actor=            [workspace admin]
+GET /api/workspaces/:workspace/apps/:app/audit?page=&per_page=&action=&actor=  [app admin]
 ```
 
 Each entry: `{id, ts, actor, action, target, details}`. `action` is a case-insensitive substring match; `actor` is exact.
@@ -395,11 +395,11 @@ Each entry: `{id, ts, actor, action, target, details}`. `action` is a case-insen
 ## Hook source files
 
 ```http
-GET    /api/realms/:realm/apps/:app/hooks                    [app admin]
-GET    /api/realms/:realm/apps/:app/hooks/:filename
-PUT    /api/realms/:realm/apps/:app/hooks/:filename          # { source: "..." }
-DELETE /api/realms/:realm/apps/:app/hooks/:filename
-POST   /api/realms/:realm/apps/:app/hooks/reload
+GET    /api/workspaces/:workspace/apps/:app/hooks                    [app admin]
+GET    /api/workspaces/:workspace/apps/:app/hooks/:filename
+PUT    /api/workspaces/:workspace/apps/:app/hooks/:filename          # { source: "..." }
+DELETE /api/workspaces/:workspace/apps/:app/hooks/:filename
+POST   /api/workspaces/:workspace/apps/:app/hooks/reload
 ```
 
 `PUT` and `DELETE` automatically trigger a reload and return `{file, reload: {loaded, errors}}` (or just `{loaded, errors}` for `DELETE` and `/reload`). Compile errors live in the `errors` array so the dashboard can surface them inline.

@@ -5,7 +5,7 @@
 //! This layer protects an *individual identity* against credential-stuffing
 //! and password-spray when an attacker rotates source IPs. Failed login
 //! attempts accumulate against a stable subject key (e.g. `master:admin`,
-//! `realm:acme:user:alice@x.tld`); past the configured threshold inside
+//! `workspace:acme:user:alice@x.tld`); past the configured threshold inside
 //! the rolling window, further attempts are short-circuited with
 //! `CoreError::TooManyRequests` until the lockout expires.
 //!

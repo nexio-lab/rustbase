@@ -1,7 +1,7 @@
 //! Hierarchical configuration policy primitives.
 //!
 //! Each configurable knob (password length, token TTL, allowed OAuth
-//! providers, etc.) is represented as a `PolicySpec`. Master, realm, and app
+//! providers, etc.) is represented as a `PolicySpec`. Master, workspace, and app
 //! each hold their own `PolicySpec` for the knob; validation walks parent →
 //! child and rejects values outside the parent's bound. When a parent
 //! tightens its bound, the same primitives are used to clamp the child.
@@ -163,10 +163,10 @@ impl EnumSetPolicy {
 
 /// One position in a policy chain. Names are surfaced in audit entries
 /// and in `PolicyViolation` errors so the operator can see which level
-/// (master / realm / app / …) actually owns a value.
+/// (master / workspace / app / …) actually owns a value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PolicyLevel {
-    /// Human label for this level (e.g. `"master"`, `"realm"`, `"app"`).
+    /// Human label for this level (e.g. `"master"`, `"workspace"`, `"app"`).
     pub level: String,
     /// The policy at this level.
     pub spec: PolicySpec,
@@ -183,7 +183,7 @@ impl PolicyLevel {
 
 /// A single change emitted when the cascade rewrites a level to fit a
 /// tightened parent. The DB layer consumes these to populate the audit
-/// log on master/realm tighten operations.
+/// log on master/workspace tighten operations.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PolicyChange {
     pub field: String,
@@ -217,7 +217,7 @@ pub fn validate_chain(field: &str, levels: &[PolicyLevel]) -> Result<()> {
 }
 
 /// Cascade a master tightening down through a chain. Given the new
-/// top-level spec and the current `levels[1..]` (realm, app, …), walk
+/// top-level spec and the current `levels[1..]` (workspace, app, …), walk
 /// top-down and clamp each level against the cumulative parent. Returns
 /// the rebuilt chain plus a list of changes for the audit log.
 ///
@@ -265,17 +265,17 @@ mod tests {
     #[test]
     fn range_allows_subset_rejects_superset() {
         let master = RangePolicy::new(4, 64).unwrap();
-        let realm_inside = RangePolicy::new(8, 32).unwrap();
-        let realm_outside = RangePolicy::new(2, 100).unwrap();
-        assert!(master.allows(&realm_inside));
-        assert!(!master.allows(&realm_outside));
+        let workspace_inside = RangePolicy::new(8, 32).unwrap();
+        let workspace_outside = RangePolicy::new(2, 100).unwrap();
+        assert!(master.allows(&workspace_inside));
+        assert!(!master.allows(&workspace_outside));
     }
 
     #[test]
     fn range_clamps_to_parent_bounds() {
         let master = RangePolicy::new(4, 64).unwrap();
-        let realm = RangePolicy::new(2, 100).unwrap();
-        let clamped = master.clamp(realm);
+        let workspace = RangePolicy::new(2, 100).unwrap();
+        let clamped = master.clamp(workspace);
         assert_eq!(clamped, RangePolicy { min: 4, max: 64 });
     }
 
@@ -312,17 +312,17 @@ mod tests {
     #[test]
     fn enum_set_subset_passes_superset_fails() {
         let master = EnumSetPolicy::new(["google", "github", "email"]);
-        let realm_ok = EnumSetPolicy::new(["google", "email"]);
-        let realm_bad = EnumSetPolicy::new(["google", "facebook"]);
-        assert!(master.allows(&realm_ok));
-        assert!(!master.allows(&realm_bad));
+        let workspace_ok = EnumSetPolicy::new(["google", "email"]);
+        let workspace_bad = EnumSetPolicy::new(["google", "facebook"]);
+        assert!(master.allows(&workspace_ok));
+        assert!(!master.allows(&workspace_bad));
     }
 
     #[test]
     fn enum_set_clamp_intersects() {
         let master = EnumSetPolicy::new(["google", "github", "email"]);
-        let realm = EnumSetPolicy::new(["google", "facebook"]);
-        let clamped = master.clamp(realm);
+        let workspace = EnumSetPolicy::new(["google", "facebook"]);
+        let clamped = master.clamp(workspace);
         assert_eq!(
             clamped.allowed,
             ["google".to_string()].into_iter().collect()
@@ -362,17 +362,17 @@ mod tests {
     fn validate_chain_accepts_nested_refinements() {
         let chain = vec![
             PolicyLevel::new("master", r(4, 64)),
-            PolicyLevel::new("realm", r(8, 32)),
+            PolicyLevel::new("workspace", r(8, 32)),
             PolicyLevel::new("app", r(10, 16)),
         ];
         validate_chain("password.length", &chain).unwrap();
     }
 
     #[test]
-    fn validate_chain_rejects_app_outside_realm() {
+    fn validate_chain_rejects_app_outside_workspace() {
         let chain = vec![
             PolicyLevel::new("master", r(4, 64)),
-            PolicyLevel::new("realm", r(8, 32)),
+            PolicyLevel::new("workspace", r(8, 32)),
             PolicyLevel::new("app", r(2, 100)),
         ];
         let err = validate_chain("password.length", &chain).unwrap_err();
@@ -389,18 +389,18 @@ mod tests {
     }
 
     #[test]
-    fn validate_chain_rejects_realm_outside_master_even_if_app_inside_realm() {
+    fn validate_chain_rejects_workspace_outside_master_even_if_app_inside_workspace() {
         let chain = vec![
             PolicyLevel::new("master", r(10, 20)),
-            PolicyLevel::new("realm", r(2, 30)),
+            PolicyLevel::new("workspace", r(2, 30)),
             PolicyLevel::new("app", r(15, 18)),
         ];
         let err = validate_chain("password.length", &chain).unwrap_err();
         match err {
             CoreError::PolicyViolation { field, .. } => {
                 assert!(
-                    field.contains("realm"),
-                    "blame should point at realm: {field}"
+                    field.contains("workspace"),
+                    "blame should point at workspace: {field}"
                 );
             }
             other => panic!("expected PolicyViolation, got: {other:?}"),
@@ -416,21 +416,21 @@ mod tests {
     // ---- cascade clamp on master tighten ----
 
     #[test]
-    fn cascade_clamp_rewrites_realm_and_app_to_fit_new_master() {
+    fn cascade_clamp_rewrites_workspace_and_app_to_fit_new_master() {
         let chain = vec![
             PolicyLevel::new("master", r(8, 16)), // newly tightened
-            PolicyLevel::new("realm", r(4, 32)),
+            PolicyLevel::new("workspace", r(4, 32)),
             PolicyLevel::new("app", r(2, 100)),
         ];
         let (out, changes) = cascade_clamp("password.length", chain);
         // Master is left untouched.
         assert_eq!(out[0].spec, r(8, 16));
-        // Realm clamps to master (8..16).
+        // Workspace clamps to master (8..16).
         assert_eq!(out[1].spec, r(8, 16));
-        // App must fit the newly-clamped realm, also (8..16).
+        // App must fit the newly-clamped workspace, also (8..16).
         assert_eq!(out[2].spec, r(8, 16));
         assert_eq!(changes.len(), 2);
-        assert_eq!(changes[0].level, "realm");
+        assert_eq!(changes[0].level, "workspace");
         assert_eq!(changes[0].before, r(4, 32));
         assert_eq!(changes[0].after, r(8, 16));
         assert_eq!(changes[1].level, "app");
@@ -441,8 +441,8 @@ mod tests {
     fn cascade_clamp_leaves_compliant_levels_alone() {
         let chain = vec![
             PolicyLevel::new("master", r(4, 64)),
-            PolicyLevel::new("realm", r(8, 32)), // already inside master
-            PolicyLevel::new("app", r(10, 16)),  // already inside realm
+            PolicyLevel::new("workspace", r(8, 32)), // already inside master
+            PolicyLevel::new("app", r(10, 16)),      // already inside workspace
         ];
         let (out, changes) = cascade_clamp("password.length", chain.clone());
         assert_eq!(out, chain);
@@ -453,7 +453,7 @@ mod tests {
     fn cascade_clamp_chain_re_validates_after_cascade() {
         let chain = vec![
             PolicyLevel::new("master", r(8, 16)),
-            PolicyLevel::new("realm", r(4, 32)),
+            PolicyLevel::new("workspace", r(4, 32)),
             PolicyLevel::new("app", r(2, 100)),
         ];
         let (out, _) = cascade_clamp("password.length", chain);
@@ -471,7 +471,7 @@ mod tests {
                 PolicySpec::Toggle(TogglePolicy::Locked { value: true }),
             ),
             PolicyLevel::new(
-                "realm",
+                "workspace",
                 PolicySpec::Toggle(TogglePolicy::Open { default: false }),
             ),
             PolicyLevel::new(
@@ -488,7 +488,7 @@ mod tests {
 
     #[test]
     fn cascade_clamp_handles_enum_removal() {
-        // Master drops "facebook" from the allowed providers. Realm and
+        // Master drops "facebook" from the allowed providers. Workspace and
         // app must lose it on their next read, and the audit log gets
         // an entry per affected level.
         let chain = vec![
@@ -497,18 +497,18 @@ mod tests {
                 PolicySpec::EnumSet(EnumSetPolicy::new(["google", "github"])),
             ),
             PolicyLevel::new(
-                "realm",
+                "workspace",
                 PolicySpec::EnumSet(EnumSetPolicy::new(["google", "github", "facebook"])),
             ),
             PolicyLevel::new("app", PolicySpec::EnumSet(EnumSetPolicy::new(["facebook"]))),
         ];
         let (out, changes) = cascade_clamp("oauth.providers", chain);
-        let realm = match &out[1].spec {
+        let workspace = match &out[1].spec {
             PolicySpec::EnumSet(s) => s,
-            _ => panic!("realm should remain EnumSet"),
+            _ => panic!("workspace should remain EnumSet"),
         };
-        assert!(!realm.allowed.contains("facebook"));
-        assert!(realm.allowed.contains("google"));
+        assert!(!workspace.allowed.contains("facebook"));
+        assert!(workspace.allowed.contains("google"));
         let app = match &out[2].spec {
             PolicySpec::EnumSet(s) => s,
             _ => panic!("app should remain EnumSet"),

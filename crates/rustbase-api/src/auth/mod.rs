@@ -4,7 +4,7 @@
 //! - `refresh.rs` — `POST /_/auth/refresh`
 //! - `extract.rs` — `MasterAdminAuth` axum extractor
 //!
-//! Realm-admin and end-user flows come later, on their own feature branches.
+//! Workspace-admin and end-user flows come later, on their own feature branches.
 
 pub mod audit_events;
 pub mod cookies;
@@ -22,32 +22,38 @@ pub mod totp;
 pub mod verify_email;
 
 pub use extract::{AdminAuth, PrincipalAuth};
-pub use login::{master_admin_login, realm_admin_login, user_login};
-pub use refresh::{master_admin_refresh, realm_admin_refresh, user_refresh};
+pub use login::{master_admin_login, user_login, workspace_admin_login};
+pub use refresh::{master_admin_refresh, user_refresh, workspace_admin_refresh};
 pub use register::user_register;
 
 use rand_core::{OsRng, RngCore};
-use rustbase_core::{CoreError, RealmId};
-use rustbase_db::{apps::find_app, realms::find_realm};
+use rustbase_core::{CoreError, WorkspaceId};
+use rustbase_db::{apps::find_app, workspaces::find_realm};
 
 use crate::error::ApiError;
 use crate::state::AppState;
 
-/// Verify that `(realm, app)` exists. Used by every end-user / OAuth
+/// Verify that `(workspace, app)` exists. Used by every end-user / OAuth
 /// handler: paths come from the URL and must be validated before we
 /// touch the per-app pool.
-pub async fn require_app_exists(state: &AppState, realm: &str, app: &str) -> Result<(), ApiError> {
-    find_realm(state.system.pool(), realm)
+pub async fn require_app_exists(
+    state: &AppState,
+    workspace: &str,
+    app: &str,
+) -> Result<(), ApiError> {
+    find_realm(state.system.pool(), workspace)
         .await?
-        .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.to_string())))?;
-    let realm_pool = state
-        .realms
-        .pool_for(&RealmId::from(realm.to_string()))
+        .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(
+            workspace.to_string(),
+        )))?;
+    let workspace_pool = state
+        .workspaces
+        .pool_for(&WorkspaceId::from(workspace.to_string()))
         .await?;
-    find_app(&realm_pool, app)
+    find_app(&workspace_pool, app)
         .await?
         .ok_or(ApiError::Core(CoreError::AppNotFound {
-            realm: realm.to_string(),
+            workspace: workspace.to_string(),
             app: app.to_string(),
         }))?;
     Ok(())

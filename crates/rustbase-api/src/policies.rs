@@ -5,28 +5,28 @@
 //! - `GET    /api/system/policies`                              master scope
 //! - `GET    /api/system/policies/:field`
 //! - `PUT    /api/system/policies/:field`                       master only;
-//!   triggers an auto-clamp cascade down to every realm + every app
+//!   triggers an auto-clamp cascade down to every workspace + every app
 //!   whose stored value would violate the new bound.
 //! - `DELETE /api/system/policies/:field`
 //!
-//! - `GET    /api/realms/:realm/policies`                       realm scope;
-//!   master OR realm-admin
-//! - `PUT    /api/realms/:realm/policies/:field`                validated
+//! - `GET    /api/workspaces/:workspace/policies`                       workspace scope;
+//!   master OR workspace-admin
+//! - `PUT    /api/workspaces/:workspace/policies/:field`                validated
 //!   against the master bound (if any), then cascades to apps.
-//! - `DELETE /api/realms/:realm/policies/:field`
+//! - `DELETE /api/workspaces/:workspace/policies/:field`
 //!
-//! - `GET    /api/realms/:realm/apps/:app/policies`             app scope
-//! - `PUT    /api/realms/:realm/apps/:app/policies/:field`      validated
-//!   against the realm bound (if any).
-//! - `DELETE /api/realms/:realm/apps/:app/policies/:field`
+//! - `GET    /api/workspaces/:workspace/apps/:app/policies`             app scope
+//! - `PUT    /api/workspaces/:workspace/apps/:app/policies/:field`      validated
+//!   against the workspace bound (if any).
+//! - `DELETE /api/workspaces/:workspace/apps/:app/policies/:field`
 
 use axum::{
     Json,
     extract::{Path, State},
     http::StatusCode,
 };
-use rustbase_core::{AppId, CoreError, PolicyLevel, PolicySpec, RealmId, validate_chain};
-use rustbase_db::{apps::find_app, audit, policies, policy_engine, realms::find_realm};
+use rustbase_core::{AppId, CoreError, PolicyLevel, PolicySpec, WorkspaceId, validate_chain};
+use rustbase_db::{apps::find_app, audit, policies, policy_engine, workspaces::find_realm};
 use serde::Serialize;
 use serde_json::json;
 
@@ -105,7 +105,7 @@ pub async fn system_put(
 
     let cascaded = policy_engine::cascade_master_to_realms_and_apps(
         state.system.pool(),
-        state.realms.clone(),
+        state.workspaces.clone(),
         state.apps.clone(),
         &field,
         &spec,
@@ -155,18 +155,21 @@ pub async fn system_delete(
 }
 
 // ============================================================
-// realm scope
+// workspace scope
 // ============================================================
 
-pub async fn realm_list(
+pub async fn workspace_list(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path(realm): Path<String>,
+    Path(workspace): Path<String>,
 ) -> Result<Json<Vec<PolicyResponse>>, ApiError> {
-    auth.require_realm_access(&realm)?;
-    require_realm_exists(&state, &realm).await?;
-    let realm_pool = state.realms.pool_for(&RealmId::from(realm)).await?;
-    let rows = policies::list_policies(&realm_pool).await?;
+    auth.require_realm_access(&workspace)?;
+    require_realm_exists(&state, &workspace).await?;
+    let workspace_pool = state
+        .workspaces
+        .pool_for(&WorkspaceId::from(workspace))
+        .await?;
+    let rows = policies::list_policies(&workspace_pool).await?;
     Ok(Json(
         rows.into_iter()
             .map(|r| PolicyResponse {
@@ -178,15 +181,18 @@ pub async fn realm_list(
     ))
 }
 
-pub async fn realm_get(
+pub async fn workspace_get(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((realm, field)): Path<(String, String)>,
+    Path((workspace, field)): Path<(String, String)>,
 ) -> Result<Json<PolicySpec>, ApiError> {
-    auth.require_realm_access(&realm)?;
-    require_realm_exists(&state, &realm).await?;
-    let realm_pool = state.realms.pool_for(&RealmId::from(realm)).await?;
-    let spec = policies::get_policy(&realm_pool, &field)
+    auth.require_realm_access(&workspace)?;
+    require_realm_exists(&state, &workspace).await?;
+    let workspace_pool = state
+        .workspaces
+        .pool_for(&WorkspaceId::from(workspace))
+        .await?;
+    let spec = policies::get_policy(&workspace_pool, &field)
         .await?
         .ok_or(ApiError::Core(CoreError::NotFound {
             collection: "policy".into(),
@@ -195,40 +201,43 @@ pub async fn realm_get(
     Ok(Json(spec))
 }
 
-pub async fn realm_put(
+pub async fn workspace_put(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((realm, field)): Path<(String, String)>,
+    Path((workspace, field)): Path<(String, String)>,
     Json(spec): Json<PolicySpec>,
 ) -> Result<Json<PutPolicyResponse>, ApiError> {
-    auth.require_realm_access(&realm)?;
-    require_realm_exists(&state, &realm).await?;
+    auth.require_realm_access(&workspace)?;
+    require_realm_exists(&state, &workspace).await?;
 
-    // Walk master → realm as a chain so the violation, if any, names
-    // the offending tier ("password.length (realm)") instead of just
+    // Walk master → workspace as a chain so the violation, if any, names
+    // the offending tier ("password.length (workspace)") instead of just
     // the field.
     let mut chain = Vec::new();
     if let Some(master_spec) = policies::get_policy(state.system.pool(), &field).await? {
         chain.push(PolicyLevel::new("master", master_spec));
     }
-    chain.push(PolicyLevel::new("realm", spec.clone()));
+    chain.push(PolicyLevel::new("workspace", spec.clone()));
     validate_chain(&field, &chain).map_err(ApiError::Core)?;
 
-    let realm_pool = state.realms.pool_for(&RealmId::from(realm.clone())).await?;
-    policies::upsert_policy(&realm_pool, &field, &spec).await?;
+    let workspace_pool = state
+        .workspaces
+        .pool_for(&WorkspaceId::from(workspace.clone()))
+        .await?;
+    policies::upsert_policy(&workspace_pool, &field, &spec).await?;
     audit::append(
-        &realm_pool,
+        &workspace_pool,
         Some(&auth.admin_id),
         "policy_set",
         Some(&field),
-        &json!({"scope":"realm","spec":spec}),
+        &json!({"scope":"workspace","spec":spec}),
     )
     .await?;
 
     let cascaded = policy_engine::cascade_realm_to_apps(
-        &realm_pool,
+        &workspace_pool,
         state.apps.clone(),
-        &realm,
+        &workspace,
         &field,
         &spec,
         Some(&auth.admin_id),
@@ -242,15 +251,18 @@ pub async fn realm_put(
     }))
 }
 
-pub async fn realm_delete(
+pub async fn workspace_delete(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((realm, field)): Path<(String, String)>,
+    Path((workspace, field)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    auth.require_realm_access(&realm)?;
-    require_realm_exists(&state, &realm).await?;
-    let realm_pool = state.realms.pool_for(&RealmId::from(realm.clone())).await?;
-    policies::delete_policy(&realm_pool, &field)
+    auth.require_realm_access(&workspace)?;
+    require_realm_exists(&state, &workspace).await?;
+    let workspace_pool = state
+        .workspaces
+        .pool_for(&WorkspaceId::from(workspace.clone()))
+        .await?;
+    policies::delete_policy(&workspace_pool, &field)
         .await
         .map_err(|e| match e {
             rustbase_db::DbError::Sqlx(sqlx::Error::RowNotFound) => {
@@ -262,11 +274,11 @@ pub async fn realm_delete(
             other => ApiError::from(other),
         })?;
     audit::append(
-        &realm_pool,
+        &workspace_pool,
         Some(&auth.admin_id),
         "policy_deleted",
         Some(&field),
-        &json!({"scope":"realm"}),
+        &json!({"scope":"workspace"}),
     )
     .await?;
     Ok(StatusCode::NO_CONTENT)
@@ -279,10 +291,10 @@ pub async fn realm_delete(
 pub async fn app_list(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((realm, app)): Path<(String, String)>,
+    Path((workspace, app)): Path<(String, String)>,
 ) -> Result<Json<Vec<PolicyResponse>>, ApiError> {
-    auth.require_app_access(&realm, &app)?;
-    let app_pool = open_app_pool(&state, &realm, &app).await?;
+    auth.require_app_access(&workspace, &app)?;
+    let app_pool = open_app_pool(&state, &workspace, &app).await?;
     let rows = policies::list_policies(&app_pool).await?;
     Ok(Json(
         rows.into_iter()
@@ -298,10 +310,10 @@ pub async fn app_list(
 pub async fn app_get(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((realm, app, field)): Path<(String, String, String)>,
+    Path((workspace, app, field)): Path<(String, String, String)>,
 ) -> Result<Json<PolicySpec>, ApiError> {
-    auth.require_app_access(&realm, &app)?;
-    let app_pool = open_app_pool(&state, &realm, &app).await?;
+    auth.require_app_access(&workspace, &app)?;
+    let app_pool = open_app_pool(&state, &workspace, &app).await?;
     let spec = policies::get_policy(&app_pool, &field)
         .await?
         .ok_or(ApiError::Core(CoreError::NotFound {
@@ -314,35 +326,41 @@ pub async fn app_get(
 pub async fn app_put(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((realm, app, field)): Path<(String, String, String)>,
+    Path((workspace, app, field)): Path<(String, String, String)>,
     Json(spec): Json<PolicySpec>,
 ) -> Result<Json<PutPolicyResponse>, ApiError> {
-    auth.require_app_access(&realm, &app)?;
-    let realm_pool = state.realms.pool_for(&RealmId::from(realm.clone())).await?;
-    find_app(&realm_pool, &app)
+    auth.require_app_access(&workspace, &app)?;
+    let workspace_pool = state
+        .workspaces
+        .pool_for(&WorkspaceId::from(workspace.clone()))
+        .await?;
+    find_app(&workspace_pool, &app)
         .await?
         .ok_or(ApiError::Core(CoreError::AppNotFound {
-            realm: realm.clone(),
+            workspace: workspace.clone(),
             app: app.clone(),
         }))?;
 
-    // Build the full master → realm → app chain. A direct realm vs
-    // app check would normally suffice (the realm bound is itself
+    // Build the full master → workspace → app chain. A direct workspace vs
+    // app check would normally suffice (the workspace bound is itself
     // inside master's), but walking everything is cheap and catches
-    // the rare case where the master/realm chain went stale.
+    // the rare case where the master/workspace chain went stale.
     let mut chain = Vec::new();
     if let Some(s) = policies::get_policy(state.system.pool(), &field).await? {
         chain.push(PolicyLevel::new("master", s));
     }
-    if let Some(s) = policies::get_policy(&realm_pool, &field).await? {
-        chain.push(PolicyLevel::new("realm", s));
+    if let Some(s) = policies::get_policy(&workspace_pool, &field).await? {
+        chain.push(PolicyLevel::new("workspace", s));
     }
     chain.push(PolicyLevel::new("app", spec.clone()));
     validate_chain(&field, &chain).map_err(ApiError::Core)?;
 
     let app_pool = state
         .apps
-        .pool_for(&RealmId::from(realm.clone()), &AppId::from(app.clone()))
+        .pool_for(
+            &WorkspaceId::from(workspace.clone()),
+            &AppId::from(app.clone()),
+        )
         .await?;
     policies::upsert_policy(&app_pool, &field, &spec).await?;
     audit::append(
@@ -364,10 +382,10 @@ pub async fn app_put(
 pub async fn app_delete(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((realm, app, field)): Path<(String, String, String)>,
+    Path((workspace, app, field)): Path<(String, String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    auth.require_app_access(&realm, &app)?;
-    let app_pool = open_app_pool(&state, &realm, &app).await?;
+    auth.require_app_access(&workspace, &app)?;
+    let app_pool = open_app_pool(&state, &workspace, &app).await?;
     policies::delete_policy(&app_pool, &field)
         .await
         .map_err(|e| match e {
@@ -390,27 +408,29 @@ pub async fn app_delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn require_realm_exists(state: &AppState, realm: &str) -> Result<(), ApiError> {
-    find_realm(state.system.pool(), realm)
+async fn require_realm_exists(state: &AppState, workspace: &str) -> Result<(), ApiError> {
+    find_realm(state.system.pool(), workspace)
         .await?
-        .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.to_string())))?;
+        .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(
+            workspace.to_string(),
+        )))?;
     Ok(())
 }
 
 async fn open_app_pool(
     state: &AppState,
-    realm: &str,
+    workspace: &str,
     app: &str,
 ) -> Result<sqlx::SqlitePool, ApiError> {
-    require_realm_exists(state, realm).await?;
-    let realm_id = RealmId::from(realm.to_string());
-    let realm_pool = state.realms.pool_for(&realm_id).await?;
-    find_app(&realm_pool, app).await?.ok_or_else(|| {
+    require_realm_exists(state, workspace).await?;
+    let workspace_id = WorkspaceId::from(workspace.to_string());
+    let workspace_pool = state.workspaces.pool_for(&workspace_id).await?;
+    find_app(&workspace_pool, app).await?.ok_or_else(|| {
         ApiError::Core(CoreError::AppNotFound {
-            realm: realm.to_string(),
+            workspace: workspace.to_string(),
             app: app.to_string(),
         })
     })?;
     let app_id = AppId::from(app.to_string());
-    Ok(state.apps.pool_for(&realm_id, &app_id).await?)
+    Ok(state.apps.pool_for(&workspace_id, &app_id).await?)
 }

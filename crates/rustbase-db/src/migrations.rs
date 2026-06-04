@@ -1,11 +1,11 @@
 //! Scoped migration runner.
 //!
-//! A `Migration` is owned by exactly one `MigrationScope` (system / realm
-//! / app) and carries multi-statement SQL. The runner records applied
-//! migrations in a per-pool `_migrations` table, skipping any already
-//! present, and runs each new migration inside a transaction. If the SQL
-//! fails the transaction is rolled back and the migration is reported as
-//! pending on next boot.
+//! A `Migration` is owned by exactly one `MigrationScope` (system /
+//! workspace / app) and carries multi-statement SQL. The runner
+//! records applied migrations in a per-pool `_migrations` table,
+//! skipping any already present, and runs each new migration inside a
+//! transaction. If the SQL fails the transaction is rolled back and
+//! the migration is reported as pending on next boot.
 
 use crate::error::{DbError, Result};
 use chrono::Utc;
@@ -15,7 +15,7 @@ use std::collections::HashSet;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MigrationScope {
     System,
-    Realm,
+    Workspace,
     App,
 }
 
@@ -126,13 +126,13 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
         "20260520_000001_initial_system",
         MigrationScope::System,
         r#"
-        CREATE TABLE realms (
+        CREATE TABLE workspaces (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             is_master INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL
         );
-        CREATE UNIQUE INDEX realms_one_master ON realms(is_master) WHERE is_master = 1;
+        CREATE UNIQUE INDEX workspaces_one_master ON workspaces(is_master) WHERE is_master = 1;
 
         -- Master admin identity. On first boot, exactly one row is
         -- auto-seeded with username='admin' and password_hash=NULL —
@@ -188,9 +188,9 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
     ),
 ];
 
-pub const REALM_MIGRATIONS: &[Migration] = &[Migration::new(
-    "20260520_000001_initial_realm",
-    MigrationScope::Realm,
+pub const WORKSPACE_MIGRATIONS: &[Migration] = &[Migration::new(
+    "20260520_000001_initial_workspace",
+    MigrationScope::Workspace,
     r#"
     CREATE TABLE apps (
         id TEXT PRIMARY KEY,
@@ -198,7 +198,7 @@ pub const REALM_MIGRATIONS: &[Migration] = &[Migration::new(
         created_at TEXT NOT NULL
     );
 
-    CREATE TABLE realm_admins (
+    CREATE TABLE workspace_admins (
         id TEXT PRIMARY KEY,
         email TEXT NOT NULL UNIQUE,
         password_hash TEXT NOT NULL,
@@ -216,9 +216,10 @@ pub const REALM_MIGRATIONS: &[Migration] = &[Migration::new(
         UNIQUE(app_id, email)
     );
 
-    -- Refresh tokens for realm-scope subjects: realm_admin / app_admin.
-    -- End-user refresh tokens moved to the per-app data.db along with
-    -- the users table itself.
+    -- Refresh tokens for workspace-scope subjects: workspace_admin /
+    -- app_admin. End-user refresh tokens still live in the per-app
+    -- data.db along with the per-app users table (workspace-shared
+    -- identity lands in a later migration).
     CREATE TABLE _refresh_tokens (
         token TEXT PRIMARY KEY,
         subject_kind TEXT NOT NULL,
@@ -299,9 +300,9 @@ pub const APP_MIGRATIONS: &[Migration] = &[
         CREATE INDEX files_created_at ON _files(created_at);
         "#,
     ),
-    // End-user identity moved out of the realm into the app. Each app
+    // End-user identity moved out of the workspace into the app. Each app
     // gets its own users table, OAuth provider config, and auxiliary
-    // auth tables. Realms still own the admin tiers (realm/app admins);
+    // auth tables. Workspaces still own the admin tiers (workspace/app admins);
     // they no longer own end-users.
     Migration::new(
         "20260601_000001_app_users",
@@ -331,7 +332,7 @@ pub const APP_MIGRATIONS: &[Migration] = &[
         );
 
         -- Refresh tokens for end-user subjects. Admin refresh tokens
-        -- stay in the realm.db _refresh_tokens table.
+        -- stay in the workspace.db _refresh_tokens table.
         CREATE TABLE _refresh_tokens (
             token TEXT PRIMARY KEY,
             subject_kind TEXT NOT NULL,
@@ -441,7 +442,7 @@ mod tests {
         assert_eq!(n2, 0);
 
         // verify a table from the system schema actually exists
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM realms")
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workspaces")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -449,14 +450,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn applies_realm_migrations() {
+    async fn applies_workspace_migrations() {
         let pool = open_memory_pool().await.unwrap();
-        let n = apply_migrations(pool.clone(), REALM_MIGRATIONS)
+        let n = apply_migrations(pool.clone(), WORKSPACE_MIGRATIONS)
             .await
             .unwrap();
-        assert_eq!(n, REALM_MIGRATIONS.len());
+        assert_eq!(n, WORKSPACE_MIGRATIONS.len());
 
-        // Realm-scope tables: apps + admin tiers. End-users moved to app.db.
+        // Workspace-scope tables: apps + admin tiers. End-users moved to app.db.
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM apps")
             .fetch_one(&pool)
             .await

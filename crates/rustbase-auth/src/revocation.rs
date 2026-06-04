@@ -14,22 +14,22 @@ use std::sync::Arc;
 /// Identifies a single user / admin across the system.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SubjectKey {
-    /// `None` for master admins (which are not scoped to a realm).
-    pub realm: Option<String>,
+    /// `None` for master admins (which are not scoped to a workspace).
+    pub workspace: Option<String>,
     pub subject: String,
 }
 
 impl SubjectKey {
     pub fn master(subject: impl Into<String>) -> Self {
         Self {
-            realm: None,
+            workspace: None,
             subject: subject.into(),
         }
     }
 
-    pub fn scoped(realm: impl Into<String>, subject: impl Into<String>) -> Self {
+    pub fn scoped(workspace: impl Into<String>, subject: impl Into<String>) -> Self {
         Self {
-            realm: Some(realm.into()),
+            workspace: Some(workspace.into()),
             subject: subject.into(),
         }
     }

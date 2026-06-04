@@ -11,12 +11,12 @@ pub struct Claims {
     pub sub: String,
     /// What kind of principal this token represents.
     pub role: TokenRole,
-    /// Realm scope. Unset only for master-admin tokens.
+    /// Workspace scope. Unset only for master-admin tokens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub realm: Option<String>,
-    /// App scope. Optional even for app-level operations: a realm-scoped
+    pub workspace: Option<String>,
+    /// App scope. Optional even for app-level operations: a workspace-scoped
     /// user token without an `app` claim can address any app under
-    /// `realm`, subject to per-collection access rules.
+    /// `workspace`, subject to per-collection access rules.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app: Option<String>,
     /// Issued-at (unix seconds).
@@ -31,13 +31,13 @@ pub struct Claims {
 #[serde(rename_all = "snake_case")]
 pub enum TokenRole {
     MasterAdmin,
-    RealmAdmin,
+    WorkspaceAdmin,
     AppAdmin,
     User,
 }
 
-/// Symmetric signing key for HS256. Per realm, in the production
-/// configuration; the master realm has its own. RS256 support comes
+/// Symmetric signing key for HS256. Per workspace, in the production
+/// configuration; the master workspace has its own. RS256 support comes
 /// later when we wire OAuth.
 #[derive(Debug, Clone)]
 pub struct SigningKey {
@@ -71,7 +71,7 @@ impl SigningKey {
 pub fn build_claims(
     subject: impl Into<String>,
     role: TokenRole,
-    realm: Option<String>,
+    workspace: Option<String>,
     app: Option<String>,
     ttl: Duration,
 ) -> Claims {
@@ -80,7 +80,7 @@ pub fn build_claims(
     Claims {
         sub: subject.into(),
         role,
-        realm,
+        workspace,
         app,
         iat: now.timestamp(),
         exp: exp.timestamp(),
@@ -163,7 +163,7 @@ mod tests {
         );
         let token = encode_token(&claims, &key).unwrap();
         let decoded = decode_token(&token, &key).unwrap();
-        assert_eq!(decoded.realm, None);
+        assert_eq!(decoded.workspace, None);
         assert_eq!(decoded.app, None);
         assert_eq!(decoded.role, TokenRole::MasterAdmin);
     }

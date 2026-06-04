@@ -21,7 +21,7 @@ The HTTP status code is sufficient for clients that don't care about the specifi
 | 401 | `mfa_required` | Returned with **202** during the two-step TOTP login. The body has `{challenge_id}`; follow up with `/auth/users/login/totp`. |
 | 403 | `forbidden` | Authenticated but not allowed (scope / role / access rule). |
 | 404 | `not_found` | The target object doesn't exist. `message` says what was missing. |
-| 404 | `realm_not_found` | Specifically the realm in the URL doesn't exist. |
+| 404 | `workspace_not_found` | Specifically the workspace in the URL doesn't exist. |
 | 404 | `app_not_found` | Specifically the app in the URL doesn't exist. |
 | 409 | `conflict` | Duplicate id, duplicate email, master admin already set, etc. |
 | 413 | `payload_too_large` | File upload exceeds the storage cap. |
@@ -53,7 +53,7 @@ These come from the cascade engine. The `message` always names the field, the of
 
 ## What server logs say
 
-For every non-2xx response, the server emits a structured `tracing::warn!` with the request id, the realm, the app, and the inner error. Look there for the stack trace and the underlying `sqlx`/`object_store` error when `code: internal` shows up.
+For every non-2xx response, the server emits a structured `tracing::warn!` with the request id, the workspace, the app, and the inner error. Look there for the stack trace and the underlying `sqlx`/`object_store` error when `code: internal` shows up.
 
 ```
 RUST_LOG=info,rustbase_api=debug ./rustbase

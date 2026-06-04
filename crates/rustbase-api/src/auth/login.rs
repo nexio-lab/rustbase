@@ -6,7 +6,7 @@ use axum::{
 use rustbase_auth::{TokenRole, build_claims, verify_password};
 
 use super::cookies::{CookieFlags, build_access_cookie, build_refresh_cookie};
-use rustbase_core::{AppId, CoreError, RealmId};
+use rustbase_core::{AppId, CoreError, WorkspaceId};
 use rustbase_db::{
     admins::{find_master_admin_by_username, find_realm_admin_by_email},
     tokens::{SubjectKind, insert_refresh_token},
@@ -54,11 +54,11 @@ fn with_session_cookies<T: serde::Serialize>(
 fn master_subject(username: &str) -> String {
     format!("master:{username}")
 }
-fn realm_admin_subject(realm: &str, email: &str) -> String {
-    format!("realm:{realm}:admin:{email}")
+fn workspace_admin_subject(workspace: &str, email: &str) -> String {
+    format!("workspace:{workspace}:admin:{email}")
 }
-fn user_subject(realm: &str, app: &str, email: &str) -> String {
-    format!("realm:{realm}:app:{app}:user:{email}")
+fn user_subject(workspace: &str, app: &str, email: &str) -> String {
+    format!("workspace:{workspace}:app:{app}:user:{email}")
 }
 
 /// Translate a `LoginAttempts::note_failure` outcome into the audit
@@ -116,7 +116,7 @@ pub struct MasterLoginRequest {
     pub password: String,
 }
 
-/// Realm-admin and end-user logins still use email.
+/// Workspace-admin and end-user logins still use email.
 #[derive(Debug, Deserialize, Validate)]
 pub struct LoginRequest {
     #[validate(email)]
@@ -281,31 +281,31 @@ pub async fn master_admin_login(
     ))
 }
 
-pub async fn realm_admin_login(
+pub async fn workspace_admin_login(
     State(state): State<AppState>,
-    Path(realm): Path<String>,
+    Path(workspace): Path<String>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Response, ApiError> {
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
 
-    let subject = realm_admin_subject(&realm, &req.email);
+    let subject = workspace_admin_subject(&workspace, &req.email);
     state
         .login_attempts
         .check(&subject, &state.lockout_policy)?;
 
-    // Look up the realm's pool — if the realm doesn't exist, the row
+    // Look up the workspace's pool — if the workspace doesn't exist, the row
     // will be missing in system.db. We don't surface that here; just
-    // return Unauthorized so an attacker can't enumerate realms.
-    let realm_id = RealmId::from(realm.clone());
-    let pool = state.realms.pool_for(&realm_id).await?;
+    // return Unauthorized so an attacker can't enumerate workspaces.
+    let workspace_id = WorkspaceId::from(workspace.clone());
+    let pool = state.workspaces.pool_for(&workspace_id).await?;
 
     let admin = match find_realm_admin_by_email(&pool, &req.email).await? {
         Some(a) => a,
         None => {
             return Err(record_failure_and_pick_error(
                 &state,
-                Scope::Realm(&realm),
+                Scope::Workspace(&workspace),
                 &subject,
                 Some(&req.email),
             )
@@ -316,7 +316,7 @@ pub async fn realm_admin_login(
     if !verify_password(&req.password, &admin.password_hash)? {
         return Err(record_failure_and_pick_error(
             &state,
-            Scope::Realm(&realm),
+            Scope::Workspace(&workspace),
             &subject,
             Some(&req.email),
         )
@@ -326,8 +326,8 @@ pub async fn realm_admin_login(
 
     let claims = build_claims(
         admin.id.clone(),
-        TokenRole::RealmAdmin,
-        Some(realm.clone()),
+        TokenRole::WorkspaceAdmin,
+        Some(workspace.clone()),
         None,
         default_access_ttl(),
     );
@@ -336,18 +336,18 @@ pub async fn realm_admin_login(
     let refresh = insert_refresh_token(
         &pool,
         &new_refresh_token(),
-        SubjectKind::RealmAdmin,
+        SubjectKind::WorkspaceAdmin,
         &admin.id,
         default_refresh_ttl(),
     )
     .await?;
 
-    tracing::info!(realm = %realm, admin_id = %admin.id, "realm admin login");
+    tracing::info!(workspace = %workspace, admin_id = %admin.id, "workspace admin login");
     record_audit(
         &state,
         AuthEvent {
             outcome: AuthOutcome::Success,
-            scope: Scope::Realm(&realm),
+            scope: Scope::Workspace(&workspace),
             subject: &subject,
             target: Some(&admin.email),
             details: serde_json::json!({ "admin_id": &admin.id }),
@@ -374,29 +374,29 @@ pub async fn realm_admin_login(
 
 pub async fn user_login(
     State(state): State<AppState>,
-    Path((realm, app)): Path<(String, String)>,
+    Path((workspace, app)): Path<(String, String)>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Response, ApiError> {
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
 
-    let subject = user_subject(&realm, &app, &req.email);
+    let subject = user_subject(&workspace, &app, &req.email);
     state
         .login_attempts
         .check(&subject, &state.lockout_policy)?;
 
-    require_app_exists(&state, &realm, &app).await?;
+    require_app_exists(&state, &workspace, &app).await?;
 
-    let realm_id = RealmId::from(realm.clone());
+    let workspace_id = WorkspaceId::from(workspace.clone());
     let app_id = AppId::from(app.clone());
-    let pool = state.apps.pool_for(&realm_id, &app_id).await?;
+    let pool = state.apps.pool_for(&workspace_id, &app_id).await?;
 
     let user = match find_user_by_email(&pool, &req.email).await? {
         Some(u) => u,
         None => {
             return Err(record_failure_and_pick_error(
                 &state,
-                Scope::Realm(&realm),
+                Scope::Workspace(&workspace),
                 &subject,
                 Some(&req.email),
             )
@@ -409,7 +409,7 @@ pub async fn user_login(
         None => {
             return Err(record_failure_and_pick_error(
                 &state,
-                Scope::Realm(&realm),
+                Scope::Workspace(&workspace),
                 &subject,
                 Some(&req.email),
             )
@@ -419,7 +419,7 @@ pub async fn user_login(
     if !verify_password(&req.password, hash)? {
         return Err(record_failure_and_pick_error(
             &state,
-            Scope::Realm(&realm),
+            Scope::Workspace(&workspace),
             &subject,
             Some(&req.email),
         )
@@ -440,14 +440,14 @@ pub async fn user_login(
         "email": &user.email,
         "verified": user.verified,
     });
-    let hook_req = rustbase_runtime::HookRequest::system(&realm, &app, "_user");
+    let hook_req = rustbase_runtime::HookRequest::system(&workspace, &app, "_user");
     state
         .hooks
-        .dispatch_user_before_login(&realm, &app, &hook_req, &public)
+        .dispatch_user_before_login(&workspace, &app, &hook_req, &public)
         .await
         .map_err(|e| match e {
             rustbase_runtime::RuntimeError::Veto(msg) => {
-                tracing::info!(realm = %realm, app = %app, user_id = %user.id, %msg, "login vetoed by hook");
+                tracing::info!(workspace = %workspace, app = %app, user_id = %user.id, %msg, "login vetoed by hook");
                 ApiError::Core(CoreError::Forbidden)
             }
             other => ApiError::Core(CoreError::Internal(other.to_string())),
@@ -461,7 +461,7 @@ pub async fn user_login(
     if totp_enabled {
         let mfa_token = crate::auth::totp::issue_mfa_challenge(&pool, &user.id).await?;
         tracing::info!(
-            realm = %realm,
+            workspace = %workspace,
             app = %app,
             user_id = %user.id,
             "password ok; awaiting TOTP second step"
@@ -480,7 +480,7 @@ pub async fn user_login(
     let claims = build_claims(
         user.id.clone(),
         TokenRole::User,
-        Some(realm.clone()),
+        Some(workspace.clone()),
         Some(app.clone()),
         default_access_ttl(),
     );
@@ -495,12 +495,12 @@ pub async fn user_login(
     )
     .await?;
 
-    tracing::info!(realm = %realm, app = %app, user_id = %user.id, "user login");
+    tracing::info!(workspace = %workspace, app = %app, user_id = %user.id, "user login");
     record_audit(
         &state,
         AuthEvent {
             outcome: AuthOutcome::Success,
-            scope: Scope::Realm(&realm),
+            scope: Scope::Workspace(&workspace),
             subject: &subject,
             target: Some(&user.email),
             details: serde_json::json!({
@@ -515,10 +515,10 @@ pub async fn user_login(
     // back the successful login.
     if let Err(e) = state
         .hooks
-        .dispatch_user_after_login(&realm, &app, &hook_req, &public)
+        .dispatch_user_after_login(&workspace, &app, &hook_req, &public)
         .await
     {
-        tracing::warn!(error = %e, realm = %realm, app = %app, "user_after_login hook errored");
+        tracing::warn!(error = %e, workspace = %workspace, app = %app, "user_after_login hook errored");
     }
 
     let body = UserLoginResponse::Tokens {

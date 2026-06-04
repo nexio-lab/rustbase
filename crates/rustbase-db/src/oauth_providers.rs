@@ -1,6 +1,6 @@
-//! Per-realm OAuth2 provider configuration.
+//! Per-workspace OAuth2 provider configuration.
 //!
-//! The realm DB already ships an `oauth_providers` table from the
+//! The workspace DB already ships an `oauth_providers` table from the
 //! initial migration; this module is the typed CRUD layer over it.
 //! Each row stores a provider's client identity (id + secret) and a
 //! JSON blob of "everything else" — auth URL, token URL, userinfo

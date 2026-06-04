@@ -3,8 +3,8 @@
 //! Houses the canonical id newtypes, the `Record` and `Schema` types, the
 //! `FilterNode` AST (parser lives alongside in the next layer), the
 //! hierarchical configuration policy primitives, the request `Principal`
-//! and `AppCtx` / `RealmCtx` carriers, and the workspace-wide `CoreError`
-//! enum.
+//! and `AppCtx` / `WorkspaceCtx` carriers, and the project-wide
+//! `CoreError` enum.
 
 pub mod config;
 pub mod ctx;
@@ -21,11 +21,11 @@ pub use config::{
     EnumSetPolicy, PolicyChange, PolicyLevel, PolicySpec, RangePolicy, TogglePolicy, cascade_clamp,
     validate_chain,
 };
-pub use ctx::{AppCtx, Principal, RealmCtx};
+pub use ctx::{AppCtx, Principal, WorkspaceCtx};
 pub use error::{CoreError, Result};
 pub use filter::FilterNode;
 pub use filter_parser::parse_filter;
-pub use id::{AdminId, AppId, CollectionId, MASTER_REALM_ID, RealmId, RecordId, UserId};
+pub use id::{AdminId, AppId, CollectionId, MASTER_WORKSPACE_ID, RecordId, UserId, WorkspaceId};
 pub use mailer::{EmailMessage, Mailer, MailerError};
 pub use record::Record;
 pub use rule_template::{RuleContext, substitute as substitute_rule_template};

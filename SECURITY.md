@@ -17,14 +17,14 @@ channels.
 
 ## What we treat as a security issue
 
-- Auth bypass (master / realm / app / end-user).
+- Auth bypass (master / workspace / app / end-user).
 - Path traversal in hooks, files, or storage.
 - SQL injection (every dynamic clause should already be parameterized — proof
   of a missed spot is a security issue).
 - Secret leakage (e.g. echoing back an OAuth client secret or a refresh token
   hash through any endpoint).
 - Sandbox escape from the JS/TS hook runtime.
-- Privilege escalation (user → admin, app-admin → realm-admin, etc.).
+- Privilege escalation (user → admin, app-admin → workspace-admin, etc.).
 
 Bugs that are *not* security issues:
 

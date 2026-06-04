@@ -8,8 +8,8 @@ use crate::access_rules;
 use crate::apps;
 use crate::audit;
 use crate::auth::{
-    master_admin_login, master_admin_refresh, realm_admin_login, realm_admin_refresh, user_login,
-    user_refresh, user_register,
+    master_admin_login, master_admin_refresh, user_login, user_refresh, user_register,
+    workspace_admin_login, workspace_admin_refresh,
 };
 use crate::collections;
 use crate::custom_routes;
@@ -18,12 +18,12 @@ use crate::health::healthz;
 use crate::hooks;
 use crate::middleware::setup_gate;
 use crate::policies;
-use crate::realm_admins;
-use crate::realms;
 use crate::realtime;
 use crate::records;
 use crate::setup::setup;
 use crate::state::AppState;
+use crate::workspace_admins;
+use crate::workspaces;
 
 /// Build the full RustBase HTTP router. Layered with a setup gate (blocks
 /// non-bootstrap routes while uninitialized) and a tracing middleware so
@@ -37,88 +37,94 @@ pub fn build_router(state: AppState) -> Router {
         .route("/_/auth/logout", post(crate::auth::logout::logout))
         .route("/_/auth/jwks.json", get(crate::auth::jwks::jwks))
         .route("/.well-known/jwks.json", get(crate::auth::jwks::jwks))
-        .route("/api/realms", get(realms::list).post(realms::create))
         .route(
-            "/api/realms/{id}",
-            get(realms::get)
-                .patch(realms::update)
-                .delete(realms::delete),
-        )
-        .route("/api/realms/{realm}/admins", post(realm_admins::create))
-        .route(
-            "/api/realms/{realm}/auth/admin/login",
-            post(realm_admin_login),
+            "/api/workspaces",
+            get(workspaces::list).post(workspaces::create),
         )
         .route(
-            "/api/realms/{realm}/auth/refresh",
-            post(realm_admin_refresh),
+            "/api/workspaces/{id}",
+            get(workspaces::get)
+                .patch(workspaces::update)
+                .delete(workspaces::delete),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/auth/users/register",
+            "/api/workspaces/{workspace}/admins",
+            post(workspace_admins::create),
+        )
+        .route(
+            "/api/workspaces/{workspace}/auth/admin/login",
+            post(workspace_admin_login),
+        )
+        .route(
+            "/api/workspaces/{workspace}/auth/refresh",
+            post(workspace_admin_refresh),
+        )
+        .route(
+            "/api/workspaces/{workspace}/apps/{app}/auth/users/register",
             post(user_register),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/auth/users/login",
+            "/api/workspaces/{workspace}/apps/{app}/auth/users/login",
             post(user_login),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/auth/users/refresh",
+            "/api/workspaces/{workspace}/apps/{app}/auth/users/refresh",
             post(user_refresh),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/auth/verify-email/request",
+            "/api/workspaces/{workspace}/apps/{app}/auth/verify-email/request",
             post(crate::auth::verify_email::request),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/auth/verify-email/confirm",
+            "/api/workspaces/{workspace}/apps/{app}/auth/verify-email/confirm",
             post(crate::auth::verify_email::confirm),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/auth/password-reset/request",
+            "/api/workspaces/{workspace}/apps/{app}/auth/password-reset/request",
             post(crate::auth::password_reset::request),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/auth/password-reset/confirm",
+            "/api/workspaces/{workspace}/apps/{app}/auth/password-reset/confirm",
             post(crate::auth::password_reset::confirm),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/auth/otp/request",
+            "/api/workspaces/{workspace}/apps/{app}/auth/otp/request",
             post(crate::auth::email_otp::request),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/auth/otp/login",
+            "/api/workspaces/{workspace}/apps/{app}/auth/otp/login",
             post(crate::auth::email_otp::login),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/auth/totp/enroll",
+            "/api/workspaces/{workspace}/apps/{app}/auth/totp/enroll",
             post(crate::auth::totp::enroll),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/auth/totp/confirm",
+            "/api/workspaces/{workspace}/apps/{app}/auth/totp/confirm",
             post(crate::auth::totp::confirm),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/auth/totp/disable",
+            "/api/workspaces/{workspace}/apps/{app}/auth/totp/disable",
             post(crate::auth::totp::disable),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/auth/users/login/totp",
+            "/api/workspaces/{workspace}/apps/{app}/auth/users/login/totp",
             post(crate::auth::totp::login_totp),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/auth/oauth/{provider}/authorize",
+            "/api/workspaces/{workspace}/apps/{app}/auth/oauth/{provider}/authorize",
             get(crate::auth::oauth::authorize),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/auth/oauth/{provider}/callback",
+            "/api/workspaces/{workspace}/apps/{app}/auth/oauth/{provider}/callback",
             post(crate::auth::oauth::callback),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/auth/oauth/providers",
+            "/api/workspaces/{workspace}/apps/{app}/auth/oauth/providers",
             get(crate::auth::oauth_admin::list),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/auth/oauth/providers/{provider}",
+            "/api/workspaces/{workspace}/apps/{app}/auth/oauth/providers/{provider}",
             get(crate::auth::oauth_admin::get)
                 .put(crate::auth::oauth_admin::put)
                 .delete(crate::auth::oauth_admin::delete),
@@ -127,73 +133,73 @@ pub fn build_router(state: AppState) -> Router {
         // inside each handler; self-service flows under /auth/users stay
         // separate and untouched.
         .route(
-            "/api/realms/{realm}/apps/{app}/users",
+            "/api/workspaces/{workspace}/apps/{app}/users",
             get(crate::users::list),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/users/{id}",
+            "/api/workspaces/{workspace}/apps/{app}/users/{id}",
             get(crate::users::get).delete(crate::users::delete),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/users/{id}/verify",
+            "/api/workspaces/{workspace}/apps/{app}/users/{id}/verify",
             axum::routing::patch(crate::users::verify),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/users/{id}/totp",
+            "/api/workspaces/{workspace}/apps/{app}/users/{id}/totp",
             axum::routing::delete(crate::users::reset_totp),
         )
         .route(
-            "/api/realms/{realm}/apps",
+            "/api/workspaces/{workspace}/apps",
             get(apps::list).post(apps::create),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}",
+            "/api/workspaces/{workspace}/apps/{app}",
             get(apps::get).patch(apps::update).delete(apps::delete),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/collections",
+            "/api/workspaces/{workspace}/apps/{app}/collections",
             get(collections::list).post(collections::create),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/collections/{name}",
+            "/api/workspaces/{workspace}/apps/{app}/collections/{name}",
             get(collections::get)
                 .patch(collections::patch)
                 .delete(collections::delete),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/collections/{coll}/records",
+            "/api/workspaces/{workspace}/apps/{app}/collections/{coll}/records",
             get(records::list).post(records::create),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/collections/{coll}/records/{id}",
+            "/api/workspaces/{workspace}/apps/{app}/collections/{coll}/records/{id}",
             get(records::get)
                 .patch(records::update)
                 .delete(records::delete),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/collections/{coll}/access_rules",
+            "/api/workspaces/{workspace}/apps/{app}/collections/{coll}/access_rules",
             get(access_rules::list),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/collections/{coll}/access_rules/{action}",
+            "/api/workspaces/{workspace}/apps/{app}/collections/{coll}/access_rules/{action}",
             axum::routing::put(access_rules::put).delete(access_rules::delete),
         )
         // file endpoints
         .route(
-            "/api/realms/{realm}/apps/{app}/files",
+            "/api/workspaces/{workspace}/apps/{app}/files",
             get(files::list).post(files::upload),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/files/{id}",
+            "/api/workspaces/{workspace}/apps/{app}/files/{id}",
             get(files::download).delete(files::delete),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/files/{id}/meta",
+            "/api/workspaces/{workspace}/apps/{app}/files/{id}/meta",
             get(files::meta),
         )
         // realtime SSE
         .route(
-            "/api/realms/{realm}/apps/{app}/collections/{coll}/events",
+            "/api/workspaces/{workspace}/apps/{app}/collections/{coll}/events",
             get(realtime::record_events),
         )
         // Custom JS-defined endpoints. The wildcard catches anything
@@ -201,7 +207,7 @@ pub fn build_router(state: AppState) -> Router {
         // `$app.routerAdd` table and returns 404 if no JS handler
         // is registered for (method, path).
         .route(
-            "/api/realms/{realm}/apps/{app}/custom/{*path}",
+            "/api/workspaces/{workspace}/apps/{app}/custom/{*path}",
             any(custom_routes::handle),
         )
         // policy endpoints
@@ -212,38 +218,50 @@ pub fn build_router(state: AppState) -> Router {
                 .put(policies::system_put)
                 .delete(policies::system_delete),
         )
-        .route("/api/realms/{realm}/policies", get(policies::realm_list))
         .route(
-            "/api/realms/{realm}/policies/{field}",
-            get(policies::realm_get)
-                .put(policies::realm_put)
-                .delete(policies::realm_delete),
+            "/api/workspaces/{workspace}/policies",
+            get(policies::workspace_list),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/policies",
+            "/api/workspaces/{workspace}/policies/{field}",
+            get(policies::workspace_get)
+                .put(policies::workspace_put)
+                .delete(policies::workspace_delete),
+        )
+        .route(
+            "/api/workspaces/{workspace}/apps/{app}/policies",
             get(policies::app_list),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/policies/{field}",
+            "/api/workspaces/{workspace}/apps/{app}/policies/{field}",
             get(policies::app_get)
                 .put(policies::app_put)
                 .delete(policies::app_delete),
         )
         // audit log — read-only per scope
         .route("/api/system/audit", get(audit::system_list))
-        .route("/api/realms/{realm}/audit", get(audit::realm_list))
-        .route("/api/realms/{realm}/apps/{app}/audit", get(audit::app_list))
-        // hook source files — read/write/reload
-        .route("/api/realms/{realm}/apps/{app}/hooks", get(hooks::list))
         .route(
-            "/api/realms/{realm}/apps/{app}/hooks/reload",
+            "/api/workspaces/{workspace}/audit",
+            get(audit::workspace_list),
+        )
+        .route(
+            "/api/workspaces/{workspace}/apps/{app}/audit",
+            get(audit::app_list),
+        )
+        // hook source files — read/write/reload
+        .route(
+            "/api/workspaces/{workspace}/apps/{app}/hooks",
+            get(hooks::list),
+        )
+        .route(
+            "/api/workspaces/{workspace}/apps/{app}/hooks/reload",
             post(hooks::reload),
         )
         .route(
-            "/api/realms/{realm}/apps/{app}/hooks/{filename}",
+            "/api/workspaces/{workspace}/apps/{app}/hooks/{filename}",
             get(hooks::get).put(hooks::put).delete(hooks::delete),
         )
-        // /api/realms/<realm>/apps/<app>/... will mount under here once
+        // /api/workspaces/<workspace>/apps/<app>/... will mount under here once
         // collections / records handlers land.
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -262,8 +280,8 @@ mod tests {
     };
     use rustbase_auth::{RevocationSet, SigningKey};
     use rustbase_db::{
-        AppPoolManager, RealmPoolManager, SYSTEM_MIGRATIONS, SystemPool,
-        admins::ensure_seed_master_admin, apply_migrations, realms::ensure_master_realm,
+        AppPoolManager, SYSTEM_MIGRATIONS, SystemPool, WorkspacePoolManager,
+        admins::ensure_seed_master_admin, apply_migrations, workspaces::ensure_master_realm,
     };
     use rustbase_realtime::RealtimeBroker;
     use rustbase_runtime::HookEngine;
@@ -290,7 +308,7 @@ mod tests {
         let jwt = Arc::new(rustbase_auth::JwtIssuer::new(rsa_key).with_legacy_hmac(hmac.clone()));
         let state = AppState {
             system: Arc::new(system),
-            realms: Arc::new(RealmPoolManager::new(data_dir.clone(), 4)),
+            workspaces: Arc::new(WorkspacePoolManager::new(data_dir.clone(), 4)),
             apps: Arc::new(AppPoolManager::new(data_dir.clone(), 4)),
             revocations: RevocationSet::default(),
             master_key: Arc::new(hmac),
@@ -688,7 +706,7 @@ mod tests {
 
         // Issue a protected request using only the cookie — no Bearer.
         let req = Request::builder()
-            .uri("/api/realms")
+            .uri("/api/workspaces")
             .method("GET")
             .header(axum::http::header::COOKIE, just_pair)
             .body(Body::empty())
@@ -913,7 +931,7 @@ mod tests {
         );
     }
 
-    // ------------- realm CRUD tests -------------
+    // ------------- workspace CRUD tests -------------
 
     fn master_token(state: &AppState, admin_id: &str) -> String {
         let claims = rustbase_auth::build_claims(
@@ -950,7 +968,7 @@ mod tests {
         let (state, _dir, _) = initialized_state_with_admin("hunter22").await;
         let app = build_router(state);
         let resp = app
-            .oneshot(req_with_auth("GET", "/api/realms", None, None))
+            .oneshot(req_with_auth("GET", "/api/workspaces", None, None))
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
@@ -962,7 +980,7 @@ mod tests {
         let token = master_token(&state, &admin_id);
         let app = build_router(state);
         let resp = app
-            .oneshot(req_with_auth("GET", "/api/realms", Some(&token), None))
+            .oneshot(req_with_auth("GET", "/api/workspaces", Some(&token), None))
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -982,7 +1000,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms",
+                "/api/workspaces",
                 Some(&token),
                 Some(&body),
             ))
@@ -993,16 +1011,16 @@ mod tests {
         assert_eq!(j["id"], "acme");
         assert_eq!(j["is_master"], false);
 
-        // The realm.db should now exist and respond to a query against a
-        // table from the realm schema. End-users no longer live in
-        // realm.db — check the `apps` table instead.
-        let realm_pool = state
-            .realms
-            .pool_for(&rustbase_core::RealmId::from("acme"))
+        // The workspace.db should now exist and respond to a query against a
+        // table from the workspace schema. End-users no longer live in
+        // workspace.db — check the `apps` table instead.
+        let workspace_pool = state
+            .workspaces
+            .pool_for(&rustbase_core::WorkspaceId::from("acme"))
             .await
             .unwrap();
         let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM apps")
-            .fetch_one(&realm_pool)
+            .fetch_one(&workspace_pool)
             .await
             .unwrap();
         assert_eq!(n, 0);
@@ -1010,7 +1028,7 @@ mod tests {
         // listing now returns both
         let app = build_router(state);
         let resp = app
-            .oneshot(req_with_auth("GET", "/api/realms", Some(&token), None))
+            .oneshot(req_with_auth("GET", "/api/workspaces", Some(&token), None))
             .await
             .unwrap();
         let j = json_body(resp).await;
@@ -1026,7 +1044,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms",
+                "/api/workspaces",
                 Some(&token),
                 Some(&body),
             ))
@@ -1044,7 +1062,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms",
+                "/api/workspaces",
                 Some(&token),
                 Some(&body),
             ))
@@ -1063,7 +1081,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms",
+                "/api/workspaces",
                 Some(&token),
                 Some(&body),
             ))
@@ -1075,7 +1093,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms",
+                "/api/workspaces",
                 Some(&token),
                 Some(&body),
             ))
@@ -1090,7 +1108,12 @@ mod tests {
         let token = master_token(&state, &admin_id);
         let app = build_router(state);
         let resp = app
-            .oneshot(req_with_auth("GET", "/api/realms/nope", Some(&token), None))
+            .oneshot(req_with_auth(
+                "GET",
+                "/api/workspaces/nope",
+                Some(&token),
+                None,
+            ))
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -1104,7 +1127,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms",
+            "/api/workspaces",
             Some(&token),
             Some(&serde_json::json!({"id":"acme","name":"Acme"})),
         ))
@@ -1115,7 +1138,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "PATCH",
-                "/api/realms/acme",
+                "/api/workspaces/acme",
                 Some(&token),
                 Some(&serde_json::json!({"name":"Acme Renamed"})),
             ))
@@ -1134,7 +1157,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "DELETE",
-                "/api/realms/master",
+                "/api/workspaces/master",
                 Some(&token),
                 None,
             ))
@@ -1152,21 +1175,21 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms",
+            "/api/workspaces",
             Some(&token),
             Some(&serde_json::json!({"id":"acme","name":"Acme"})),
         ))
         .await
         .unwrap();
-        let realm_folder = dir.path().join("realms/acme");
-        assert!(realm_folder.exists());
+        let workspace_folder = dir.path().join("workspaces/acme");
+        assert!(workspace_folder.exists());
 
         // delete
         let app = build_router(state.clone());
         let resp = app
             .oneshot(req_with_auth(
                 "DELETE",
-                "/api/realms/acme",
+                "/api/workspaces/acme",
                 Some(&token),
                 None,
             ))
@@ -1175,11 +1198,11 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
         // row gone and folder removed
-        let still = rustbase_db::realms::find_realm(state.system.pool(), "acme")
+        let still = rustbase_db::workspaces::find_realm(state.system.pool(), "acme")
             .await
             .unwrap();
         assert!(still.is_none());
-        assert!(!realm_folder.exists());
+        assert!(!workspace_folder.exists());
     }
 
     #[tokio::test]
@@ -1196,24 +1219,24 @@ mod tests {
         let token = state.jwt.issue(&claims).unwrap();
         let app = build_router(state);
         let resp = app
-            .oneshot(req_with_auth("GET", "/api/realms", Some(&token), None))
+            .oneshot(req_with_auth("GET", "/api/workspaces", Some(&token), None))
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
-    // ------------- realm-admin auth + app CRUD tests -------------
+    // ------------- workspace-admin auth + app CRUD tests -------------
 
-    /// Bootstrap state through to "realm 'acme' exists, has one realm
-    /// admin (ops@acme/secretpw)". Returns the realm-admin's id.
-    async fn state_with_realm_and_admin() -> (AppState, tempfile::TempDir, String, String) {
+    /// Bootstrap state through to "workspace 'acme' exists, has one workspace
+    /// admin (ops@acme/secretpw)". Returns the workspace-admin's id.
+    async fn state_with_workspace_and_admin() -> (AppState, tempfile::TempDir, String, String) {
         let (state, dir, master_id) = initialized_state_with_admin("hunter22").await;
         let master_tok = master_token(&state, &master_id);
         let app = build_router(state.clone());
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms",
+                "/api/workspaces",
                 Some(&master_tok),
                 Some(&serde_json::json!({"id":"acme","name":"Acme"})),
             ))
@@ -1225,7 +1248,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/admins",
+                "/api/workspaces/acme/admins",
                 Some(&master_tok),
                 Some(&serde_json::json!({
                     "email":"ops@acme.com","password":"secretpw","name":"Ops"
@@ -1245,11 +1268,11 @@ mod tests {
         (state, dir, master_id, admin_id)
     }
 
-    fn realm_token(state: &AppState, realm: &str, admin_id: &str) -> String {
+    fn workspace_token(state: &AppState, workspace: &str, admin_id: &str) -> String {
         let claims = rustbase_auth::build_claims(
             admin_id,
-            rustbase_auth::TokenRole::RealmAdmin,
-            Some(realm.into()),
+            rustbase_auth::TokenRole::WorkspaceAdmin,
+            Some(workspace.into()),
             None,
             chrono::Duration::minutes(15),
         );
@@ -1257,15 +1280,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn realm_admin_creation_requires_master() {
-        let (state, _dir, _, realm_admin_id) = state_with_realm_and_admin().await;
-        let realm_tok = realm_token(&state, "acme", &realm_admin_id);
+    async fn workspace_admin_creation_requires_master() {
+        let (state, _dir, _, workspace_admin_id) = state_with_workspace_and_admin().await;
+        let workspace_tok = workspace_token(&state, "acme", &workspace_admin_id);
         let app = build_router(state);
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/admins",
-                Some(&realm_tok),
+                "/api/workspaces/acme/admins",
+                Some(&workspace_tok),
                 Some(&serde_json::json!({"email":"x@y.z","password":"longenough"})),
             ))
             .await
@@ -1274,12 +1297,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn realm_admin_login_returns_realm_scoped_token() {
-        let (state, _dir, _, _) = state_with_realm_and_admin().await;
+    async fn workspace_admin_login_returns_workspace_scoped_token() {
+        let (state, _dir, _, _) = state_with_workspace_and_admin().await;
         let app = build_router(state);
         let resp = post_json(
             app,
-            "/api/realms/acme/auth/admin/login",
+            "/api/workspaces/acme/auth/admin/login",
             &serde_json::json!({"email":"ops@acme.com","password":"secretpw"}),
         )
         .await;
@@ -1291,12 +1314,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn realm_admin_login_wrong_password_is_401() {
-        let (state, _dir, _, _) = state_with_realm_and_admin().await;
+    async fn workspace_admin_login_wrong_password_is_401() {
+        let (state, _dir, _, _) = state_with_workspace_and_admin().await;
         let app = build_router(state);
         let resp = post_json(
             app,
-            "/api/realms/acme/auth/admin/login",
+            "/api/workspaces/acme/auth/admin/login",
             &serde_json::json!({"email":"ops@acme.com","password":"wrong"}),
         )
         .await;
@@ -1304,12 +1327,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn realm_admin_refresh_rotates() {
-        let (state, _dir, _, _) = state_with_realm_and_admin().await;
+    async fn workspace_admin_refresh_rotates() {
+        let (state, _dir, _, _) = state_with_workspace_and_admin().await;
         let app = build_router(state.clone());
         let resp = post_json(
             app,
-            "/api/realms/acme/auth/admin/login",
+            "/api/workspaces/acme/auth/admin/login",
             &serde_json::json!({"email":"ops@acme.com","password":"secretpw"}),
         )
         .await;
@@ -1319,7 +1342,7 @@ mod tests {
         let app = build_router(state.clone());
         let resp = post_json(
             app,
-            "/api/realms/acme/auth/refresh",
+            "/api/workspaces/acme/auth/refresh",
             &serde_json::json!({"refresh_token": first}),
         )
         .await;
@@ -1331,7 +1354,7 @@ mod tests {
         let app = build_router(state);
         let resp = post_json(
             app,
-            "/api/realms/acme/auth/refresh",
+            "/api/workspaces/acme/auth/refresh",
             &serde_json::json!({"refresh_token": first}),
         )
         .await;
@@ -1339,18 +1362,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn realm_admin_creates_and_lists_apps_in_own_realm() {
-        let (state, _dir, _, realm_admin_id) = state_with_realm_and_admin().await;
-        let realm_tok = realm_token(&state, "acme", &realm_admin_id);
+    async fn workspace_admin_creates_and_lists_apps_in_own_workspace() {
+        let (state, _dir, _, workspace_admin_id) = state_with_workspace_and_admin().await;
+        let workspace_tok = workspace_token(&state, "acme", &workspace_admin_id);
 
-        // `state_with_realm_and_admin` already provisioned a `mobile`
+        // `state_with_workspace_and_admin` already provisioned a `mobile`
         // app; use a different id for the create-step here.
         let app = build_router(state.clone());
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps",
-                Some(&realm_tok),
+                "/api/workspaces/acme/apps",
+                Some(&workspace_tok),
                 Some(&serde_json::json!({"id":"crm","name":"CRM"})),
             ))
             .await
@@ -1364,7 +1387,7 @@ mod tests {
         let app_pool = state
             .apps
             .pool_for(
-                &rustbase_core::RealmId::from("acme"),
+                &rustbase_core::WorkspaceId::from("acme"),
                 &rustbase_core::AppId::from("crm"),
             )
             .await
@@ -1380,8 +1403,8 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps",
-                Some(&realm_tok),
+                "/api/workspaces/acme/apps",
+                Some(&workspace_tok),
                 None,
             ))
             .await
@@ -1391,29 +1414,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn realm_admin_cannot_act_on_other_realm() {
-        // Create realm 'acme' with admin 'ops@acme', and a second realm
+    async fn workspace_admin_cannot_act_on_other_workspace() {
+        // Create workspace 'acme' with admin 'ops@acme', and a second workspace
         // 'widgetco'. The acme admin must not be able to list widgetco's
         // apps.
-        let (state, _dir, master_id, realm_admin_id) = state_with_realm_and_admin().await;
+        let (state, _dir, master_id, workspace_admin_id) = state_with_workspace_and_admin().await;
         let master_tok = master_token(&state, &master_id);
 
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms",
+            "/api/workspaces",
             Some(&master_tok),
             Some(&serde_json::json!({"id":"widgetco","name":"WidgetCo"})),
         ))
         .await
         .unwrap();
 
-        let acme_tok = realm_token(&state, "acme", &realm_admin_id);
+        let acme_tok = workspace_token(&state, "acme", &workspace_admin_id);
         let app = build_router(state);
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/widgetco/apps",
+                "/api/workspaces/widgetco/apps",
                 Some(&acme_tok),
                 None,
             ))
@@ -1424,13 +1447,13 @@ mod tests {
 
     #[tokio::test]
     async fn create_app_with_uppercase_id_is_400() {
-        let (state, _dir, master_id, _) = state_with_realm_and_admin().await;
+        let (state, _dir, master_id, _) = state_with_workspace_and_admin().await;
         let master_tok = master_token(&state, &master_id);
         let app = build_router(state);
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps",
+                "/api/workspaces/acme/apps",
                 Some(&master_tok),
                 Some(&serde_json::json!({"id":"Mobile","name":"x"})),
             ))
@@ -1441,14 +1464,14 @@ mod tests {
 
     #[tokio::test]
     async fn create_duplicate_app_returns_409() {
-        let (state, _dir, master_id, _) = state_with_realm_and_admin().await;
+        let (state, _dir, master_id, _) = state_with_workspace_and_admin().await;
         let master_tok = master_token(&state, &master_id);
         let body = serde_json::json!({"id":"mobile","name":"M"});
 
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps",
+            "/api/workspaces/acme/apps",
             Some(&master_tok),
             Some(&body),
         ))
@@ -1459,7 +1482,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps",
+                "/api/workspaces/acme/apps",
                 Some(&master_tok),
                 Some(&body),
             ))
@@ -1470,13 +1493,13 @@ mod tests {
 
     #[tokio::test]
     async fn create_app_in_unknown_realm_is_404() {
-        let (state, _dir, master_id, _) = state_with_realm_and_admin().await;
+        let (state, _dir, master_id, _) = state_with_workspace_and_admin().await;
         let master_tok = master_token(&state, &master_id);
         let app = build_router(state);
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/no-such-realm/apps",
+                "/api/workspaces/no-such-workspace/apps",
                 Some(&master_tok),
                 Some(&serde_json::json!({"id":"mobile","name":"Mobile"})),
             ))
@@ -1487,26 +1510,26 @@ mod tests {
 
     #[tokio::test]
     async fn delete_app_removes_row_and_folder() {
-        let (state, dir, master_id, _) = state_with_realm_and_admin().await;
+        let (state, dir, master_id, _) = state_with_workspace_and_admin().await;
         let master_tok = master_token(&state, &master_id);
 
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps",
+            "/api/workspaces/acme/apps",
             Some(&master_tok),
             Some(&serde_json::json!({"id":"mobile","name":"M"})),
         ))
         .await
         .unwrap();
-        let app_folder = dir.path().join("realms/acme/apps/mobile");
+        let app_folder = dir.path().join("workspaces/acme/apps/mobile");
         assert!(app_folder.exists());
 
         let app = build_router(state);
         let resp = app
             .oneshot(req_with_auth(
                 "DELETE",
-                "/api/realms/acme/apps/mobile",
+                "/api/workspaces/acme/apps/mobile",
                 Some(&master_tok),
                 None,
             ))
@@ -1518,13 +1541,13 @@ mod tests {
 
     #[tokio::test]
     async fn rename_app_updates_name() {
-        let (state, _dir, _, realm_admin_id) = state_with_realm_and_admin().await;
-        let tok = realm_token(&state, "acme", &realm_admin_id);
+        let (state, _dir, _, workspace_admin_id) = state_with_workspace_and_admin().await;
+        let tok = workspace_token(&state, "acme", &workspace_admin_id);
 
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps",
+            "/api/workspaces/acme/apps",
             Some(&tok),
             Some(&serde_json::json!({"id":"mobile","name":"Original"})),
         ))
@@ -1535,7 +1558,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "PATCH",
-                "/api/realms/acme/apps/mobile",
+                "/api/workspaces/acme/apps/mobile",
                 Some(&tok),
                 Some(&serde_json::json!({"name":"Renamed"})),
             ))
@@ -1549,15 +1572,15 @@ mod tests {
     // ------------- collections + records end-to-end -------------
 
     /// Idempotent: PUTs the `mobile` app inside `acme` using a freshly
-    /// minted realm-admin token if it isn't there yet. Returns the
-    /// realm-admin token so callers can keep using it.
-    async fn ensure_mobile_app(state: &AppState, realm_admin_id: &str) -> String {
-        let tok = realm_token(state, "acme", realm_admin_id);
+    /// minted workspace-admin token if it isn't there yet. Returns the
+    /// workspace-admin token so callers can keep using it.
+    async fn ensure_mobile_app(state: &AppState, workspace_admin_id: &str) -> String {
+        let tok = workspace_token(state, "acme", workspace_admin_id);
         let app = build_router(state.clone());
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps",
+                "/api/workspaces/acme/apps",
                 Some(&tok),
                 Some(&serde_json::json!({"id":"mobile","name":"M"})),
             ))
@@ -1572,19 +1595,19 @@ mod tests {
         tok
     }
 
-    /// Bootstrap to: realm 'acme', realm-admin token, app 'mobile',
+    /// Bootstrap to: workspace 'acme', workspace-admin token, app 'mobile',
     /// collection 'notes' with fields {title:text, pinned:bool,
-    /// metadata:json}. Returns (state, dir, realm_token).
+    /// metadata:json}. Returns (state, dir, workspace_token).
     async fn state_with_app_and_collection() -> (AppState, tempfile::TempDir, String) {
-        let (state, dir, _, realm_admin_id) = state_with_realm_and_admin().await;
-        let tok = ensure_mobile_app(&state, &realm_admin_id).await;
+        let (state, dir, _, workspace_admin_id) = state_with_workspace_and_admin().await;
+        let tok = ensure_mobile_app(&state, &workspace_admin_id).await;
 
         // create collection
         let app = build_router(state.clone());
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/collections",
+                "/api/workspaces/acme/apps/mobile/collections",
                 Some(&tok),
                 Some(&serde_json::json!({
                     "schema": {
@@ -1611,7 +1634,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/collections",
+                "/api/workspaces/acme/apps/mobile/collections",
                 Some(&tok),
                 Some(&serde_json::json!({
                     "schema": {"id": "policies", "kind": "base", "fields": []}
@@ -1633,7 +1656,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/collections/notes/records",
+                "/api/workspaces/acme/apps/mobile/collections/notes/records",
                 Some(&tok),
                 Some(&serde_json::json!({
                     "title": "Hello",
@@ -1655,7 +1678,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                &format!("/api/realms/acme/apps/mobile/collections/notes/records/{id}"),
+                &format!("/api/workspaces/acme/apps/mobile/collections/notes/records/{id}"),
                 Some(&tok),
                 None,
             ))
@@ -1670,7 +1693,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "PATCH",
-                &format!("/api/realms/acme/apps/mobile/collections/notes/records/{id}"),
+                &format!("/api/workspaces/acme/apps/mobile/collections/notes/records/{id}"),
                 Some(&tok),
                 Some(&serde_json::json!({"title": "Goodbye"})),
             ))
@@ -1686,7 +1709,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/collections/notes/records?per_page=10",
+                "/api/workspaces/acme/apps/mobile/collections/notes/records?per_page=10",
                 Some(&tok),
                 None,
             ))
@@ -1703,7 +1726,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "DELETE",
-                &format!("/api/realms/acme/apps/mobile/collections/notes/records/{id}"),
+                &format!("/api/workspaces/acme/apps/mobile/collections/notes/records/{id}"),
                 Some(&tok),
                 None,
             ))
@@ -1716,7 +1739,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                &format!("/api/realms/acme/apps/mobile/collections/notes/records/{id}"),
+                &format!("/api/workspaces/acme/apps/mobile/collections/notes/records/{id}"),
                 Some(&tok),
                 None,
             ))
@@ -1732,7 +1755,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "DELETE",
-                "/api/realms/acme/apps/mobile/collections/notes",
+                "/api/workspaces/acme/apps/mobile/collections/notes",
                 Some(&tok),
                 None,
             ))
@@ -1745,7 +1768,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/collections/notes/records",
+                "/api/workspaces/acme/apps/mobile/collections/notes/records",
                 Some(&tok),
                 Some(&serde_json::json!({"title": "x"})),
             ))
@@ -1763,7 +1786,7 @@ mod tests {
             let app = build_router(state.clone());
             app.oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/collections/notes/records",
+                "/api/workspaces/acme/apps/mobile/collections/notes/records",
                 Some(&tok),
                 Some(&serde_json::json!({"title": title, "pinned": pinned})),
             ))
@@ -1775,7 +1798,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/collections/notes/records?filter=pinned%20%3D%20true",
+                "/api/workspaces/acme/apps/mobile/collections/notes/records?filter=pinned%20%3D%20true",
                 Some(&tok),
                 None,
             ))
@@ -1794,7 +1817,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/collections/notes/records?filter=nope%20%3D%20%22x%22",
+                "/api/workspaces/acme/apps/mobile/collections/notes/records?filter=nope%20%3D%20%22x%22",
                 Some(&tok),
                 None,
             ))
@@ -1810,14 +1833,14 @@ mod tests {
 
     #[tokio::test]
     async fn file_upload_then_download_round_trip() {
-        let (state, _dir, _, realm_admin_id) = state_with_realm_and_admin().await;
-        let tok = realm_token(&state, "acme", &realm_admin_id);
+        let (state, _dir, _, workspace_admin_id) = state_with_workspace_and_admin().await;
+        let tok = workspace_token(&state, "acme", &workspace_admin_id);
 
         // create app
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps",
+            "/api/workspaces/acme/apps",
             Some(&tok),
             Some(&serde_json::json!({"id":"mobile","name":"M"})),
         ))
@@ -1827,7 +1850,7 @@ mod tests {
         // upload
         let app = build_router(state.clone());
         let req = Request::builder()
-            .uri("/api/realms/acme/apps/mobile/files")
+            .uri("/api/workspaces/acme/apps/mobile/files")
             .method("POST")
             .header("authorization", format!("Bearer {tok}"))
             .header("content-type", "image/png")
@@ -1847,7 +1870,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                &format!("/api/realms/acme/apps/mobile/files/{id}"),
+                &format!("/api/workspaces/acme/apps/mobile/files/{id}"),
                 Some(&tok),
                 None,
             ))
@@ -1869,7 +1892,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/files",
+                "/api/workspaces/acme/apps/mobile/files",
                 Some(&tok),
                 None,
             ))
@@ -1883,7 +1906,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "DELETE",
-                &format!("/api/realms/acme/apps/mobile/files/{id}"),
+                &format!("/api/workspaces/acme/apps/mobile/files/{id}"),
                 Some(&tok),
                 None,
             ))
@@ -1894,12 +1917,12 @@ mod tests {
 
     #[tokio::test]
     async fn file_upload_without_filename_header_is_400() {
-        let (state, _dir, _, realm_admin_id) = state_with_realm_and_admin().await;
-        let tok = realm_token(&state, "acme", &realm_admin_id);
+        let (state, _dir, _, workspace_admin_id) = state_with_workspace_and_admin().await;
+        let tok = workspace_token(&state, "acme", &workspace_admin_id);
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps",
+            "/api/workspaces/acme/apps",
             Some(&tok),
             Some(&serde_json::json!({"id":"mobile","name":"M"})),
         ))
@@ -1908,7 +1931,7 @@ mod tests {
 
         let app = build_router(state);
         let req = Request::builder()
-            .uri("/api/realms/acme/apps/mobile/files")
+            .uri("/api/workspaces/acme/apps/mobile/files")
             .method("POST")
             .header("authorization", format!("Bearer {tok}"))
             .body(Body::from(b"x".to_vec()))
@@ -1919,7 +1942,7 @@ mod tests {
 
     // ------------- end-user auth + access rules -------------
 
-    /// Bootstrap to: realm 'acme' + open app 'mobile' + collection
+    /// Bootstrap to: workspace 'acme' + open app 'mobile' + collection
     /// 'notes' + one registered user 'u@acme'. Returns (state, dir,
     /// master_token, user_access_token).
     async fn state_with_collection_and_user() -> (AppState, tempfile::TempDir, String, String) {
@@ -1935,7 +1958,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/register",
+                "/api/workspaces/acme/apps/mobile/auth/users/register",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -1948,7 +1971,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/apps/mobile/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -1958,7 +1981,7 @@ mod tests {
         let j = json_body(resp).await;
         let user_tok = j["access_token"].as_str().unwrap().to_string();
 
-        // keep the seed realm-admin token for the (admin) bootstrap caller
+        // keep the seed workspace-admin token for the (admin) bootstrap caller
         let _ = tok;
         (state, dir, master_tok, user_tok)
     }
@@ -1970,7 +1993,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/register",
+                "/api/workspaces/acme/apps/mobile/auth/users/register",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"otherpass"})),
             ))
@@ -1986,7 +2009,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/apps/mobile/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"wrong"})),
             ))
@@ -2003,14 +2026,14 @@ mod tests {
     /// is the same string.
     async fn read_pending_verification_token(
         state: &AppState,
-        realm: &str,
+        workspace: &str,
         app: &str,
         user_email: &str,
     ) -> String {
         let pool = state
             .apps
             .pool_for(
-                &rustbase_core::RealmId::from(realm.to_string()),
+                &rustbase_core::WorkspaceId::from(workspace.to_string()),
                 &rustbase_core::AppId::from(app.to_string()),
             )
             .await
@@ -2037,7 +2060,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/verify-email/request",
+                "/api/workspaces/acme/apps/mobile/auth/verify-email/request",
                 Some(&user_tok),
                 Some(&serde_json::json!({})),
             ))
@@ -2051,7 +2074,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/verify-email/confirm",
+                "/api/workspaces/acme/apps/mobile/auth/verify-email/confirm",
                 None,
                 Some(&serde_json::json!({"token": token})),
             ))
@@ -2065,7 +2088,7 @@ mod tests {
         let pool = state
             .apps
             .pool_for(
-                &rustbase_core::RealmId::from("acme".to_string()),
+                &rustbase_core::WorkspaceId::from("acme".to_string()),
                 &rustbase_core::AppId::from("mobile".to_string()),
             )
             .await
@@ -2084,7 +2107,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/verify-email/confirm",
+                "/api/workspaces/acme/apps/mobile/auth/verify-email/confirm",
                 None,
                 Some(&serde_json::json!({"token": "deadbeef".repeat(8)})),
             ))
@@ -2101,7 +2124,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps/mobile/auth/verify-email/request",
+            "/api/workspaces/acme/apps/mobile/auth/verify-email/request",
             Some(&user_tok),
             Some(&serde_json::json!({})),
         ))
@@ -2111,7 +2134,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps/mobile/auth/verify-email/confirm",
+            "/api/workspaces/acme/apps/mobile/auth/verify-email/confirm",
             None,
             Some(&serde_json::json!({"token": &token})),
         ))
@@ -2123,7 +2146,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/verify-email/confirm",
+                "/api/workspaces/acme/apps/mobile/auth/verify-email/confirm",
                 None,
                 Some(&serde_json::json!({"token": &token})),
             ))
@@ -2136,14 +2159,14 @@ mod tests {
 
     async fn read_pending_reset_token(
         state: &AppState,
-        realm: &str,
+        workspace: &str,
         app: &str,
         user_email: &str,
     ) -> String {
         let pool = state
             .apps
             .pool_for(
-                &rustbase_core::RealmId::from(realm.to_string()),
+                &rustbase_core::WorkspaceId::from(workspace.to_string()),
                 &rustbase_core::AppId::from(app.to_string()),
             )
             .await
@@ -2171,7 +2194,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/password-reset/request",
+                "/api/workspaces/acme/apps/mobile/auth/password-reset/request",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com"})),
             ))
@@ -2185,7 +2208,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/password-reset/confirm",
+                "/api/workspaces/acme/apps/mobile/auth/password-reset/confirm",
                 None,
                 Some(&serde_json::json!({"token": token, "new_password": "totallyNew!42"})),
             ))
@@ -2200,7 +2223,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/apps/mobile/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"totallyNew!42"})),
             ))
@@ -2213,7 +2236,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/apps/mobile/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -2231,7 +2254,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/password-reset/request",
+                "/api/workspaces/acme/apps/mobile/auth/password-reset/request",
                 None,
                 Some(&serde_json::json!({"email":"ghost@nowhere.com"})),
             ))
@@ -2242,7 +2265,7 @@ mod tests {
         let pool = state
             .apps
             .pool_for(
-                &rustbase_core::RealmId::from("acme".to_string()),
+                &rustbase_core::WorkspaceId::from("acme".to_string()),
                 &rustbase_core::AppId::from("mobile".to_string()),
             )
             .await
@@ -2262,7 +2285,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps/mobile/auth/password-reset/request",
+            "/api/workspaces/acme/apps/mobile/auth/password-reset/request",
             None,
             Some(&serde_json::json!({"email":"u@acme.com"})),
         ))
@@ -2273,7 +2296,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps/mobile/auth/password-reset/request",
+            "/api/workspaces/acme/apps/mobile/auth/password-reset/request",
             None,
             Some(&serde_json::json!({"email":"u@acme.com"})),
         ))
@@ -2287,7 +2310,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/password-reset/confirm",
+                "/api/workspaces/acme/apps/mobile/auth/password-reset/confirm",
                 None,
                 Some(&serde_json::json!({"token": &second, "new_password": "brandnew!9"})),
             ))
@@ -2299,7 +2322,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/password-reset/confirm",
+                "/api/workspaces/acme/apps/mobile/auth/password-reset/confirm",
                 None,
                 Some(&serde_json::json!({"token": &first, "new_password": "another!7"})),
             ))
@@ -2314,7 +2337,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps/mobile/auth/password-reset/request",
+            "/api/workspaces/acme/apps/mobile/auth/password-reset/request",
             None,
             Some(&serde_json::json!({"email":"u@acme.com"})),
         ))
@@ -2325,7 +2348,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/password-reset/confirm",
+                "/api/workspaces/acme/apps/mobile/auth/password-reset/confirm",
                 None,
                 Some(&serde_json::json!({"token": token, "new_password": "short"})),
             ))
@@ -2338,14 +2361,14 @@ mod tests {
 
     async fn read_pending_otp_code(
         state: &AppState,
-        realm: &str,
+        workspace: &str,
         app: &str,
         email: &str,
     ) -> String {
         let pool = state
             .apps
             .pool_for(
-                &rustbase_core::RealmId::from(realm.to_string()),
+                &rustbase_core::WorkspaceId::from(workspace.to_string()),
                 &rustbase_core::AppId::from(app.to_string()),
             )
             .await
@@ -2362,11 +2385,11 @@ mod tests {
         row.0
     }
 
-    /// Bootstrap up to "realm 'acme' exists" without registering any
+    /// Bootstrap up to "workspace 'acme' exists" without registering any
     /// user — OTP can sign people up so we don't want the test fixture
     /// pre-creating one.
     async fn state_with_empty_realm() -> (AppState, tempfile::TempDir) {
-        let (state, dir, _master_id, _admin_id) = state_with_realm_and_admin().await;
+        let (state, dir, _master_id, _admin_id) = state_with_workspace_and_admin().await;
         (state, dir)
     }
 
@@ -2379,7 +2402,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/otp/request",
+                "/api/workspaces/acme/apps/mobile/auth/otp/request",
                 None,
                 Some(&serde_json::json!({"email":"new@acme.com"})),
             ))
@@ -2393,7 +2416,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/otp/login",
+                "/api/workspaces/acme/apps/mobile/auth/otp/login",
                 None,
                 Some(&serde_json::json!({"email":"new@acme.com","code":code})),
             ))
@@ -2409,7 +2432,7 @@ mod tests {
         let pool = state
             .apps
             .pool_for(
-                &rustbase_core::RealmId::from("acme".to_string()),
+                &rustbase_core::WorkspaceId::from("acme".to_string()),
                 &rustbase_core::AppId::from("mobile".to_string()),
             )
             .await
@@ -2428,7 +2451,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps/mobile/auth/otp/request",
+            "/api/workspaces/acme/apps/mobile/auth/otp/request",
             None,
             Some(&serde_json::json!({"email":"a@acme.com"})),
         ))
@@ -2439,7 +2462,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/otp/login",
+                "/api/workspaces/acme/apps/mobile/auth/otp/login",
                 None,
                 Some(&serde_json::json!({"email":"a@acme.com","code":"000000"})),
             ))
@@ -2458,7 +2481,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps/mobile/auth/otp/request",
+            "/api/workspaces/acme/apps/mobile/auth/otp/request",
             None,
             Some(&serde_json::json!({"email":"a@acme.com"})),
         ))
@@ -2469,7 +2492,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps/mobile/auth/otp/request",
+            "/api/workspaces/acme/apps/mobile/auth/otp/request",
             None,
             Some(&serde_json::json!({"email":"a@acme.com"})),
         ))
@@ -2484,7 +2507,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/otp/login",
+                "/api/workspaces/acme/apps/mobile/auth/otp/login",
                 None,
                 Some(&serde_json::json!({"email":"a@acme.com","code":&first})),
             ))
@@ -2497,7 +2520,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/otp/login",
+                "/api/workspaces/acme/apps/mobile/auth/otp/login",
                 None,
                 Some(&serde_json::json!({"email":"a@acme.com","code":&second})),
             ))
@@ -2516,7 +2539,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/otp/login",
+                "/api/workspaces/acme/apps/mobile/auth/otp/login",
                 None,
                 Some(&serde_json::json!({"email":"ghost@acme.com","code":"123456"})),
             ))
@@ -2535,7 +2558,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps/mobile/auth/otp/request",
+            "/api/workspaces/acme/apps/mobile/auth/otp/request",
             None,
             Some(&serde_json::json!({"email":"u@acme.com"})),
         ))
@@ -2546,7 +2569,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/otp/login",
+                "/api/workspaces/acme/apps/mobile/auth/otp/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","code":code})),
             ))
@@ -2558,7 +2581,7 @@ mod tests {
         let pool = state
             .apps
             .pool_for(
-                &rustbase_core::RealmId::from("acme".to_string()),
+                &rustbase_core::WorkspaceId::from("acme".to_string()),
                 &rustbase_core::AppId::from("mobile".to_string()),
             )
             .await
@@ -2632,7 +2655,7 @@ mod tests {
     /// callback path can decrypt it on use, matching production wiring.
     async fn seed_provider(
         state: &AppState,
-        realm: &str,
+        workspace: &str,
         app: &str,
         provider: &str,
         base_url: &str,
@@ -2640,7 +2663,7 @@ mod tests {
         let pool = state
             .apps
             .pool_for(
-                &rustbase_core::RealmId::from(realm.to_string()),
+                &rustbase_core::WorkspaceId::from(workspace.to_string()),
                 &rustbase_core::AppId::from(app.to_string()),
             )
             .await
@@ -2669,14 +2692,14 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn oauth_authorize_returns_url_with_state_and_scopes() {
         let (base_url, _h) = fake_oauth_provider(serde_json::json!({})).await;
-        let (state, _dir, _, _) = state_with_realm_and_admin().await;
+        let (state, _dir, _, _) = state_with_workspace_and_admin().await;
         seed_provider(&state, "acme", "mobile", "google", &base_url).await;
 
         let app = build_router(state);
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
                 None,
                 None,
             ))
@@ -2699,12 +2722,12 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn oauth_authorize_unknown_provider_returns_404() {
-        let (state, _dir, _, _) = state_with_realm_and_admin().await;
+        let (state, _dir, _, _) = state_with_workspace_and_admin().await;
         let app = build_router(state);
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/auth/oauth/ghost/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/ghost/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
                 None,
                 None,
             ))
@@ -2720,14 +2743,14 @@ mod tests {
             "email": "pkce@google.test",
         }))
         .await;
-        let (state, _dir, _, _) = state_with_realm_and_admin().await;
+        let (state, _dir, _, _) = state_with_workspace_and_admin().await;
         seed_provider(&state, "acme", "mobile", "google", &base_url).await;
 
         let app = build_router(state.clone());
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
                 None,
                 None,
             ))
@@ -2744,7 +2767,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/oauth/google/callback",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/google/callback",
                 None,
                 Some(&serde_json::json!({"code":"unused", "state": nonce})),
             ))
@@ -2772,7 +2795,7 @@ mod tests {
             "email": "ada@google.test",
         }))
         .await;
-        let (state, _dir, _, _) = state_with_realm_and_admin().await;
+        let (state, _dir, _, _) = state_with_workspace_and_admin().await;
         seed_provider(&state, "acme", "mobile", "google", &base_url).await;
 
         // 1. /authorize → get a real state nonce.
@@ -2780,7 +2803,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
                 None,
                 None,
             ))
@@ -2793,7 +2816,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/oauth/google/callback",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/google/callback",
                 None,
                 Some(&serde_json::json!({"code":"unused", "state": nonce})),
             ))
@@ -2809,7 +2832,7 @@ mod tests {
         let pool = state
             .apps
             .pool_for(
-                &rustbase_core::RealmId::from("acme".to_string()),
+                &rustbase_core::WorkspaceId::from("acme".to_string()),
                 &rustbase_core::AppId::from("mobile".to_string()),
             )
             .await
@@ -2847,7 +2870,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
                 None,
                 None,
             ))
@@ -2859,7 +2882,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/oauth/google/callback",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/google/callback",
                 None,
                 Some(&serde_json::json!({"code":"unused", "state": nonce})),
             ))
@@ -2870,7 +2893,7 @@ mod tests {
         let pool = state
             .apps
             .pool_for(
-                &rustbase_core::RealmId::from("acme".to_string()),
+                &rustbase_core::WorkspaceId::from("acme".to_string()),
                 &rustbase_core::AppId::from("mobile".to_string()),
             )
             .await
@@ -2903,14 +2926,14 @@ mod tests {
             "sub": "google-sub-1", "email": "a@x"
         }))
         .await;
-        let (state, _dir, _, _) = state_with_realm_and_admin().await;
+        let (state, _dir, _, _) = state_with_workspace_and_admin().await;
         seed_provider(&state, "acme", "mobile", "google", &base_url).await;
 
         let app = build_router(state.clone());
         let nonce = json_body(
             app.oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
                 None,
                 None,
             ))
@@ -2927,7 +2950,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/oauth/google/callback",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/google/callback",
                 None,
                 Some(&serde_json::json!({"code":"unused", "state": &nonce})),
             ))
@@ -2940,7 +2963,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/oauth/google/callback",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/google/callback",
                 None,
                 Some(&serde_json::json!({"code":"unused", "state": &nonce})),
             ))
@@ -2952,14 +2975,14 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn oauth_callback_unknown_state_returns_401() {
         let (base_url, _h) = fake_oauth_provider(serde_json::json!({})).await;
-        let (state, _dir, _, _) = state_with_realm_and_admin().await;
+        let (state, _dir, _, _) = state_with_workspace_and_admin().await;
         seed_provider(&state, "acme", "mobile", "google", &base_url).await;
 
         let app = build_router(state);
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/oauth/google/callback",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/google/callback",
                 None,
                 Some(&serde_json::json!({"code":"unused", "state":"forged-or-stale"})),
             ))
@@ -2970,15 +2993,15 @@ mod tests {
 
     #[tokio::test]
     async fn verify_email_request_rejects_admin_tokens() {
-        // A realm-admin token isn't tied to an end user, so /request
+        // A workspace-admin token isn't tied to an end user, so /request
         // must reject it rather than try to mail a non-existent user.
-        let (state, _dir, _, realm_admin_id) = state_with_realm_and_admin().await;
-        let admin_tok = realm_token(&state, "acme", &realm_admin_id);
+        let (state, _dir, _, workspace_admin_id) = state_with_workspace_and_admin().await;
+        let admin_tok = workspace_token(&state, "acme", &workspace_admin_id);
         let app = build_router(state);
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/verify-email/request",
+                "/api/workspaces/acme/apps/mobile/auth/verify-email/request",
                 Some(&admin_tok),
                 Some(&serde_json::json!({})),
             ))
@@ -2994,7 +3017,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/collections/notes/records",
+                "/api/workspaces/acme/apps/mobile/collections/notes/records",
                 Some(&user_tok),
                 None,
             ))
@@ -3011,7 +3034,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "PUT",
-                "/api/realms/acme/apps/mobile/collections/notes/access_rules/list",
+                "/api/workspaces/acme/apps/mobile/collections/notes/access_rules/list",
                 Some(&master_tok),
                 Some(&serde_json::json!({"filter": ""})),
             ))
@@ -3024,7 +3047,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/collections/notes/records",
+                "/api/workspaces/acme/apps/mobile/collections/notes/records",
                 Some(&user_tok),
                 None,
             ))
@@ -3040,7 +3063,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms",
+            "/api/workspaces",
             Some(&master_tok),
             Some(&serde_json::json!({"id":"widgetco","name":"W"})),
         ))
@@ -3049,7 +3072,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/widgetco/apps",
+            "/api/workspaces/widgetco/apps",
             Some(&master_tok),
             Some(&serde_json::json!({"id":"web","name":"W"})),
         ))
@@ -3058,7 +3081,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/widgetco/apps/web/collections",
+            "/api/workspaces/widgetco/apps/web/collections",
             Some(&master_tok),
             Some(&serde_json::json!({
                 "schema":{"id":"items","kind":"base",
@@ -3070,7 +3093,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "PUT",
-            "/api/realms/widgetco/apps/web/collections/items/access_rules/list",
+            "/api/workspaces/widgetco/apps/web/collections/items/access_rules/list",
             Some(&master_tok),
             Some(&serde_json::json!({"filter": ""})),
         ))
@@ -3082,7 +3105,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/widgetco/apps/web/collections/items/records",
+                "/api/workspaces/widgetco/apps/web/collections/items/records",
                 Some(&user_tok),
                 None,
             ))
@@ -3100,7 +3123,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "DELETE",
-                "/api/realms/acme/apps/mobile/collections/notes",
+                "/api/workspaces/acme/apps/mobile/collections/notes",
                 Some(&master_tok),
                 None,
             ))
@@ -3111,7 +3134,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/collections",
+                "/api/workspaces/acme/apps/mobile/collections",
                 Some(&master_tok),
                 Some(&serde_json::json!({
                     "schema": {
@@ -3136,7 +3159,7 @@ mod tests {
                     &state
                         .apps
                         .pool_for(
-                            &rustbase_core::RealmId::from("acme"),
+                            &rustbase_core::WorkspaceId::from("acme"),
                             &rustbase_core::AppId::from("mobile"),
                         )
                         .await
@@ -3149,7 +3172,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps/mobile/collections/notes/records",
+            "/api/workspaces/acme/apps/mobile/collections/notes/records",
             Some(&master_tok),
             Some(&serde_json::json!({"title": "mine", "owner": user_id})),
         ))
@@ -3158,7 +3181,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps/mobile/collections/notes/records",
+            "/api/workspaces/acme/apps/mobile/collections/notes/records",
             Some(&master_tok),
             Some(&serde_json::json!({"title": "theirs", "owner": "other-user-id"})),
         ))
@@ -3170,7 +3193,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "PUT",
-                "/api/realms/acme/apps/mobile/collections/notes/access_rules/list",
+                "/api/workspaces/acme/apps/mobile/collections/notes/access_rules/list",
                 Some(&master_tok),
                 Some(&serde_json::json!({"filter": "owner = {{request.auth.id}}"})),
             ))
@@ -3183,7 +3206,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/collections/notes/records",
+                "/api/workspaces/acme/apps/mobile/collections/notes/records",
                 Some(&user_tok),
                 None,
             ))
@@ -3203,7 +3226,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "DELETE",
-            "/api/realms/acme/apps/mobile/collections/notes",
+            "/api/workspaces/acme/apps/mobile/collections/notes",
             Some(&master_tok),
             None,
         ))
@@ -3212,7 +3235,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps/mobile/collections",
+            "/api/workspaces/acme/apps/mobile/collections",
             Some(&master_tok),
             Some(&serde_json::json!({
                 "schema": {
@@ -3231,7 +3254,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/collections/notes/records",
+                "/api/workspaces/acme/apps/mobile/collections/notes/records",
                 Some(&master_tok),
                 Some(&serde_json::json!({"title":"x","owner":"other"})),
             ))
@@ -3244,7 +3267,9 @@ mod tests {
             let app = build_router(state.clone());
             app.oneshot(req_with_auth(
                 "PUT",
-                &format!("/api/realms/acme/apps/mobile/collections/notes/access_rules/{action}"),
+                &format!(
+                    "/api/workspaces/acme/apps/mobile/collections/notes/access_rules/{action}"
+                ),
                 Some(&master_tok),
                 Some(&serde_json::json!({"filter":"owner = {{request.auth.id}}"})),
             ))
@@ -3257,7 +3282,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                &format!("/api/realms/acme/apps/mobile/collections/notes/records/{id}"),
+                &format!("/api/workspaces/acme/apps/mobile/collections/notes/records/{id}"),
                 Some(&user_tok),
                 None,
             ))
@@ -3274,7 +3299,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "PUT",
-            "/api/realms/acme/apps/mobile/collections/notes/access_rules/list",
+            "/api/workspaces/acme/apps/mobile/collections/notes/access_rules/list",
             Some(&master_tok),
             Some(&serde_json::json!({"filter": "title = {{request.unknown}}"})),
         ))
@@ -3285,7 +3310,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/collections/notes/records",
+                "/api/workspaces/acme/apps/mobile/collections/notes/records",
                 Some(&user_tok),
                 None,
             ))
@@ -3302,7 +3327,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/apps/mobile/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -3315,7 +3340,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/refresh",
+                "/api/workspaces/acme/apps/mobile/auth/users/refresh",
                 None,
                 Some(&serde_json::json!({"refresh_token": first})),
             ))
@@ -3331,7 +3356,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/refresh",
+                "/api/workspaces/acme/apps/mobile/auth/users/refresh",
                 None,
                 Some(&serde_json::json!({"refresh_token": first})),
             ))
@@ -3344,9 +3369,9 @@ mod tests {
 
     #[tokio::test]
     async fn master_can_set_policy_and_realm_clamps_below_master_bound() {
-        let (state, _dir, master_id, realm_admin_id) = state_with_realm_and_admin().await;
+        let (state, _dir, master_id, workspace_admin_id) = state_with_workspace_and_admin().await;
         let m_tok = master_token(&state, &master_id);
-        let r_tok = realm_token(&state, "acme", &realm_admin_id);
+        let r_tok = workspace_token(&state, "acme", &workspace_admin_id);
 
         // master sets range [4, 64]
         let app = build_router(state.clone());
@@ -3361,12 +3386,12 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
 
-        // realm sets [8, 32] — inside master, OK
+        // workspace sets [8, 32] — inside master, OK
         let app = build_router(state.clone());
         let resp = app
             .oneshot(req_with_auth(
                 "PUT",
-                "/api/realms/acme/policies/password.length",
+                "/api/workspaces/acme/policies/password.length",
                 Some(&r_tok),
                 Some(&serde_json::json!({"kind":"range","min":8,"max":32})),
             ))
@@ -3374,12 +3399,12 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
 
-        // realm tries [2, 100] — violates master → 409
+        // workspace tries [2, 100] — violates master → 409
         let app = build_router(state);
         let resp = app
             .oneshot(req_with_auth(
                 "PUT",
-                "/api/realms/acme/policies/password.length",
+                "/api/workspaces/acme/policies/password.length",
                 Some(&r_tok),
                 Some(&serde_json::json!({"kind":"range","min":2,"max":100})),
             ))
@@ -3390,11 +3415,11 @@ mod tests {
 
     #[tokio::test]
     async fn master_tighten_cascades_into_realm_value() {
-        let (state, _dir, master_id, realm_admin_id) = state_with_realm_and_admin().await;
+        let (state, _dir, master_id, workspace_admin_id) = state_with_workspace_and_admin().await;
         let m_tok = master_token(&state, &master_id);
-        let r_tok = realm_token(&state, "acme", &realm_admin_id);
+        let r_tok = workspace_token(&state, "acme", &workspace_admin_id);
 
-        // master [4, 64], realm [8, 32]
+        // master [4, 64], workspace [8, 32]
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "PUT",
@@ -3407,7 +3432,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "PUT",
-            "/api/realms/acme/policies/password.length",
+            "/api/workspaces/acme/policies/password.length",
             Some(&r_tok),
             Some(&serde_json::json!({"kind":"range","min":8,"max":32})),
         ))
@@ -3428,16 +3453,16 @@ mod tests {
         let j = json_body(resp).await;
         assert_eq!(j["cascaded"].as_array().unwrap().len(), 1);
         let outcome = &j["cascaded"][0];
-        assert_eq!(outcome["realm"], "acme");
+        assert_eq!(outcome["workspace"], "acme");
         assert_eq!(outcome["after"]["min"], 10);
         assert_eq!(outcome["after"]["max"], 20);
 
-        // realm value reflects the clamp
+        // workspace value reflects the clamp
         let app = build_router(state);
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/policies/password.length",
+                "/api/workspaces/acme/policies/password.length",
                 Some(&r_tok),
                 None,
             ))
@@ -3449,9 +3474,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn realm_admin_cannot_set_master_policy() {
-        let (state, _dir, _, realm_admin_id) = state_with_realm_and_admin().await;
-        let r_tok = realm_token(&state, "acme", &realm_admin_id);
+    async fn workspace_admin_cannot_set_master_policy() {
+        let (state, _dir, _, workspace_admin_id) = state_with_workspace_and_admin().await;
+        let r_tok = workspace_token(&state, "acme", &workspace_admin_id);
         let app = build_router(state);
         let resp = app
             .oneshot(req_with_auth(
@@ -3472,7 +3497,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/collections/notes/records?filter=this+is+not+valid",
+                "/api/workspaces/acme/apps/mobile/collections/notes/records?filter=this+is+not+valid",
                 Some(&tok),
                 None,
             ))
@@ -3484,7 +3509,7 @@ mod tests {
     #[tokio::test]
     async fn cross_realm_admin_cannot_read_records() {
         let (state, _dir, _) = state_with_app_and_collection().await;
-        // create realm 'widgetco' + its own admin, and try to list acme/mobile/notes/records
+        // create workspace 'widgetco' + its own admin, and try to list acme/mobile/notes/records
         let master_admin_id = rustbase_db::admins::count_master_admins(state.system.pool())
             .await
             .map(|_| {
@@ -3503,7 +3528,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms",
+            "/api/workspaces",
             Some(&master_tok),
             Some(&serde_json::json!({"id":"widgetco","name":"WidgetCo"})),
         ))
@@ -3512,7 +3537,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/widgetco/admins",
+            "/api/workspaces/widgetco/admins",
             Some(&master_tok),
             Some(&serde_json::json!({"email":"w@w","password":"longenough"})),
         ))
@@ -3523,7 +3548,7 @@ mod tests {
         // it — just use master_token + role swap)
         let claims = rustbase_auth::build_claims(
             "fake-admin",
-            rustbase_auth::TokenRole::RealmAdmin,
+            rustbase_auth::TokenRole::WorkspaceAdmin,
             Some("widgetco".into()),
             None,
             chrono::Duration::minutes(15),
@@ -3534,7 +3559,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/collections/notes/records",
+                "/api/workspaces/acme/apps/mobile/collections/notes/records",
                 Some(&w_tok),
                 None,
             ))
@@ -3549,25 +3574,25 @@ mod tests {
     /// path apps::create would normally read from, then load it via
     /// the HookEngine using the same bridge + mailer wiring as
     /// production. Returns once the hook is live.
-    async fn plant_hook_in_app(state: &AppState, realm: &str, app: &str, src: &str) {
-        let dir = state.data_dir.join("hooks").join(realm).join(app);
+    async fn plant_hook_in_app(state: &AppState, workspace: &str, app: &str, src: &str) {
+        let dir = state.data_dir.join("hooks").join(workspace).join(app);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("user_lifecycle.js"), src).unwrap();
         let bridge = crate::hook_bridge::ApiBridge::new(
-            rustbase_core::RealmId::from(realm.to_string()),
+            rustbase_core::WorkspaceId::from(workspace.to_string()),
             rustbase_core::AppId::from(app.to_string()),
             state.apps.clone(),
         )
         .into_sync();
         let quoted = std::sync::Arc::new(crate::mailer::QuotedMailer::new(
             state.mailer.clone(),
-            rustbase_core::RealmId::from(realm.to_string()),
+            rustbase_core::WorkspaceId::from(workspace.to_string()),
             rustbase_core::AppId::from(app.to_string()),
             state.apps.clone(),
         )) as std::sync::Arc<dyn rustbase_core::Mailer>;
         state
             .hooks
-            .load_app(realm, app, &dir, Some(bridge), Some(quoted))
+            .load_app(workspace, app, &dir, Some(bridge), Some(quoted))
             .await
             .unwrap();
     }
@@ -3587,7 +3612,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/register",
+                "/api/workspaces/acme/apps/mobile/auth/users/register",
                 None,
                 Some(&serde_json::json!({"email":"ada@acme.com","password":"hunter22"})),
             ))
@@ -3603,7 +3628,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(logs, vec!["welcome ada@acme.com".to_string()]);
-        let _ = tok; // keep realm-admin token alive through the test
+        let _ = tok; // keep workspace-admin token alive through the test
     }
 
     #[tokio::test]
@@ -3621,7 +3646,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/apps/mobile/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -3654,7 +3679,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/apps/mobile/auth/users/login",
                 None,
                 // Credentials are CORRECT — the hook is what blocks.
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
@@ -3681,7 +3706,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps/mobile/auth/users/login",
+            "/api/workspaces/acme/apps/mobile/auth/users/login",
             None,
             Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
         ))
@@ -3717,7 +3742,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps/mobile/auth/otp/request",
+            "/api/workspaces/acme/apps/mobile/auth/otp/request",
             None,
             Some(&serde_json::json!({"email":"fresh@acme.com"})),
         ))
@@ -3727,7 +3752,7 @@ mod tests {
             let pool = state
                 .apps
                 .pool_for(
-                    &rustbase_core::RealmId::from("acme".to_string()),
+                    &rustbase_core::WorkspaceId::from("acme".to_string()),
                     &rustbase_core::AppId::from("mobile".to_string()),
                 )
                 .await
@@ -3747,7 +3772,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/otp/login",
+                "/api/workspaces/acme/apps/mobile/auth/otp/login",
                 None,
                 Some(&serde_json::json!({"email":"fresh@acme.com","code":code})),
             ))
@@ -3794,7 +3819,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/custom/hello?who=ada",
+                "/api/workspaces/acme/apps/mobile/custom/hello?who=ada",
                 None,
                 None,
             ))
@@ -3816,7 +3841,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/custom/missing",
+                "/api/workspaces/acme/apps/mobile/custom/missing",
                 None,
                 None,
             ))
@@ -3847,7 +3872,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/custom/echo",
+                "/api/workspaces/acme/apps/mobile/custom/echo",
                 None,
                 Some(&serde_json::json!({"hello":"world","n":42})),
             ))
@@ -3875,7 +3900,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/custom/boom",
+                "/api/workspaces/acme/apps/mobile/custom/boom",
                 None,
                 None,
             ))
@@ -3901,7 +3926,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/custom/only-get",
+                "/api/workspaces/acme/apps/mobile/custom/only-get",
                 None,
                 Some(&serde_json::json!({})),
             ))
@@ -3915,12 +3940,13 @@ mod tests {
         // Same path registered in app A; app B has nothing — the
         // request to B's namespace must miss even though A would
         // have answered.
-        let (state, _dir, master_tok, realm_admin_id) = {
-            let (state, dir, master_id, realm_admin_id) = state_with_realm_and_admin().await;
+        let (state, _dir, master_tok, workspace_admin_id) = {
+            let (state, dir, master_id, workspace_admin_id) =
+                state_with_workspace_and_admin().await;
             let master_tok = master_token(&state, &master_id);
-            (state, dir, master_tok, realm_admin_id)
+            (state, dir, master_tok, workspace_admin_id)
         };
-        let realm_tok = realm_token(&state, "acme", &realm_admin_id);
+        let workspace_tok = workspace_token(&state, "acme", &workspace_admin_id);
 
         // Create two sibling apps under acme.
         for app_id in ["alpha", "beta"] {
@@ -3928,8 +3954,8 @@ mod tests {
             let resp = app
                 .oneshot(req_with_auth(
                     "POST",
-                    "/api/realms/acme/apps",
-                    Some(&realm_tok),
+                    "/api/workspaces/acme/apps",
+                    Some(&workspace_tok),
                     Some(&serde_json::json!({"id":app_id,"name":app_id})),
                 ))
                 .await
@@ -3951,7 +3977,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/alpha/custom/hi",
+                "/api/workspaces/acme/apps/alpha/custom/hi",
                 None,
                 None,
             ))
@@ -3964,7 +3990,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/beta/custom/hi",
+                "/api/workspaces/acme/apps/beta/custom/hi",
                 None,
                 None,
             ))
@@ -4003,7 +4029,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/totp/enroll",
+                "/api/workspaces/acme/apps/mobile/auth/totp/enroll",
                 Some(&user_tok),
                 Some(&serde_json::json!({})),
             ))
@@ -4027,7 +4053,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/totp/enroll",
+                "/api/workspaces/acme/apps/mobile/auth/totp/enroll",
                 Some(&user_tok),
                 Some(&serde_json::json!({})),
             ))
@@ -4044,7 +4070,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/totp/confirm",
+                "/api/workspaces/acme/apps/mobile/auth/totp/confirm",
                 Some(&user_tok),
                 Some(&serde_json::json!({"code": code})),
             ))
@@ -4057,7 +4083,7 @@ mod tests {
         let pool = state
             .apps
             .pool_for(
-                &rustbase_core::RealmId::from("acme".to_string()),
+                &rustbase_core::WorkspaceId::from("acme".to_string()),
                 &rustbase_core::AppId::from("mobile".to_string()),
             )
             .await
@@ -4079,7 +4105,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps/mobile/auth/totp/enroll",
+            "/api/workspaces/acme/apps/mobile/auth/totp/enroll",
             Some(&user_tok),
             Some(&serde_json::json!({})),
         ))
@@ -4090,7 +4116,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/totp/confirm",
+                "/api/workspaces/acme/apps/mobile/auth/totp/confirm",
                 Some(&user_tok),
                 Some(&serde_json::json!({"code": "000000"})),
             ))
@@ -4101,7 +4127,7 @@ mod tests {
         let pool = state
             .apps
             .pool_for(
-                &rustbase_core::RealmId::from("acme".to_string()),
+                &rustbase_core::WorkspaceId::from("acme".to_string()),
                 &rustbase_core::AppId::from("mobile".to_string()),
             )
             .await
@@ -4127,7 +4153,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/totp/enroll",
+                "/api/workspaces/acme/apps/mobile/auth/totp/enroll",
                 Some(&user_tok),
                 Some(&serde_json::json!({})),
             ))
@@ -4142,7 +4168,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps/mobile/auth/totp/confirm",
+            "/api/workspaces/acme/apps/mobile/auth/totp/confirm",
             Some(&user_tok),
             Some(&serde_json::json!({"code": code})),
         ))
@@ -4158,7 +4184,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/apps/mobile/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -4180,7 +4206,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/apps/mobile/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -4197,7 +4223,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/login/totp",
+                "/api/workspaces/acme/apps/mobile/auth/users/login/totp",
                 None,
                 Some(&serde_json::json!({"mfa_token": mfa_token, "code": code})),
             ))
@@ -4218,7 +4244,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/apps/mobile/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -4235,7 +4261,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/login/totp",
+                "/api/workspaces/acme/apps/mobile/auth/users/login/totp",
                 None,
                 Some(&serde_json::json!({"mfa_token": &mfa_token, "code": &code})),
             ))
@@ -4248,7 +4274,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/login/totp",
+                "/api/workspaces/acme/apps/mobile/auth/users/login/totp",
                 None,
                 Some(&serde_json::json!({"mfa_token": &mfa_token, "code": &code})),
             ))
@@ -4266,7 +4292,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/apps/mobile/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -4281,7 +4307,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/login/totp",
+                "/api/workspaces/acme/apps/mobile/auth/users/login/totp",
                 None,
                 Some(&serde_json::json!({"mfa_token": mfa_token, "code": code1})),
             ))
@@ -4298,7 +4324,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/totp/disable",
+                "/api/workspaces/acme/apps/mobile/auth/totp/disable",
                 Some(&user_tok),
                 Some(&serde_json::json!({"code": code2})),
             ))
@@ -4311,7 +4337,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/apps/mobile/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -4341,14 +4367,14 @@ mod tests {
 
     #[tokio::test]
     async fn oauth_admin_put_then_get_returns_provider_without_secret() {
-        let (state, _dir, master_id, _realm_admin_id) = state_with_realm_and_admin().await;
+        let (state, _dir, master_id, _realm_admin_id) = state_with_workspace_and_admin().await;
         let master_tok = master_token(&state, &master_id);
 
         let app = build_router(state.clone());
         let resp = app
             .oneshot(req_with_auth(
                 "PUT",
-                "/api/realms/acme/apps/mobile/auth/oauth/providers/google",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
                 Some(&master_tok),
                 Some(&provider_body()),
             ))
@@ -4368,7 +4394,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/auth/oauth/providers/google",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
                 Some(&master_tok),
                 None,
             ))
@@ -4386,12 +4412,12 @@ mod tests {
 
     #[tokio::test]
     async fn oauth_admin_stored_secret_is_encrypted_at_rest() {
-        let (state, _dir, master_id, _) = state_with_realm_and_admin().await;
+        let (state, _dir, master_id, _) = state_with_workspace_and_admin().await;
         let master_tok = master_token(&state, &master_id);
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "PUT",
-            "/api/realms/acme/apps/mobile/auth/oauth/providers/google",
+            "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
             Some(&master_tok),
             Some(&provider_body()),
         ))
@@ -4403,7 +4429,7 @@ mod tests {
         let pool = state
             .apps
             .pool_for(
-                &rustbase_core::RealmId::from("acme".to_string()),
+                &rustbase_core::WorkspaceId::from("acme".to_string()),
                 &rustbase_core::AppId::from("mobile".to_string()),
             )
             .await
@@ -4426,7 +4452,7 @@ mod tests {
 
     #[tokio::test]
     async fn oauth_admin_list_returns_summaries_in_provider_order() {
-        let (state, _dir, master_id, _) = state_with_realm_and_admin().await;
+        let (state, _dir, master_id, _) = state_with_workspace_and_admin().await;
         let master_tok = master_token(&state, &master_id);
 
         for name in ["google", "github"] {
@@ -4435,7 +4461,7 @@ mod tests {
             let app = build_router(state.clone());
             app.oneshot(req_with_auth(
                 "PUT",
-                &format!("/api/realms/acme/apps/mobile/auth/oauth/providers/{name}"),
+                &format!("/api/workspaces/acme/apps/mobile/auth/oauth/providers/{name}"),
                 Some(&master_tok),
                 Some(&body),
             ))
@@ -4447,7 +4473,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/auth/oauth/providers",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/providers",
                 Some(&master_tok),
                 None,
             ))
@@ -4468,12 +4494,12 @@ mod tests {
 
     #[tokio::test]
     async fn oauth_admin_delete_then_get_returns_404() {
-        let (state, _dir, master_id, _) = state_with_realm_and_admin().await;
+        let (state, _dir, master_id, _) = state_with_workspace_and_admin().await;
         let master_tok = master_token(&state, &master_id);
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "PUT",
-            "/api/realms/acme/apps/mobile/auth/oauth/providers/google",
+            "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
             Some(&master_tok),
             Some(&provider_body()),
         ))
@@ -4484,7 +4510,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "DELETE",
-                "/api/realms/acme/apps/mobile/auth/oauth/providers/google",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
                 Some(&master_tok),
                 None,
             ))
@@ -4497,7 +4523,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "DELETE",
-                "/api/realms/acme/apps/mobile/auth/oauth/providers/google",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
                 Some(&master_tok),
                 None,
             ))
@@ -4510,7 +4536,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/auth/oauth/providers/google",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
                 Some(&master_tok),
                 None,
             ))
@@ -4521,15 +4547,15 @@ mod tests {
 
     #[tokio::test]
     async fn oauth_admin_realm_admin_can_manage_own_realm() {
-        let (state, _dir, _, realm_admin_id) = state_with_realm_and_admin().await;
-        let realm_tok = realm_token(&state, "acme", &realm_admin_id);
+        let (state, _dir, _, workspace_admin_id) = state_with_workspace_and_admin().await;
+        let workspace_tok = workspace_token(&state, "acme", &workspace_admin_id);
 
         let app = build_router(state);
         let resp = app
             .oneshot(req_with_auth(
                 "PUT",
-                "/api/realms/acme/apps/mobile/auth/oauth/providers/google",
-                Some(&realm_tok),
+                "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
+                Some(&workspace_tok),
                 Some(&provider_body()),
             ))
             .await
@@ -4540,12 +4566,12 @@ mod tests {
     #[tokio::test]
     async fn oauth_admin_requires_admin_token() {
         let (state, _dir, _, _) = state_with_collection_and_user().await;
-        // user_tok is on the same realm but is not an admin.
+        // user_tok is on the same workspace but is not an admin.
         let app = build_router(state.clone());
         let user_resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/apps/mobile/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -4560,7 +4586,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "PUT",
-                "/api/realms/acme/apps/mobile/auth/oauth/providers/google",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
                 Some(&user_tok),
                 Some(&provider_body()),
             ))
@@ -4579,7 +4605,7 @@ mod tests {
             "email": "via-admin@acme.test",
         }))
         .await;
-        let (state, _dir, master_id, _) = state_with_realm_and_admin().await;
+        let (state, _dir, master_id, _) = state_with_workspace_and_admin().await;
         let master_tok = master_token(&state, &master_id);
 
         let mut body = provider_body();
@@ -4590,7 +4616,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "PUT",
-            "/api/realms/acme/apps/mobile/auth/oauth/providers/google",
+            "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
             Some(&master_tok),
             Some(&body),
         ))
@@ -4602,7 +4628,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/google/authorize?redirect_uri=https%3A%2F%2Fapp%2Fcb",
                 None,
                 None,
             ))
@@ -4615,7 +4641,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/oauth/google/callback",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/google/callback",
                 None,
                 Some(&serde_json::json!({"code":"unused","state":nonce})),
             ))
@@ -4632,12 +4658,12 @@ mod tests {
         // Create with a real secret, then PUT again with only client_id
         // and config — the stored ciphertext should still decrypt to
         // the original secret. This is what the edit form relies on.
-        let (state, _dir, master_id, _) = state_with_realm_and_admin().await;
+        let (state, _dir, master_id, _) = state_with_workspace_and_admin().await;
         let master_tok = master_token(&state, &master_id);
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "PUT",
-            "/api/realms/acme/apps/mobile/auth/oauth/providers/google",
+            "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
             Some(&master_tok),
             Some(&provider_body()),
         ))
@@ -4652,7 +4678,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "PUT",
-                "/api/realms/acme/apps/mobile/auth/oauth/providers/google",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
                 Some(&master_tok),
                 Some(&body),
             ))
@@ -4665,7 +4691,7 @@ mod tests {
         let pool = state
             .apps
             .pool_for(
-                &rustbase_core::RealmId::from("acme".to_string()),
+                &rustbase_core::WorkspaceId::from("acme".to_string()),
                 &rustbase_core::AppId::from("mobile".to_string()),
             )
             .await
@@ -4683,7 +4709,7 @@ mod tests {
         let detail = json_body(
             app.oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/auth/oauth/providers/google",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
                 Some(&master_tok),
                 None,
             ))
@@ -4696,7 +4722,7 @@ mod tests {
 
     #[tokio::test]
     async fn oauth_admin_put_without_secret_on_create_returns_400() {
-        let (state, _dir, master_id, _) = state_with_realm_and_admin().await;
+        let (state, _dir, master_id, _) = state_with_workspace_and_admin().await;
         let master_tok = master_token(&state, &master_id);
         let mut body = provider_body();
         body.as_object_mut().unwrap().remove("client_secret");
@@ -4704,7 +4730,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "PUT",
-                "/api/realms/acme/apps/mobile/auth/oauth/providers/google",
+                "/api/workspaces/acme/apps/mobile/auth/oauth/providers/google",
                 Some(&master_tok),
                 Some(&body),
             ))
@@ -4715,15 +4741,15 @@ mod tests {
 
     // ------------- admin user management -------------
 
-    /// Bootstrap: realm with two pre-registered end users + a
-    /// realm-admin token. Helper to keep the user-admin tests short.
+    /// Bootstrap: workspace with two pre-registered end users + a
+    /// workspace-admin token. Helper to keep the user-admin tests short.
     async fn state_with_two_users() -> (AppState, tempfile::TempDir, String) {
-        let (state, dir, _, realm_admin_id) = state_with_realm_and_admin().await;
-        let tok = realm_token(&state, "acme", &realm_admin_id);
+        let (state, dir, _, workspace_admin_id) = state_with_workspace_and_admin().await;
+        let tok = workspace_token(&state, "acme", &workspace_admin_id);
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps/mobile/auth/users/register",
+            "/api/workspaces/acme/apps/mobile/auth/users/register",
             None,
             Some(&serde_json::json!({"email":"alice@acme.com","password":"alicepass1"})),
         ))
@@ -4732,7 +4758,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps/mobile/auth/users/register",
+            "/api/workspaces/acme/apps/mobile/auth/users/register",
             None,
             Some(&serde_json::json!({"email":"bob@acme.com","password":"bobpass1"})),
         ))
@@ -4748,7 +4774,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/users?per_page=10",
+                "/api/workspaces/acme/apps/mobile/users?per_page=10",
                 Some(&tok),
                 None,
             ))
@@ -4763,7 +4789,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/users?q=alice",
+                "/api/workspaces/acme/apps/mobile/users?q=alice",
                 Some(&tok),
                 None,
             ))
@@ -4782,7 +4808,7 @@ mod tests {
         let list = json_body(
             app.oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/users?q=alice",
+                "/api/workspaces/acme/apps/mobile/users?q=alice",
                 Some(&tok),
                 None,
             ))
@@ -4796,7 +4822,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                &format!("/api/realms/acme/apps/mobile/users/{alice_id}"),
+                &format!("/api/workspaces/acme/apps/mobile/users/{alice_id}"),
                 Some(&tok),
                 None,
             ))
@@ -4818,7 +4844,7 @@ mod tests {
         let list = json_body(
             app.oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/users?q=alice",
+                "/api/workspaces/acme/apps/mobile/users?q=alice",
                 Some(&tok),
                 None,
             ))
@@ -4832,7 +4858,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "PATCH",
-                &format!("/api/realms/acme/apps/mobile/users/{alice_id}/verify"),
+                &format!("/api/workspaces/acme/apps/mobile/users/{alice_id}/verify"),
                 Some(&tok),
                 Some(&serde_json::json!({})),
             ))
@@ -4844,7 +4870,7 @@ mod tests {
         let detail = json_body(
             app.oneshot(req_with_auth(
                 "GET",
-                &format!("/api/realms/acme/apps/mobile/users/{alice_id}"),
+                &format!("/api/workspaces/acme/apps/mobile/users/{alice_id}"),
                 Some(&tok),
                 None,
             ))
@@ -4862,7 +4888,7 @@ mod tests {
         let alice_id = json_body(
             app.oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/users?q=alice",
+                "/api/workspaces/acme/apps/mobile/users?q=alice",
                 Some(&tok),
                 None,
             ))
@@ -4878,7 +4904,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "DELETE",
-                &format!("/api/realms/acme/apps/mobile/users/{alice_id}"),
+                &format!("/api/workspaces/acme/apps/mobile/users/{alice_id}"),
                 Some(&tok),
                 None,
             ))
@@ -4890,7 +4916,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "DELETE",
-                &format!("/api/realms/acme/apps/mobile/users/{alice_id}"),
+                &format!("/api/workspaces/acme/apps/mobile/users/{alice_id}"),
                 Some(&tok),
                 None,
             ))
@@ -4903,7 +4929,7 @@ mod tests {
         let list = json_body(
             app.oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/users",
+                "/api/workspaces/acme/apps/mobile/users",
                 Some(&tok),
                 None,
             ))
@@ -4920,7 +4946,7 @@ mod tests {
         let pool = state
             .apps
             .pool_for(
-                &rustbase_core::RealmId::from("acme".to_string()),
+                &rustbase_core::WorkspaceId::from("acme".to_string()),
                 &rustbase_core::AppId::from("mobile".to_string()),
             )
             .await
@@ -4944,7 +4970,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "DELETE",
-                &format!("/api/realms/acme/apps/mobile/users/{}/totp", alice.id),
+                &format!("/api/workspaces/acme/apps/mobile/users/{}/totp", alice.id),
                 Some(&tok),
                 None,
             ))
@@ -4967,7 +4993,7 @@ mod tests {
             build_router(state.clone())
                 .oneshot(req_with_auth(
                     "POST",
-                    "/api/realms/acme/apps/mobile/auth/users/login",
+                    "/api/workspaces/acme/apps/mobile/auth/users/login",
                     None,
                     Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
                 ))
@@ -4983,7 +5009,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/users",
+                "/api/workspaces/acme/apps/mobile/users",
                 Some(&user_tok),
                 None,
             ))
@@ -4994,15 +5020,15 @@ mod tests {
 
     // ------------- hook source file CRUD -------------
 
-    /// Bootstrap to: realm 'acme' + app 'mobile' (no hooks yet). Returns
-    /// (state, dir, realm_admin_token).
+    /// Bootstrap to: workspace 'acme' + app 'mobile' (no hooks yet). Returns
+    /// (state, dir, workspace_admin_token).
     async fn state_with_app() -> (AppState, tempfile::TempDir, String) {
-        let (state, dir, _, realm_admin_id) = state_with_realm_and_admin().await;
-        let tok = realm_token(&state, "acme", &realm_admin_id);
+        let (state, dir, _, workspace_admin_id) = state_with_workspace_and_admin().await;
+        let tok = workspace_token(&state, "acme", &workspace_admin_id);
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps",
+            "/api/workspaces/acme/apps",
             Some(&tok),
             Some(&serde_json::json!({"id":"mobile","name":"M"})),
         ))
@@ -5018,7 +5044,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/hooks",
+                "/api/workspaces/acme/apps/mobile/hooks",
                 Some(&tok),
                 None,
             ))
@@ -5039,7 +5065,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "PUT",
-                "/api/realms/acme/apps/mobile/hooks/log.js",
+                "/api/workspaces/acme/apps/mobile/hooks/log.js",
                 Some(&tok),
                 Some(&serde_json::json!({"source": src})),
             ))
@@ -5064,7 +5090,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/hooks/log.js",
+                "/api/workspaces/acme/apps/mobile/hooks/log.js",
                 Some(&tok),
                 None,
             ))
@@ -5087,7 +5113,7 @@ mod tests {
             let resp = app
                 .oneshot(req_with_auth(
                     "PUT",
-                    &format!("/api/realms/acme/apps/mobile/hooks/{encoded}"),
+                    &format!("/api/workspaces/acme/apps/mobile/hooks/{encoded}"),
                     Some(&tok),
                     Some(&serde_json::json!({"source": ""})),
                 ))
@@ -5107,7 +5133,7 @@ mod tests {
             let resp = app
                 .oneshot(req_with_auth(
                     "PUT",
-                    &format!("/api/realms/acme/apps/mobile/hooks/{name}"),
+                    &format!("/api/workspaces/acme/apps/mobile/hooks/{name}"),
                     Some(&tok),
                     Some(&serde_json::json!({"source": src})),
                 ))
@@ -5120,7 +5146,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/hooks",
+                "/api/workspaces/acme/apps/mobile/hooks",
                 Some(&tok),
                 None,
             ))
@@ -5141,7 +5167,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "PUT",
-            "/api/realms/acme/apps/mobile/hooks/keep.js",
+            "/api/workspaces/acme/apps/mobile/hooks/keep.js",
             Some(&tok),
             Some(&serde_json::json!({"source": "// noop"})),
         ))
@@ -5152,7 +5178,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "DELETE",
-                "/api/realms/acme/apps/mobile/hooks/keep.js",
+                "/api/workspaces/acme/apps/mobile/hooks/keep.js",
                 Some(&tok),
                 None,
             ))
@@ -5170,7 +5196,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/hooks/keep.js",
+                "/api/workspaces/acme/apps/mobile/hooks/keep.js",
                 Some(&tok),
                 None,
             ))
@@ -5186,7 +5212,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "PUT",
-                "/api/realms/acme/apps/mobile/hooks/broken.js",
+                "/api/workspaces/acme/apps/mobile/hooks/broken.js",
                 Some(&tok),
                 // Unterminated string — script eval will throw.
                 Some(&serde_json::json!({"source": "console.log('"})),
@@ -5208,7 +5234,7 @@ mod tests {
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "POST",
-            "/api/realms/acme/apps/mobile/auth/users/register",
+            "/api/workspaces/acme/apps/mobile/auth/users/register",
             None,
             Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
         ))
@@ -5218,7 +5244,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "POST",
-                "/api/realms/acme/apps/mobile/auth/users/login",
+                "/api/workspaces/acme/apps/mobile/auth/users/login",
                 None,
                 Some(&serde_json::json!({"email":"u@acme.com","password":"userpass1"})),
             ))
@@ -5233,7 +5259,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/apps/mobile/hooks",
+                "/api/workspaces/acme/apps/mobile/hooks",
                 Some(&user_tok),
                 None,
             ))
@@ -5331,14 +5357,14 @@ mod tests {
 
     #[tokio::test]
     async fn system_audit_requires_master() {
-        let (state, _dir, _, realm_admin_id) = state_with_realm_and_admin().await;
-        let realm_tok = realm_token(&state, "acme", &realm_admin_id);
+        let (state, _dir, _, workspace_admin_id) = state_with_workspace_and_admin().await;
+        let workspace_tok = workspace_token(&state, "acme", &workspace_admin_id);
         let app = build_router(state);
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
                 "/api/system/audit",
-                Some(&realm_tok),
+                Some(&workspace_tok),
                 None,
             ))
             .await
@@ -5347,13 +5373,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn realm_audit_lists_entries_after_clamp() {
-        // Tightening a master bound auto-clamps any realm value that
-        // falls outside it AND writes "policy_clamped" into the realm's
+    async fn workspace_audit_lists_entries_after_clamp() {
+        // Tightening a master bound auto-clamps any workspace value that
+        // falls outside it AND writes "policy_clamped" into the workspace's
         // audit log. That's the cascade we want to surface in the UI.
-        let (state, _dir, master_id, realm_admin_id) = state_with_realm_and_admin().await;
+        let (state, _dir, master_id, workspace_admin_id) = state_with_workspace_and_admin().await;
         let master_tok = master_token(&state, &master_id);
-        let realm_tok = realm_token(&state, "acme", &realm_admin_id);
+        let workspace_tok = workspace_token(&state, "acme", &workspace_admin_id);
 
         // 1. master opens the bound wide
         let app = build_router(state.clone());
@@ -5365,18 +5391,18 @@ mod tests {
         ))
         .await
         .unwrap();
-        // 2. realm picks a tighter range inside the master bound
-        // (realm bound must fit inside the master bound)
+        // 2. workspace picks a tighter range inside the master bound
+        // (workspace bound must fit inside the master bound)
         let app = build_router(state.clone());
         app.oneshot(req_with_auth(
             "PUT",
-            "/api/realms/acme/policies/password.length",
-            Some(&realm_tok),
+            "/api/workspaces/acme/policies/password.length",
+            Some(&workspace_tok),
             Some(&serde_json::json!({"kind":"range","min":6,"max":12})),
         ))
         .await
         .unwrap();
-        // 3. master tightens the upper bound below the realm value
+        // 3. master tightens the upper bound below the workspace value
         let app = build_router(state.clone());
         let resp = app
             .oneshot(req_with_auth(
@@ -5389,13 +5415,13 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
 
-        // realm-scoped audit should now mention policy_clamped
+        // workspace-scoped audit should now mention policy_clamped
         let app = build_router(state);
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/acme/audit",
-                Some(&realm_tok),
+                "/api/workspaces/acme/audit",
+                Some(&workspace_tok),
                 None,
             ))
             .await
@@ -5419,7 +5445,7 @@ mod tests {
         let resp = app
             .oneshot(req_with_auth(
                 "GET",
-                "/api/realms/nope/audit",
+                "/api/workspaces/nope/audit",
                 Some(&tok),
                 None,
             ))

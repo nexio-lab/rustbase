@@ -2,10 +2,10 @@
 //!
 //! - `SystemPool`: a single pool for `data/system.db`, opened at boot and
 //!   always live.
-//! - `RealmPoolManager`: LRU-bounded cache of `RealmId → SqlitePool` for
-//!   `data/realms/<id>/realm.db`.
-//! - `AppPoolManager`: LRU-bounded cache of `(RealmId, AppId) → SqlitePool`
-//!   for `data/realms/<id>/apps/<id>/data.db`.
+//! - `WorkspacePoolManager`: LRU-bounded cache of `WorkspaceId → SqlitePool` for
+//!   `data/workspaces/<id>/workspace.db`.
+//! - `AppPoolManager`: LRU-bounded cache of `(WorkspaceId, AppId) → SqlitePool`
+//!   for `data/workspaces/<id>/apps/<id>/data.db`.
 //!
 //! Every pool is opened with WAL mode, `foreign_keys=ON`, a 5s busy
 //! timeout, and `synchronous=NORMAL`.
@@ -14,7 +14,7 @@ use crate::error::{DbError, Result};
 use crate::paths;
 use lru::LruCache;
 use parking_lot::Mutex;
-use rustbase_core::{AppId, RealmId};
+use rustbase_core::{AppId, WorkspaceId};
 use sqlx::{
     SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
@@ -80,13 +80,13 @@ impl SystemPool {
     }
 }
 
-/// LRU-bounded cache of realm-scoped SQLite pools.
-pub struct RealmPoolManager {
+/// LRU-bounded cache of workspace-scoped SQLite pools.
+pub struct WorkspacePoolManager {
     data_dir: PathBuf,
-    cache: Mutex<LruCache<RealmId, SqlitePool>>,
+    cache: Mutex<LruCache<WorkspaceId, SqlitePool>>,
 }
 
-impl RealmPoolManager {
+impl WorkspacePoolManager {
     pub fn new(data_dir: PathBuf, cap: usize) -> Self {
         // Saturate at 1 if the caller passes 0; cap.max(1) is provably
         // >= 1, but the explicit MIN fallback keeps this `expect`-free.
@@ -97,26 +97,26 @@ impl RealmPoolManager {
         }
     }
 
-    /// Return the pool for `realm`, opening (and caching) one if necessary.
-    /// Concurrent first-time opens for the same realm may briefly hold two
+    /// Return the pool for `workspace`, opening (and caching) one if necessary.
+    /// Concurrent first-time opens for the same workspace may briefly hold two
     /// pools; SQLite tolerates this under WAL mode and the loser is dropped
     /// at the next `get`.
-    pub async fn pool_for(&self, realm: &RealmId) -> Result<SqlitePool> {
-        if let Some(pool) = self.cache.lock().get(realm).cloned() {
+    pub async fn pool_for(&self, workspace: &WorkspaceId) -> Result<SqlitePool> {
+        if let Some(pool) = self.cache.lock().get(workspace).cloned() {
             return Ok(pool);
         }
-        let path = paths::realm_db(&self.data_dir, realm);
+        let path = paths::workspace_db(&self.data_dir, workspace);
         let pool = open_pool(&path).await?;
         let mut cache = self.cache.lock();
-        if let Some(existing) = cache.get(realm).cloned() {
+        if let Some(existing) = cache.get(workspace).cloned() {
             return Ok(existing);
         }
-        cache.put(realm.clone(), pool.clone());
+        cache.put(workspace.clone(), pool.clone());
         Ok(pool)
     }
 
-    pub fn evict(&self, realm: &RealmId) {
-        self.cache.lock().pop(realm);
+    pub fn evict(&self, workspace: &WorkspaceId) {
+        self.cache.lock().pop(workspace);
     }
 
     pub fn len(&self) -> usize {
@@ -131,7 +131,7 @@ impl RealmPoolManager {
 /// LRU-bounded cache of app-scoped SQLite pools.
 pub struct AppPoolManager {
     data_dir: PathBuf,
-    cache: Mutex<LruCache<(RealmId, AppId), SqlitePool>>,
+    cache: Mutex<LruCache<(WorkspaceId, AppId), SqlitePool>>,
 }
 
 impl AppPoolManager {
@@ -145,12 +145,12 @@ impl AppPoolManager {
         }
     }
 
-    pub async fn pool_for(&self, realm: &RealmId, app: &AppId) -> Result<SqlitePool> {
-        let key = (realm.clone(), app.clone());
+    pub async fn pool_for(&self, workspace: &WorkspaceId, app: &AppId) -> Result<SqlitePool> {
+        let key = (workspace.clone(), app.clone());
         if let Some(pool) = self.cache.lock().get(&key).cloned() {
             return Ok(pool);
         }
-        let path = paths::app_db(&self.data_dir, realm, app);
+        let path = paths::app_db(&self.data_dir, workspace, app);
         let pool = open_pool(&path).await?;
         let mut cache = self.cache.lock();
         if let Some(existing) = cache.get(&key).cloned() {
@@ -160,18 +160,24 @@ impl AppPoolManager {
         Ok(pool)
     }
 
-    pub fn evict(&self, realm: &RealmId, app: &AppId) {
-        let key = (realm.clone(), app.clone());
+    pub fn evict(&self, workspace: &WorkspaceId, app: &AppId) {
+        let key = (workspace.clone(), app.clone());
         self.cache.lock().pop(&key);
     }
 
-    /// Drop every cached pool whose key starts with `realm`. Used when a
-    /// realm is being cascade-deleted.
-    pub fn evict_realm(&self, realm: &RealmId) {
+    /// Drop every cached pool whose key starts with `workspace`. Used when a
+    /// workspace is being cascade-deleted.
+    pub fn evict_realm(&self, workspace: &WorkspaceId) {
         let mut cache = self.cache.lock();
         let keys: Vec<_> = cache
             .iter()
-            .filter_map(|(k, _)| if &k.0 == realm { Some(k.clone()) } else { None })
+            .filter_map(|(k, _)| {
+                if &k.0 == workspace {
+                    Some(k.clone())
+                } else {
+                    None
+                }
+            })
             .collect();
         for k in keys {
             cache.pop(&k);
@@ -221,25 +227,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn realm_pool_manager_caches_and_evicts() {
+    async fn workspace_pool_manager_caches_and_evicts() {
         let dir = tempdir().unwrap();
-        let mgr = RealmPoolManager::new(dir.path().to_path_buf(), 2);
+        let mgr = WorkspacePoolManager::new(dir.path().to_path_buf(), 2);
 
-        let _p1 = mgr.pool_for(&RealmId::from("a")).await.unwrap();
-        let _p2 = mgr.pool_for(&RealmId::from("b")).await.unwrap();
+        let _p1 = mgr.pool_for(&WorkspaceId::from("a")).await.unwrap();
+        let _p2 = mgr.pool_for(&WorkspaceId::from("b")).await.unwrap();
         assert_eq!(mgr.len(), 2);
 
         // adding a third should evict the LRU
-        let _p3 = mgr.pool_for(&RealmId::from("c")).await.unwrap();
+        let _p3 = mgr.pool_for(&WorkspaceId::from("c")).await.unwrap();
         assert_eq!(mgr.len(), 2);
     }
 
     #[tokio::test]
-    async fn realm_pool_manager_does_not_reopen_on_second_call() {
+    async fn workspace_pool_manager_does_not_reopen_on_second_call() {
         let dir = tempdir().unwrap();
-        let mgr = RealmPoolManager::new(dir.path().to_path_buf(), 4);
-        let _a1 = mgr.pool_for(&RealmId::from("acme")).await.unwrap();
-        let _a2 = mgr.pool_for(&RealmId::from("acme")).await.unwrap();
+        let mgr = WorkspacePoolManager::new(dir.path().to_path_buf(), 4);
+        let _a1 = mgr.pool_for(&WorkspaceId::from("acme")).await.unwrap();
+        let _a2 = mgr.pool_for(&WorkspaceId::from("acme")).await.unwrap();
         assert_eq!(mgr.len(), 1);
     }
 
@@ -249,15 +255,15 @@ mod tests {
         let mgr = AppPoolManager::new(dir.path().to_path_buf(), 4);
 
         let _a = mgr
-            .pool_for(&RealmId::from("acme"), &AppId::from("web"))
+            .pool_for(&WorkspaceId::from("acme"), &AppId::from("web"))
             .await
             .unwrap();
         let _b = mgr
-            .pool_for(&RealmId::from("acme"), &AppId::from("mobile"))
+            .pool_for(&WorkspaceId::from("acme"), &AppId::from("mobile"))
             .await
             .unwrap();
         let _c = mgr
-            .pool_for(&RealmId::from("widgetco"), &AppId::from("web"))
+            .pool_for(&WorkspaceId::from("widgetco"), &AppId::from("web"))
             .await
             .unwrap();
         assert_eq!(mgr.len(), 3);

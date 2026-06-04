@@ -2,7 +2,7 @@
 
 RustBase embeds [`rquickjs`](https://github.com/DelSkayn/rquickjs) — a QuickJS Rust binding — to run JavaScript and (transpiled) TypeScript hook files at runtime. No Node.js is required; the QuickJS engine ships with the binary.
 
-Drop a file into `data/hooks/<realm>/<app>/` and a hook lights up the next time the app's runtime loads (which happens on app creation, on server boot, and on every dashboard **Reload** or write through the [hooks REST endpoint](/reference/rest-api#hook-source-files)).
+Drop a file into `data/hooks/<workspace>/<app>/` and a hook lights up the next time the app's runtime loads (which happens on app creation, on server boot, and on every dashboard **Reload** or write through the [hooks REST endpoint](/reference/rest-api#hook-source-files)).
 
 ## Hello, hook
 
@@ -51,7 +51,7 @@ $app.routerAdd("GET", "/hello", (ctx) => {
 Mount point:
 
 ```http
-ANY /api/realms/<realm>/apps/<app>/custom/<path>
+ANY /api/workspaces/<workspace>/apps/<app>/custom/<path>
 ```
 
 `ctx` has `{ method, path, query, headers, body, auth }`. Returning `undefined`/`null` ⇒ 204. Returning `{ status, body, headers }` is sent as-is. Throwing returns a 500 with the error message in `body.error`.
@@ -107,7 +107,7 @@ $app.onRecordAfterCreate("orders", (rec) => {
 });
 ```
 
-The mailer is **rate-quoted per (realm, app)** — a runaway loop can't flood the relay. The cap is the `mailer.daily_cap` policy.
+The mailer is **rate-quoted per (workspace, app)** — a runaway loop can't flood the relay. The cap is the `mailer.daily_cap` policy.
 
 When no SMTP relay is configured, the server falls back to a `LogMailer` that traces the message but doesn't deliver it. Fine for dev; **don't** ship to prod without `[mail.smtp]` set.
 
@@ -123,7 +123,7 @@ Anything published lands in the realtime broker and is delivered to SSE/WebSocke
 
 ## Sandbox
 
-Each `(realm, app)` runs in its own QuickJS context with limits **bounded by [hierarchical policies](/concepts/hierarchical-policies)**:
+Each `(workspace, app)` runs in its own QuickJS context with limits **bounded by [hierarchical policies](/concepts/hierarchical-policies)**:
 
 | Policy | Meaning |
 |---|---|

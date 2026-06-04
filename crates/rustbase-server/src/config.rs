@@ -24,7 +24,7 @@ pub struct ServerConfig {
     #[serde(default = "default_data_dir")]
     pub data_dir: PathBuf,
     #[serde(default = "default_realm_pool_cap")]
-    pub realm_pool_cap: usize,
+    pub workspace_pool_cap: usize,
     #[serde(default = "default_app_pool_cap")]
     pub app_pool_cap: usize,
     #[serde(default)]
@@ -252,7 +252,7 @@ impl Default for ServerConfig {
         Self {
             listen: default_listen(),
             data_dir: default_data_dir(),
-            realm_pool_cap: default_realm_pool_cap(),
+            workspace_pool_cap: default_realm_pool_cap(),
             app_pool_cap: default_app_pool_cap(),
             litestream: LitestreamConfig::default(),
             mail: MailConfig::default(),
@@ -273,7 +273,7 @@ pub fn load() -> Result<ServerConfig> {
             "data_dir",
             default_data_dir().to_string_lossy().into_owned(),
         )?
-        .set_default("realm_pool_cap", default_realm_pool_cap() as i64)?
+        .set_default("workspace_pool_cap", default_realm_pool_cap() as i64)?
         .set_default("app_pool_cap", default_app_pool_cap() as i64)?
         .set_default("litestream.enabled", false)?
         .set_default(

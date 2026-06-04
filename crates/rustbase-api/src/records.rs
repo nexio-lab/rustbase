@@ -1,15 +1,15 @@
 //! Record CRUD over the per-collection tables.
 //!
-//! - `POST   /api/realms/:realm/apps/:app/collections/:coll/records`         create
-//! - `GET    /api/realms/:realm/apps/:app/collections/:coll/records`         paginated list
-//! - `GET    /api/realms/:realm/apps/:app/collections/:coll/records/:id`     fetch one
-//! - `PATCH  /api/realms/:realm/apps/:app/collections/:coll/records/:id`     partial update
-//! - `DELETE /api/realms/:realm/apps/:app/collections/:coll/records/:id`     delete
+//! - `POST   /api/workspaces/:workspace/apps/:app/collections/:coll/records`         create
+//! - `GET    /api/workspaces/:workspace/apps/:app/collections/:coll/records`         paginated list
+//! - `GET    /api/workspaces/:workspace/apps/:app/collections/:coll/records/:id`     fetch one
+//! - `PATCH  /api/workspaces/:workspace/apps/:app/collections/:coll/records/:id`     partial update
+//! - `DELETE /api/workspaces/:workspace/apps/:app/collections/:coll/records/:id`     delete
 //!
 //! Authorization is per verb:
-//!   - Admin tokens (master / realm-admin / app-admin matching the
+//!   - Admin tokens (master / workspace-admin / app-admin matching the
 //!     path) always pass.
-//!   - End-user tokens are scoped to one realm. They pass only when
+//!   - End-user tokens are scoped to one workspace. They pass only when
 //!     the collection's access rule for the verb is set to an "open"
 //!     filter (empty string or `true`). Other rule strings are
 //!     reserved for the substitution-aware evaluator landing on a
@@ -21,15 +21,16 @@ use axum::{
     http::StatusCode,
 };
 use rustbase_core::{
-    AppId, CoreError, FilterNode, RealmId, Record, RuleContext, Schema, parse_filter, rule_template,
+    AppId, CoreError, FilterNode, Record, RuleContext, Schema, WorkspaceId, parse_filter,
+    rule_template,
 };
 use rustbase_db::{
     DbError, ListPage, ListedRecords,
     access_rules::{AccessAction, RuleDecision, classify_rule, get_rule},
     apps::find_app,
     collections::find_collection,
-    realms::find_realm,
     records::{create_record, delete_record, list_records, update_record},
+    workspaces::find_realm,
 };
 use rustbase_realtime::{RealtimeEvent, SubscriptionKey};
 use rustbase_runtime::{HookAuth, HookEvent, HookRequest};
@@ -96,14 +97,14 @@ pub struct UpdateRecordRequest {
 pub async fn list(
     auth: PrincipalAuth,
     State(state): State<AppState>,
-    Path((realm, app, coll)): Path<(String, String, String)>,
+    Path((workspace, app, coll)): Path<(String, String, String)>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<ListResponse>, ApiError> {
-    let (app_pool, schema) = open_app_and_schema(&state, &realm, &app, &coll).await?;
+    let (app_pool, schema) = open_app_and_schema(&state, &workspace, &app, &coll).await?;
     let rule_filter = authorize_record_action(
         &auth,
         &app_pool,
-        &realm,
+        &workspace,
         &app,
         &coll,
         AccessAction::List,
@@ -186,14 +187,14 @@ fn check_field(name: &str, known: &std::collections::HashSet<&str>) -> Result<()
 pub async fn create(
     auth: PrincipalAuth,
     State(state): State<AppState>,
-    Path((realm, app, coll)): Path<(String, String, String)>,
+    Path((workspace, app, coll)): Path<(String, String, String)>,
     Json(req): Json<CreateRecordRequest>,
 ) -> Result<(StatusCode, Json<Record>), ApiError> {
-    let (app_pool, schema) = open_app_and_schema(&state, &realm, &app, &coll).await?;
+    let (app_pool, schema) = open_app_and_schema(&state, &workspace, &app, &coll).await?;
     let rule_filter = authorize_record_action(
         &auth,
         &app_pool,
-        &realm,
+        &workspace,
         &app,
         &coll,
         AccessAction::Create,
@@ -208,22 +209,29 @@ pub async fn create(
     }
 
     // before-hook: may mutate fields, throw to veto.
-    let request = hook_request(&auth, &realm, &app, &coll);
+    let request = hook_request(&auth, &workspace, &app, &coll);
     let fields = state
         .hooks
-        .dispatch_before_create(&realm, &app, &coll, &request, req.fields)
+        .dispatch_before_create(&workspace, &app, &coll, &request, req.fields)
         .await?;
 
     let rec = create_record(&app_pool, &schema, fields).await?;
     state.broker.publish(
-        &SubscriptionKey::new(&realm, &app, &coll),
+        &SubscriptionKey::new(&workspace, &app, &coll),
         RealtimeEvent::RecordCreated {
             record: rec.clone(),
         },
     );
     if let Err(e) = state
         .hooks
-        .dispatch(&realm, &app, &coll, HookEvent::AfterCreate, &request, &rec)
+        .dispatch(
+            &workspace,
+            &app,
+            &coll,
+            HookEvent::AfterCreate,
+            &request,
+            &rec,
+        )
         .await
     {
         tracing::error!(error = %e, "hook dispatch (after_create) failed");
@@ -234,13 +242,13 @@ pub async fn create(
 pub async fn get(
     auth: PrincipalAuth,
     State(state): State<AppState>,
-    Path((realm, app, coll, id)): Path<(String, String, String, String)>,
+    Path((workspace, app, coll, id)): Path<(String, String, String, String)>,
 ) -> Result<Json<Record>, ApiError> {
-    let (app_pool, schema) = open_app_and_schema(&state, &realm, &app, &coll).await?;
+    let (app_pool, schema) = open_app_and_schema(&state, &workspace, &app, &coll).await?;
     let rule_filter = authorize_record_action(
         &auth,
         &app_pool,
-        &realm,
+        &workspace,
         &app,
         &coll,
         AccessAction::View,
@@ -279,14 +287,14 @@ pub async fn get(
 pub async fn update(
     auth: PrincipalAuth,
     State(state): State<AppState>,
-    Path((realm, app, coll, id)): Path<(String, String, String, String)>,
+    Path((workspace, app, coll, id)): Path<(String, String, String, String)>,
     Json(req): Json<UpdateRecordRequest>,
 ) -> Result<Json<Record>, ApiError> {
-    let (app_pool, schema) = open_app_and_schema(&state, &realm, &app, &coll).await?;
+    let (app_pool, schema) = open_app_and_schema(&state, &workspace, &app, &coll).await?;
     let rule_filter = authorize_record_action(
         &auth,
         &app_pool,
-        &realm,
+        &workspace,
         &app,
         &coll,
         AccessAction::Update,
@@ -320,10 +328,10 @@ pub async fn update(
     };
 
     // before-hook: may mutate the patch or throw to veto.
-    let request = hook_request(&auth, &realm, &app, &coll);
+    let request = hook_request(&auth, &workspace, &app, &coll);
     let patch = state
         .hooks
-        .dispatch_before_update(&realm, &app, &coll, &request, &existing, req.fields)
+        .dispatch_before_update(&workspace, &app, &coll, &request, &existing, req.fields)
         .await?;
 
     let rec = update_record(&app_pool, &schema, &id, patch)
@@ -336,14 +344,21 @@ pub async fn update(
             other => ApiError::from(other),
         })?;
     state.broker.publish(
-        &SubscriptionKey::new(&realm, &app, &coll),
+        &SubscriptionKey::new(&workspace, &app, &coll),
         RealtimeEvent::RecordUpdated {
             record: rec.clone(),
         },
     );
     if let Err(e) = state
         .hooks
-        .dispatch(&realm, &app, &coll, HookEvent::AfterUpdate, &request, &rec)
+        .dispatch(
+            &workspace,
+            &app,
+            &coll,
+            HookEvent::AfterUpdate,
+            &request,
+            &rec,
+        )
         .await
     {
         tracing::error!(error = %e, "hook dispatch (after_update) failed");
@@ -354,13 +369,13 @@ pub async fn update(
 pub async fn delete(
     auth: PrincipalAuth,
     State(state): State<AppState>,
-    Path((realm, app, coll, id)): Path<(String, String, String, String)>,
+    Path((workspace, app, coll, id)): Path<(String, String, String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    let (app_pool, schema) = open_app_and_schema(&state, &realm, &app, &coll).await?;
+    let (app_pool, schema) = open_app_and_schema(&state, &workspace, &app, &coll).await?;
     let rule_filter = authorize_record_action(
         &auth,
         &app_pool,
-        &realm,
+        &workspace,
         &app,
         &coll,
         AccessAction::Delete,
@@ -392,10 +407,10 @@ pub async fn delete(
     };
 
     // before-hook: may throw to veto.
-    let request = hook_request(&auth, &realm, &app, &coll);
+    let request = hook_request(&auth, &workspace, &app, &coll);
     state
         .hooks
-        .dispatch_before_delete(&realm, &app, &coll, &request, &existing)
+        .dispatch_before_delete(&workspace, &app, &coll, &request, &existing)
         .await?;
 
     delete_record(&app_pool, &schema, &id)
@@ -408,13 +423,13 @@ pub async fn delete(
             other => ApiError::from(other),
         })?;
     state.broker.publish(
-        &SubscriptionKey::new(&realm, &app, &coll),
+        &SubscriptionKey::new(&workspace, &app, &coll),
         RealtimeEvent::RecordDeleted { id: id.clone() },
     );
     if let Err(e) = state
         .hooks
         .dispatch(
-            &realm,
+            &workspace,
             &app,
             &coll,
             HookEvent::AfterDelete,
@@ -436,21 +451,21 @@ pub async fn delete(
 ///   evaluates true; the caller must AND `node` into its records
 ///   query so the SQL layer filters rows down to those the rule
 ///   matches. Returned only when the rule is a template AND the
-///   principal is a user-of-realm.
+///   principal is a user-of-workspace.
 /// - `Err(Forbidden)` — denied outright.
 async fn authorize_record_action(
     auth: &PrincipalAuth,
     app_pool: &sqlx::SqlitePool,
-    realm: &str,
+    workspace: &str,
     app: &str,
     coll: &str,
     action: AccessAction,
     schema: &Schema,
 ) -> Result<Option<FilterNode>, ApiError> {
-    if auth.is_admin_for_app(realm, app) {
+    if auth.is_admin_for_app(workspace, app) {
         return Ok(None);
     }
-    if auth.user_realm() != Some(realm) {
+    if auth.user_workspace() != Some(workspace) {
         return Err(ApiError::Core(CoreError::Forbidden));
     }
 
@@ -462,7 +477,7 @@ async fn authorize_record_action(
             let ctx = RuleContext {
                 user_id: Some(auth.subject_id.clone()),
                 user_email: None, // populated in a later branch when the user record is loaded
-                user_realm: auth.user_realm().map(str::to_string),
+                user_workspace: auth.user_workspace().map(str::to_string),
             };
             let resolved = rule_template::substitute(&template, &ctx).map_err(ApiError::Core)?;
             let node = parse_filter(&resolved).map_err(ApiError::Core)?;
@@ -474,25 +489,27 @@ async fn authorize_record_action(
 
 async fn open_app_and_schema(
     state: &AppState,
-    realm: &str,
+    workspace: &str,
     app: &str,
     coll: &str,
 ) -> Result<(sqlx::SqlitePool, rustbase_core::Schema), ApiError> {
-    find_realm(state.system.pool(), realm)
+    find_realm(state.system.pool(), workspace)
         .await?
-        .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.to_string())))?;
+        .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(
+            workspace.to_string(),
+        )))?;
 
-    let realm_id = RealmId::from(realm.to_string());
-    let realm_pool = state.realms.pool_for(&realm_id).await?;
-    find_app(&realm_pool, app).await?.ok_or_else(|| {
+    let workspace_id = WorkspaceId::from(workspace.to_string());
+    let workspace_pool = state.workspaces.pool_for(&workspace_id).await?;
+    find_app(&workspace_pool, app).await?.ok_or_else(|| {
         ApiError::Core(CoreError::AppNotFound {
-            realm: realm.to_string(),
+            workspace: workspace.to_string(),
             app: app.to_string(),
         })
     })?;
 
     let app_id = AppId::from(app.to_string());
-    let app_pool = state.apps.pool_for(&realm_id, &app_id).await?;
+    let app_pool = state.apps.pool_for(&workspace_id, &app_id).await?;
     let collection = find_collection(&app_pool, coll).await?.ok_or_else(|| {
         ApiError::Core(CoreError::NotFound {
             collection: coll.to_string(),
@@ -504,10 +521,10 @@ async fn open_app_and_schema(
 
 /// Build a HookRequest from the authenticated principal + path scope.
 /// `$app.request` inside JS hooks reflects this.
-fn hook_request(auth: &PrincipalAuth, realm: &str, app: &str, coll: &str) -> HookRequest {
+fn hook_request(auth: &PrincipalAuth, workspace: &str, app: &str, coll: &str) -> HookRequest {
     let role = match auth.claims.role {
         rustbase_auth::TokenRole::MasterAdmin => "master_admin",
-        rustbase_auth::TokenRole::RealmAdmin => "realm_admin",
+        rustbase_auth::TokenRole::WorkspaceAdmin => "workspace_admin",
         rustbase_auth::TokenRole::AppAdmin => "app_admin",
         rustbase_auth::TokenRole::User => "user",
     }
@@ -516,9 +533,9 @@ fn hook_request(auth: &PrincipalAuth, realm: &str, app: &str, coll: &str) -> Hoo
         auth: Some(HookAuth {
             id: auth.subject_id.clone(),
             role,
-            realm: auth.claims.realm.clone(),
+            workspace: auth.claims.workspace.clone(),
         }),
-        realm: realm.to_string(),
+        workspace: workspace.to_string(),
         app: app.to_string(),
         collection: coll.to_string(),
     }

@@ -12,9 +12,9 @@ instances behind three reverse-proxy paths, three Postgres schemas with RLS,
 or three docker-compose stacks. You spend more time on the plumbing than the
 features.
 
-RustBase gives you one binary, one `data/` folder, and a `System → Realm → App`
+RustBase gives you one binary, one `data/` folder, and a `System → Workspace → App`
 hierarchy where each *app* is a fully isolated SQLite database. Add a new
-client = create a realm, create their apps. Delete a client = `rm -rf` their
+client = create a workspace, create their apps. Delete a client = `rm -rf` their
 folder. Backup = `tar`. No new container, no new domain, no new auth service
 per client.
 
@@ -91,11 +91,11 @@ The word is overloaded. RustBase's flavour:
 - **Physical isolation per app.** Each app's data is in its own SQLite file.
   No cross-app query is possible. A noisy app cannot drag a sibling app down
   via shared connection pool.
-- **Two grouping levels.** *Realm* groups apps under a single administrative
+- **Two grouping levels.** *Workspace* groups apps under a single administrative
   tenant (the agency / org). *App* groups data under a single product.
 - **End-users live per app.** A user registered against `acme/mobile` is a
   different identity than the same email against `acme/web`. This is the
-  current default; a realm-shared identity pool is on the v0.4 roadmap.
+  current default; a workspace-shared identity pool is on the v0.4 roadmap.
 
 What it is *not*:
 
@@ -103,7 +103,7 @@ What it is *not*:
 - Not "schema-per-tenant" (Postgres pattern).
 - Not "container-per-tenant" (Kubernetes pattern).
 - Not Salesforce-style "every customer is a tenant" — closer to "every
-  customer is a *realm*, every product they have is an *app*."
+  customer is a *workspace*, every product they have is an *app*."
 
 ## When to outgrow RustBase
 

@@ -13,10 +13,10 @@
 //! Bearer header isn't read at all here; the dashboard hits the
 //! endpoint with the cookies the browser already attaches.
 //!
-//! Realm + end-user logouts are intentionally out of scope for this
+//! Workspace + end-user logouts are intentionally out of scope for this
 //! endpoint: the cookie is path-scoped to `/_/auth`, so a browser
 //! that's only logged into the dashboard never sends an `rb_rt`
-//! cookie to `/api/...`. Realm/app SDK clients hold their refresh
+//! cookie to `/api/...`. Workspace/app SDK clients hold their refresh
 //! token in memory and just discard it client-side.
 
 use axum::{

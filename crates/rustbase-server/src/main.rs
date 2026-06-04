@@ -3,11 +3,11 @@ use axum::{Router, routing::get};
 use rustbase_api::{AppState, build_router};
 use rustbase_auth::{JwtIssuer, RevocationSet, RsaSigningKey, SigningKey, generate_rsa_with_pkcs8};
 use rustbase_db::{
-    AppPoolManager, RealmPoolManager, SYSTEM_MIGRATIONS, SystemPool,
+    AppPoolManager, SYSTEM_MIGRATIONS, SystemPool, WorkspacePoolManager,
     admins::{ensure_seed_master_admin, master_admin_is_initialized},
     apply_migrations,
-    realms::ensure_master_realm,
     secrets::{MASTER_RSA_PKCS8, MASTER_SIGNING_KEY, get_or_init_secret, get_secret, put_secret},
+    workspaces::ensure_master_realm,
 };
 use rustbase_realtime::RealtimeBroker;
 use rustbase_runtime::HookEngine;
@@ -154,9 +154,9 @@ async fn main() -> Result<()> {
     );
     let state = AppState {
         system: Arc::new(system),
-        realms: Arc::new(RealmPoolManager::new(
+        workspaces: Arc::new(WorkspacePoolManager::new(
             cfg.data_dir.clone(),
-            cfg.realm_pool_cap,
+            cfg.workspace_pool_cap,
         )),
         apps: Arc::new(AppPoolManager::new(cfg.data_dir.clone(), cfg.app_pool_cap)),
         revocations: RevocationSet::default(),
@@ -174,7 +174,7 @@ async fn main() -> Result<()> {
         cookie_secure: cfg.http.cookie_secure,
     };
 
-    // Load JS hooks for every (realm, app) that exists on disk.
+    // Load JS hooks for every (workspace, app) that exists on disk.
     if let Err(e) = load_all_hooks(&state).await {
         tracing::error!(error = %e, "loading hooks at boot failed; continuing without them");
     }
@@ -267,51 +267,51 @@ async fn dashboard_or_405(req: axum::extract::Request) -> axum::response::Respon
     StatusCode::METHOD_NOT_ALLOWED.into_response()
 }
 
-/// Walk every realm + app that exists in `system.db`, and load JS
-/// hooks from `data/hooks/<realm>/<app>/` if that directory exists.
+/// Walk every workspace + app that exists in `system.db`, and load JS
+/// hooks from `data/hooks/<workspace>/<app>/` if that directory exists.
 /// Apps without a hooks directory are simply skipped.
 async fn load_all_hooks(state: &rustbase_api::AppState) -> Result<()> {
-    use rustbase_core::{AppId, RealmId};
-    use rustbase_db::{apps::list_apps as db_list_apps, paths, realms::list_realms};
+    use rustbase_core::{AppId, WorkspaceId};
+    use rustbase_db::{apps::list_apps as db_list_apps, paths, workspaces::list_realms};
 
-    let realms = list_realms(state.system.pool()).await?;
-    for realm in realms {
-        let realm_id = RealmId::from(realm.id.clone());
-        // A realm row exists in system.db before its realm.db has been
+    let workspaces = list_realms(state.system.pool()).await?;
+    for workspace in workspaces {
+        let workspace_id = WorkspaceId::from(workspace.id.clone());
+        // A workspace row exists in system.db before its workspace.db has been
         // initialized (master is created at boot, before any app).
         // Skip rather than try to read a not-yet-migrated DB.
-        if !paths::realm_db(state.data_dir.as_ref(), &realm_id).exists() {
+        if !paths::workspace_db(state.data_dir.as_ref(), &workspace_id).exists() {
             continue;
         }
-        let realm_pool = state.realms.pool_for(&realm_id).await?;
-        let apps_in_realm = db_list_apps(&realm_pool).await?;
+        let workspace_pool = state.workspaces.pool_for(&workspace_id).await?;
+        let apps_in_realm = db_list_apps(&workspace_pool).await?;
         for app in apps_in_realm {
             let app_id = AppId::from(app.id.clone());
             let dir = state
                 .data_dir
                 .join("hooks")
-                .join(realm_id.as_str())
+                .join(workspace_id.as_str())
                 .join(app_id.as_str());
             let bridge = rustbase_api::hook_bridge::ApiBridge::new(
-                realm_id.clone(),
+                workspace_id.clone(),
                 app_id.clone(),
                 state.apps.clone(),
             )
             .into_sync();
             let quoted = Arc::new(rustbase_api::mailer::QuotedMailer::new(
                 state.mailer.clone(),
-                realm_id.clone(),
+                workspace_id.clone(),
                 app_id.clone(),
                 state.apps.clone(),
             )) as Arc<dyn rustbase_core::Mailer>;
             match state
                 .hooks
-                .load_app(&realm.id, &app.id, &dir, Some(bridge), Some(quoted))
+                .load_app(&workspace.id, &app.id, &dir, Some(bridge), Some(quoted))
                 .await
             {
                 Ok(n) if n > 0 => {
                     tracing::info!(
-                        realm = %realm.id,
+                        workspace = %workspace.id,
                         app = %app.id,
                         files = n,
                         "loaded JS hooks"
@@ -319,7 +319,7 @@ async fn load_all_hooks(state: &rustbase_api::AppState) -> Result<()> {
                 }
                 Ok(_) => {}
                 Err(e) => tracing::warn!(
-                    realm = %realm.id,
+                    workspace = %workspace.id,
                     app = %app.id,
                     error = %e,
                     "failed to load JS hooks"

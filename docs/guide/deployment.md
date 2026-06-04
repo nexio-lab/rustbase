@@ -268,7 +268,7 @@ WantedBy=multi-user.target
 ```
 
 The restore command is `litestream restore -config litestream.yml /path/to/the/db.db`.
-You restore each `*.db` separately — `system.db`, every realm's `realm.db`,
+You restore each `*.db` separately — `system.db`, every workspace's `workspace.db`,
 every app's `data.db`.
 
 ::: warning
@@ -348,7 +348,7 @@ a handful of low-traffic apps. The bottleneck before CPU is almost always
 SQLite write throughput — if a single app sustains >100 writes/sec on hot
 collections, profile before scaling out.
 
-The pool caps (`realm_pool_cap`, `app_pool_cap`) bound how many SQLite
+The pool caps (`workspace_pool_cap`, `app_pool_cap`) bound how many SQLite
 connections sit open. Each pool is one connection. RAM cost per pool is
 tiny (~1 MB).
 

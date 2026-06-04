@@ -8,11 +8,11 @@ pub enum CoreError {
     #[error("validation failed: {0}")]
     Validation(String),
 
-    #[error("realm not found: {0}")]
-    RealmNotFound(String),
+    #[error("workspace not found: {0}")]
+    WorkspaceNotFound(String),
 
-    #[error("app not found: {realm}/{app}")]
-    AppNotFound { realm: String, app: String },
+    #[error("app not found: {workspace}/{app}")]
+    AppNotFound { workspace: String, app: String },
 
     #[error("policy violation: {field} = {value} outside bound {bound}")]
     PolicyViolation {

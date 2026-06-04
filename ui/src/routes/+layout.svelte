@@ -59,7 +59,7 @@
 				<span class="text-sm font-semibold tracking-tight">RustBase</span>
 			</a>
 			<nav class="flex items-center gap-1 text-sm">
-				<a class="nav-link" href="/realms">Realms</a>
+				<a class="nav-link" href="/workspaces">Workspaces</a>
 				{#if auth.isMaster}
 					<a class="nav-link" href="/system">System</a>
 				{/if}

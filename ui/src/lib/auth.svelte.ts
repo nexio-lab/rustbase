@@ -1,6 +1,6 @@
 /**
  * Session store — keeps only the **non-secret** identity blob
- * (role / admin profile / realm scope) so the SPA can route + render
+ * (role / admin profile / workspace scope) so the SPA can route + render
  * conditionally. The actual JWT and refresh token live in HttpOnly
  * cookies (`rb_at`, `rb_rt`) issued by the server on login and
  * cleared on logout. JS cannot read them, which kills the XSS
@@ -12,10 +12,10 @@ import type { MasterAdmin } from './api';
 const STORAGE_KEY = 'rustbase.session.v2';
 
 type SessionShape = {
-	role: 'master' | 'realm' | 'app' | 'user';
+	role: 'master' | 'workspace' | 'app' | 'user';
 	admin?: MasterAdmin;
-	/** Which realm the principal is bound to, if any. */
-	realm?: string;
+	/** Which workspace the principal is bound to, if any. */
+	workspace?: string;
 };
 
 function load(): SessionShape | null {

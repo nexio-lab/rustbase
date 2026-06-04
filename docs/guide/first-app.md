@@ -1,6 +1,6 @@
 # First app, end-to-end
 
-This walkthrough builds a tiny note-taking backend entirely through `curl`. By the end you'll have a realm, an app, a schema, a registered user, an authenticated record, and a realtime subscription — all without touching the dashboard.
+This walkthrough builds a tiny note-taking backend entirely through `curl`. By the end you'll have a workspace, an app, a schema, a registered user, an authenticated record, and a realtime subscription — all without touching the dashboard.
 
 ## Sign in as master admin
 
@@ -13,10 +13,10 @@ TOKEN=$(curl -s http://localhost:8080/_/auth/admin/login \
   | jq -r .access_token)
 ```
 
-## Create a realm
+## Create a workspace
 
 ```sh
-curl -s http://localhost:8080/api/realms \
+curl -s http://localhost:8080/api/workspaces \
   -H "authorization: Bearer $TOKEN" \
   -H "content-type: application/json" \
   -d '{"id":"acme","name":"Acme Inc."}' | jq
@@ -25,7 +25,7 @@ curl -s http://localhost:8080/api/realms \
 ## Create an app
 
 ```sh
-curl -s http://localhost:8080/api/realms/acme/apps \
+curl -s http://localhost:8080/api/workspaces/acme/apps \
   -H "authorization: Bearer $TOKEN" \
   -H "content-type: application/json" \
   -d '{"id":"notes","name":"Notes"}' | jq
@@ -34,7 +34,7 @@ curl -s http://localhost:8080/api/realms/acme/apps \
 ## Define a collection
 
 ```sh
-curl -s http://localhost:8080/api/realms/acme/apps/notes/collections \
+curl -s http://localhost:8080/api/workspaces/acme/apps/notes/collections \
   -H "authorization: Bearer $TOKEN" \
   -H "content-type: application/json" \
   -d '{
@@ -52,14 +52,14 @@ curl -s http://localhost:8080/api/realms/acme/apps/notes/collections \
 
 ## Register and log in as an end-user
 
-End-users live per-app: register against the specific `(realm, app)` you want to authenticate into.
+End-users live per-app: register against the specific `(workspace, app)` you want to authenticate into.
 
 ```sh
-curl -s http://localhost:8080/api/realms/acme/apps/notes/auth/users/register \
+curl -s http://localhost:8080/api/workspaces/acme/apps/notes/auth/users/register \
   -H "content-type: application/json" \
   -d '{"email":"user@acme.com","password":"userpass1"}'
 
-UTOKEN=$(curl -s http://localhost:8080/api/realms/acme/apps/notes/auth/users/login \
+UTOKEN=$(curl -s http://localhost:8080/api/workspaces/acme/apps/notes/auth/users/login \
   -H "content-type: application/json" \
   -d '{"email":"user@acme.com","password":"userpass1"}' \
   | jq -r .access_token)
@@ -70,7 +70,7 @@ UTOKEN=$(curl -s http://localhost:8080/api/realms/acme/apps/notes/auth/users/log
 By default, access rules require an admin token. For an open app, override the rules through the dashboard (or `PUT .../access_rules/create` with `{"template":"any"}`). For this walkthrough we'll keep using `$TOKEN`:
 
 ```sh
-curl -s http://localhost:8080/api/realms/acme/apps/notes/collections/posts/records \
+curl -s http://localhost:8080/api/workspaces/acme/apps/notes/collections/posts/records \
   -H "authorization: Bearer $TOKEN" \
   -H "content-type: application/json" \
   -d '{"title":"Hello","body":"first post","pinned":true}' | jq
@@ -79,7 +79,7 @@ curl -s http://localhost:8080/api/realms/acme/apps/notes/collections/posts/recor
 ## Query with a filter
 
 ```sh
-curl -s -G http://localhost:8080/api/realms/acme/apps/notes/collections/posts/records \
+curl -s -G http://localhost:8080/api/workspaces/acme/apps/notes/collections/posts/records \
   -H "authorization: Bearer $TOKEN" \
   --data-urlencode 'filter=pinned = true && title ~ "Hello"' | jq
 ```
@@ -90,7 +90,7 @@ See the [filter syntax reference](/reference/filters) for the full grammar.
 
 ```sh
 curl -N -H "authorization: Bearer $TOKEN" \
-  http://localhost:8080/api/realms/acme/apps/notes/collections/posts/events
+  http://localhost:8080/api/workspaces/acme/apps/notes/collections/posts/events
 ```
 
 Leave that open in one terminal, run the create-record `curl` from another, and you'll see the `record_created` event stream in.
@@ -98,7 +98,7 @@ Leave that open in one terminal, run the create-record `curl` from another, and 
 ## Upload a file
 
 ```sh
-curl -s -X POST http://localhost:8080/api/realms/acme/apps/notes/files \
+curl -s -X POST http://localhost:8080/api/workspaces/acme/apps/notes/files \
   -H "authorization: Bearer $TOKEN" \
   -H "x-filename: kitten.png" \
   -H "content-type: image/png" \

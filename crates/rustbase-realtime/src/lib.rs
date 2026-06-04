@@ -1,6 +1,6 @@
 //! In-process pub/sub broker for realtime subscriptions.
 //!
-//! Channels are keyed by `(realm_id, app_id, collection)`. SSE / WS
+//! Channels are keyed by `(workspace_id, app_id, collection)`. SSE / WS
 //! handlers subscribe; record CRUD handlers publish. The broker
 //! itself is unaware of HTTP — it just hands out `broadcast::Receiver`s
 //! and lets callers turn them into whichever wire format they want.
@@ -13,19 +13,19 @@ use tokio::sync::broadcast;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SubscriptionKey {
-    pub realm: String,
+    pub workspace: String,
     pub app: String,
     pub collection: String,
 }
 
 impl SubscriptionKey {
     pub fn new(
-        realm: impl Into<String>,
+        workspace: impl Into<String>,
         app: impl Into<String>,
         collection: impl Into<String>,
     ) -> Self {
         Self {
-            realm: realm.into(),
+            workspace: workspace.into(),
             app: app.into(),
             collection: collection.into(),
         }

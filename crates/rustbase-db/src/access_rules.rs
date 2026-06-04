@@ -6,7 +6,7 @@
 //! - **No row** for a `(collection, action)` pair → admin-only.
 //! - **`filter = NULL`** → admin-only (explicit lock).
 //! - **`filter = ""`** or **`filter = "true"`** → any authenticated user
-//!   of the realm.
+//!   of the workspace.
 //! - **Other filter expressions** → evaluated per request after the
 //!   template substitution layer in `rustbase_core::rule_template`
 //!   resolves `{{request.auth.id}}` etc. The resulting filter is ANDed
@@ -118,7 +118,7 @@ pub async fn list_rules(pool: &SqlitePool, collection: &str) -> Result<Vec<Acces
 pub enum RuleDecision {
     /// Admin-only (no row, or filter = NULL).
     Deny,
-    /// Any authenticated user of the realm (filter = "" or "true").
+    /// Any authenticated user of the workspace (filter = "" or "true").
     Allow,
     /// Evaluate the filter template against the request context.
     Evaluate(String),

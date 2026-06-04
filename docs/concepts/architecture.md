@@ -6,9 +6,9 @@ RustBase is split into one workspace with eight Rust crates plus a SvelteKit das
 
 | Crate | Purpose |
 |---|---|
-| `rustbase-core` | IO-free domain types: `RealmId`, `AppId`, `Record`, `Schema`, `FilterNode`, `ConfigPolicy`, error enum, filter parser |
-| `rustbase-db` | SQLite layer: system / realm / app pools, migrations, CRUD, filter → SQL, cascade-delete, auto-clamp engine |
-| `rustbase-auth` | JWT, argon2, OAuth2, OTP, master / realm / app admin model |
+| `rustbase-core` | IO-free domain types: `WorkspaceId`, `AppId`, `Record`, `Schema`, `FilterNode`, `ConfigPolicy`, error enum, filter parser |
+| `rustbase-db` | SQLite layer: system / workspace / app pools, migrations, CRUD, filter → SQL, cascade-delete, auto-clamp engine |
+| `rustbase-auth` | JWT, argon2, OAuth2, OTP, master / workspace / app admin model |
 | `rustbase-realtime` | In-process pub/sub broker |
 | `rustbase-storage` | Local + S3 file storage via `object_store` |
 | `rustbase-runtime` | Embedded JS/TS runtime, hook dispatch, sandboxing |
@@ -54,13 +54,13 @@ On server start, `rustbase-server` does the following in order:
 1. Load config (file + env vars).
 2. Verify `data/` exists (create if missing).
 3. Open the system pool (`data/system.db`), run system migrations.
-4. If no master realm exists, create it. If no master admin exists, mark the server as **uninitialized** and serve only the setup wizard at `/_/setup`.
-5. Discover existing realms under `data/realms/` and run pending realm migrations for each.
-6. For each realm, discover existing apps and run pending app migrations.
-7. Initialize the realm and app pool managers (LRU caps).
+4. If no master workspace exists, create it. If no master admin exists, mark the server as **uninitialized** and serve only the setup wizard at `/_/setup`.
+5. Discover existing workspaces under `data/workspaces/` and run pending workspace migrations for each.
+6. For each workspace, discover existing apps and run pending app migrations.
+7. Initialize the workspace and app pool managers (LRU caps).
 8. Initialize the realtime broker.
 9. Initialize the storage backend.
-10. Initialize the JS/TS runtime; load hooks for each `(realm, app)`.
+10. Initialize the JS/TS runtime; load hooks for each `(workspace, app)`.
 11. Optionally start Litestream sidecars.
 12. Start the axum HTTP server, layered with the setup gate and the trace middleware.
 

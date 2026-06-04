@@ -4,11 +4,11 @@ RustBase keeps one SQLite file per scope and one filesystem directory per scope'
 
 ```
 data/
-  system.db                           # realms registry, master admins, master audit
-  realms/
-    <realm_id>/
-      realm.db                        # apps, realm/app admins, admin refresh tokens, realm audit
-      storage/                        # realm-level files (rarely used)
+  system.db                           # workspaces registry, master admins, master audit
+  workspaces/
+    <workspace_id>/
+      workspace.db                        # apps, workspace/app admins, admin refresh tokens, workspace audit
+      storage/                        # workspace-level files (rarely used)
       apps/
         <app_id>/
           data.db                     # collections, records, access rules, users,
@@ -17,7 +17,7 @@ data/
                                       # file metadata, app audit
           storage/                    # app-level files (binary blobs)
   hooks/
-    <realm_id>/<app_id>/              # JS/TS hook source files (*.js, *.ts)
+    <workspace_id>/<app_id>/              # JS/TS hook source files (*.js, *.ts)
 ```
 
 End-users live in each app's `data.db` — the `users` table is per-app along with the OAuth provider config, refresh tokens, and every auxiliary auth table (verifications, password resets, OTPs, TOTP, MFA challenges).
@@ -31,10 +31,10 @@ data/
 
 ## Why one file per scope
 
-- **Independent rotation**: cycling a realm's `realm.db` doesn't take other realms offline.
-- **Trivial backup / restore**: copying `data/realms/acme/` migrates the whole realm.
-- **Independent locks**: SQLite is a single-writer DB, but a write to `realms/acme/apps/web/data.db` doesn't block a write to `realms/bob/realm.db`.
-- **Cleanup**: dropping a realm = one `DELETE FROM realms` row + one `rm -rf` of the realm's folder.
+- **Independent rotation**: cycling a workspace's `workspace.db` doesn't take other workspaces offline.
+- **Trivial backup / restore**: copying `data/workspaces/acme/` migrates the whole workspace.
+- **Independent locks**: SQLite is a single-writer DB, but a write to `workspaces/acme/apps/web/data.db` doesn't block a write to `workspaces/bob/workspace.db`.
+- **Cleanup**: dropping a workspace = one `DELETE FROM workspaces` row + one `rm -rf` of the workspace's folder.
 
 ## Per-connection PRAGMAs
 
@@ -56,11 +56,11 @@ Three pool kinds, each managed independently:
 | Pool | Key | Default cap | Notes |
 |---|---|---|---|
 | System pool | — | always open | one DB, opened at boot |
-| Realm pool | `RealmId` | `realm_pool_cap = 32` | LRU eviction |
-| App pool | `(RealmId, AppId)` | `app_pool_cap = 64` | LRU eviction |
+| Workspace pool | `WorkspaceId` | `workspace_pool_cap = 32` | LRU eviction |
+| App pool | `(WorkspaceId, AppId)` | `app_pool_cap = 64` | LRU eviction |
 
-Cold realms and apps stay on disk; their pools reopen lazily on next access in ~1 ms. Tune the caps via [configuration](/guide/configuration) if you run many tenants and have spare RAM.
+Cold workspaces and apps stay on disk; their pools reopen lazily on next access in ~1 ms. Tune the caps via [configuration](/guide/configuration) if you run many tenants and have spare RAM.
 
 ## What the dashboard sees
 
-The dashboard's **Audit** tab queries `audit_log` in whichever scope you're viewing. The **Files** tab walks the matching `storage/` directory's metadata. The **Hooks** tab reads and writes files directly under `data/hooks/<realm>/<app>/`. Nothing magical — everything's on disk.
+The dashboard's **Audit** tab queries `audit_log` in whichever scope you're viewing. The **Files** tab walks the matching `storage/` directory's metadata. The **Hooks** tab reads and writes files directly under `data/hooks/<workspace>/<app>/`. Nothing magical — everything's on disk.

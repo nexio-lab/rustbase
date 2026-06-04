@@ -7,7 +7,7 @@ Every app has its own file store. Binary data goes to disk (or S3); a metadata r
 Send the bytes raw — no `multipart/form-data` parsing. The `X-Filename` header carries the saved name; `Content-Type` carries the MIME.
 
 ```http
-POST /api/realms/:realm/apps/:app/files
+POST /api/workspaces/:workspace/apps/:app/files
 Authorization: Bearer <token>
 X-Filename: kitten.png
 Content-Type: image/png
@@ -16,7 +16,7 @@ Content-Type: image/png
 ```
 
 ```sh
-curl -X POST http://localhost:8080/api/realms/acme/apps/web/files \
+curl -X POST http://localhost:8080/api/workspaces/acme/apps/web/files \
   -H "authorization: Bearer $TOKEN" \
   -H "x-filename: kitten.png" \
   -H "content-type: image/png" \
@@ -39,12 +39,12 @@ The dashboard's **Files** tab is a drag-and-drop frontend over the same endpoint
 
 ## Limits
 
-A single upload caps at `MAX_UPLOAD_BYTES` (10 MB default). Override via the `storage.max_upload_mb` policy — master sets a ceiling, realms tighten, apps pick.
+A single upload caps at `MAX_UPLOAD_BYTES` (10 MB default). Override via the `storage.max_upload_mb` policy — master sets a ceiling, workspaces tighten, apps pick.
 
 ## Download
 
 ```http
-GET /api/realms/:realm/apps/:app/files/:id
+GET /api/workspaces/:workspace/apps/:app/files/:id
 Authorization: Bearer <token>
 ```
 
@@ -55,7 +55,7 @@ Returns the raw bytes. `Content-Type` is the stored MIME; `X-Filename` echoes th
 ## Metadata only
 
 ```http
-GET /api/realms/:realm/apps/:app/files/:id/meta
+GET /api/workspaces/:workspace/apps/:app/files/:id/meta
 ```
 
 Returns the same JSON as the upload response — no binary fetch.
@@ -63,8 +63,8 @@ Returns the same JSON as the upload response — no binary fetch.
 ## List + delete
 
 ```http
-GET    /api/realms/:realm/apps/:app/files
-DELETE /api/realms/:realm/apps/:app/files/:id
+GET    /api/workspaces/:workspace/apps/:app/files
+DELETE /api/workspaces/:workspace/apps/:app/files/:id
 ```
 
 ## Linking from records
@@ -73,7 +73,7 @@ A field of `kind: "file"` stores the file id (a uuid). Render a thumbnail by fol
 
 ```ts
 const post = $app.records.findOne("posts", id);
-const coverUrl = `/api/realms/acme/apps/web/files/${post.fields.cover}`;
+const coverUrl = `/api/workspaces/acme/apps/web/files/${post.fields.cover}`;
 ```
 
 Files referenced by a record are not auto-deleted when the record dies — collect-on-delete is intentionally opt-in (use a hook).
@@ -106,7 +106,7 @@ Switching backends doesn't touch the metadata in `data.db` — the keys are stab
 With the local backend:
 
 ```
-data/realms/<realm>/apps/<app>/storage/
+data/workspaces/<workspace>/apps/<app>/storage/
   └── <file_id>           # the raw bytes, no extension
 ```
 

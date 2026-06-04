@@ -9,8 +9,8 @@ The dashboard's **Policies** tab exists in three places:
 | Path | Scope | Who can edit |
 |---|---|---|
 | `/system/policies` | System (master scope) | Master admins |
-| `/realms/<realm>/policies` | Realm | Master + realm admins |
-| `/realms/<realm>/apps/<app>/policies` | App | Master + realm + app admins |
+| `/workspaces/<workspace>/policies` | Workspace | Master + workspace admins |
+| `/workspaces/<workspace>/apps/<app>/policies` | App | Master + workspace + app admins |
 
 All three render the same editor. The differences are which bound you're allowed to **set** and which bound you're allowed to **violate** (you can't).
 
@@ -33,15 +33,15 @@ GET    /api/system/policies/:field
 PUT    /api/system/policies/:field        # body: PolicySpec
 DELETE /api/system/policies/:field
 
-GET    /api/realms/:realm/policies
-GET    /api/realms/:realm/policies/:field
-PUT    /api/realms/:realm/policies/:field
-DELETE /api/realms/:realm/policies/:field
+GET    /api/workspaces/:workspace/policies
+GET    /api/workspaces/:workspace/policies/:field
+PUT    /api/workspaces/:workspace/policies/:field
+DELETE /api/workspaces/:workspace/policies/:field
 
-GET    /api/realms/:realm/apps/:app/policies
-GET    /api/realms/:realm/apps/:app/policies/:field
-PUT    /api/realms/:realm/apps/:app/policies/:field
-DELETE /api/realms/:realm/apps/:app/policies/:field
+GET    /api/workspaces/:workspace/apps/:app/policies
+GET    /api/workspaces/:workspace/apps/:app/policies/:field
+PUT    /api/workspaces/:workspace/apps/:app/policies/:field
+DELETE /api/workspaces/:workspace/apps/:app/policies/:field
 ```
 
 `PUT` body is a `PolicySpec`:
@@ -82,14 +82,14 @@ You can introduce new fields **at any time** by `PUT`ting a new `:field`. The sy
 
 ## A worked example
 
-You want every realm's password length to be **at least 8** characters.
+You want every workspace's password length to be **at least 8** characters.
 
 1. As master, set the master bound:
    ```http
    PUT /api/system/policies/password.length
    { "kind": "range", "min": 8, "max": 128 }
    ```
-2. Realm `acme` previously had `{min: 6, max: 12}`. The cascade engine sees the conflict and clamps to `{min: 8, max: 12}`. An audit row lands in both the master and the `acme` realm's `audit_log`.
-3. The next time the `acme` realm admin opens the dashboard, the **Audit** tab shows a `policy_clamped` entry telling them what changed.
+2. Workspace `acme` previously had `{min: 6, max: 12}`. The cascade engine sees the conflict and clamps to `{min: 8, max: 12}`. An audit row lands in both the master and the `acme` workspace's `audit_log`.
+3. The next time the `acme` workspace admin opens the dashboard, the **Audit** tab shows a `policy_clamped` entry telling them what changed.
 
-This is what hierarchical policies are *for*: a master admin can tighten a control globally and trust that every child realm and app catches up automatically, with a paper trail.
+This is what hierarchical policies are *for*: a master admin can tighten a control globally and trust that every child workspace and app catches up automatically, with a paper trail.

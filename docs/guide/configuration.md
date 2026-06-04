@@ -9,7 +9,7 @@ You don't need a config file. The defaults are:
 ```toml
 listen        = "0.0.0.0:8080"
 data_dir      = "./data"
-realm_pool_cap = 32
+workspace_pool_cap = 32
 app_pool_cap   = 64
 ```
 
@@ -24,8 +24,8 @@ listen = "0.0.0.0:8080"
 # Path to the data directory. Created if missing.
 data_dir = "./data"
 
-# LRU caps for per-realm and per-app SQLite pools.
-realm_pool_cap = 32
+# LRU caps for per-workspace and per-app SQLite pools.
+workspace_pool_cap = 32
 app_pool_cap = 64
 
 # ------------------------------------------------------------------
@@ -53,7 +53,7 @@ from = "RustBase <noreply@example.com>"
 
 # ------------------------------------------------------------------
 # Optional S3-compatible file storage. Absent → files live under
-# data_dir/realms/<realm>/apps/<app>/storage/. The DB metadata is
+# data_dir/workspaces/<workspace>/apps/<app>/storage/. The DB metadata is
 # unchanged whether you pick local or S3.
 # ------------------------------------------------------------------
 [storage.s3]
@@ -93,7 +93,7 @@ burst      = 100
 
 # ------------------------------------------------------------------
 # Per-subject auth lockout. After N failed credential attempts inside
-# a rolling window, the subject (master admin / realm admin / end
+# a rolling window, the subject (master admin / workspace admin / end
 # user) is locked out for `lockout_secs`. Failures share a budget
 # across password + TOTP + email-OTP for the same user — so a
 # password-spray that pivots to OTP doesn't reset the counter.
@@ -113,7 +113,7 @@ Every key is reachable as `RUSTBASE_<UPPERCASE_PATH_JOINED_BY_UNDERSCORES>`. Exa
 |---|---|
 | `listen` | `RUSTBASE_LISTEN` |
 | `data_dir` | `RUSTBASE_DATA_DIR` |
-| `realm_pool_cap` | `RUSTBASE_REALM_POOL_CAP` |
+| `workspace_pool_cap` | `RUSTBASE_WORKSPACE_POOL_CAP` |
 | `mail.smtp.host` | `RUSTBASE_MAIL_SMTP_HOST` |
 | `mail.smtp.password` | `RUSTBASE_MAIL_SMTP_PASSWORD` |
 | `litestream.bucket` | `RUSTBASE_LITESTREAM_BUCKET` |
@@ -147,8 +147,8 @@ Per-request access logs come out of `tower_http::trace::TraceLayer`, with the re
 
 ## Hierarchical policies vs. static config
 
-Anything in `rustbase.toml` is **static** — it's the same for every realm and app and changes only when you restart the server (or HUP if/when that lands).
+Anything in `rustbase.toml` is **static** — it's the same for every workspace and app and changes only when you restart the server (or HUP if/when that lands).
 
-**Hierarchical policies** (password rules, token TTLs, rate limits, hook capabilities, etc.) live in the database. Master sets bounds; realms tighten; apps pick. Edit them in the dashboard under the **Policies** tab, or via the [REST API](/reference/rest-api#policies).
+**Hierarchical policies** (password rules, token TTLs, rate limits, hook capabilities, etc.) live in the database. Master sets bounds; workspaces tighten; apps pick. Edit them in the dashboard under the **Policies** tab, or via the [REST API](/reference/rest-api#policies).
 
-The rule of thumb: if it's about *the server* (where it listens, what backend it uses) it's in `rustbase.toml`. If it's about *a realm or app* (what users can do) it's a policy.
+The rule of thumb: if it's about *the server* (where it listens, what backend it uses) it's in `rustbase.toml`. If it's about *a workspace or app* (what users can do) it's a policy.

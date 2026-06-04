@@ -6,15 +6,15 @@ RustBase is a **multi-tenant Backend-as-a-Service** packaged as a single statica
 
 Out of the box, every RustBase instance ships with:
 
-- **Realms** — organization boundaries. Each realm groups its apps under one set of administrators, branding, and policies.
+- **Workspaces** — organization boundaries. Each workspace groups its apps under one set of administrators, branding, and policies.
 - **Apps** — data products. Each app has its own schema (collections), records, files, hooks, access rules, **end-user pool**, and OAuth provider configuration.
 - **Authentication** — email + password, email OTP, TOTP second factor, OAuth2 (Google, GitHub, any OIDC).
-- **Three admin tiers** — master, realm, and app admins, each scoped exactly to what they manage.
+- **Three admin tiers** — master, workspace, and app admins, each scoped exactly to what they manage.
 - **REST API** — typed JSON, filterable lists, generated OpenAPI spec.
 - **Realtime** — SSE and WebSocket subscriptions on every collection.
 - **File storage** — local disk or any S3-compatible bucket (AWS, R2, MinIO) via `object_store`.
 - **JS/TS hooks** — lifecycle handlers, custom HTTP routes, scheduled cron jobs, sent through an embedded QuickJS sandbox.
-- **Hierarchical policies** — master sets bounds, realms tighten, apps pick values. Auto-clamp + audit when a parent narrows.
+- **Hierarchical policies** — master sets bounds, workspaces tighten, apps pick values. Auto-clamp + audit when a parent narrows.
 - **Audit log** — append-only, queryable per scope.
 - **Dashboard** — SvelteKit SPA embedded in the binary, served at `/_/`.
 

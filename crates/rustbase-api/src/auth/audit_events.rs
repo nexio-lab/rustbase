@@ -8,9 +8,9 @@
 //! - `login_locked` — N-th rejection inside the policy window; subject
 //!   is now locked for `lockout_secs`.
 //!
-//! Master-scope events go to `system.db`; realm-admin and end-user
-//! events go to the realm's `realm.db`. App-scoped auth events stay
-//! under the realm log so an app admin can see the auth attempts
+//! Master-scope events go to `system.db`; workspace-admin and end-user
+//! events go to the workspace's `workspace.db`. App-scoped auth events stay
+//! under the workspace log so an app admin can see the auth attempts
 //! against users that span its app.
 //!
 //! All emissions are best-effort: the audit append happens after the
@@ -18,7 +18,7 @@
 //! failure to write the audit row is logged but does not change the
 //! HTTP response.
 
-use rustbase_core::{CoreError, RealmId};
+use rustbase_core::{CoreError, WorkspaceId};
 use rustbase_db::audit::append;
 use serde_json::Value;
 use sqlx::SqlitePool;
@@ -45,7 +45,7 @@ impl AuthOutcome {
 #[derive(Debug, Clone)]
 pub enum Scope<'a> {
     Master,
-    Realm(&'a str),
+    Workspace(&'a str),
 }
 
 #[derive(Debug, Clone)]
@@ -68,14 +68,14 @@ pub struct AuthEvent<'a> {
 pub async fn record(state: &AppState, ev: AuthEvent<'_>) {
     let res = match ev.scope {
         Scope::Master => append_with_log(state.system.pool(), &ev).await,
-        Scope::Realm(realm) => match state
-            .realms
-            .pool_for(&RealmId::from(realm.to_string()))
+        Scope::Workspace(workspace) => match state
+            .workspaces
+            .pool_for(&WorkspaceId::from(workspace.to_string()))
             .await
         {
             Ok(pool) => append_with_log(&pool, &ev).await,
             Err(e) => Err(CoreError::Internal(format!(
-                "audit realm pool open failed: {e}"
+                "audit workspace pool open failed: {e}"
             ))),
         },
     };

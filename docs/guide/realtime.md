@@ -5,14 +5,14 @@ Every collection publishes lifecycle events on every successful write. Subscribe
 ## Subscribe
 
 ```http
-GET /api/realms/:realm/apps/:app/collections/:coll/events
+GET /api/workspaces/:workspace/apps/:app/collections/:coll/events
 Accept: text/event-stream
 Authorization: Bearer <token>
 ```
 
 ```sh
 curl -N -H "authorization: Bearer $TOKEN" \
-  http://localhost:8080/api/realms/acme/apps/web/collections/posts/events
+  http://localhost:8080/api/workspaces/acme/apps/web/collections/posts/events
 ```
 
 The connection stays open and streams events as they happen.
@@ -39,7 +39,7 @@ Subscriptions are per-collection. To narrow further, filter on the client side u
 If you need per-record events specifically, watch the whole collection and filter:
 
 ```js
-const es = new EventSource(`/api/realms/acme/apps/web/collections/posts/events`, {
+const es = new EventSource(`/api/workspaces/acme/apps/web/collections/posts/events`, {
   headers: { Authorization: `Bearer ${token}` }
 });
 es.addEventListener("record_updated", (e) => {
@@ -68,7 +68,7 @@ Any object you publish is delivered as an event named `custom` (or whatever stri
 
 ## Under the hood
 
-`rustbase-realtime` is an in-process `tokio::sync::broadcast` channel keyed by `(realm, app, collection, optional_record_id)`. The API layer is a thin SSE wrapper.
+`rustbase-realtime` is an in-process `tokio::sync::broadcast` channel keyed by `(workspace, app, collection, optional_record_id)`. The API layer is a thin SSE wrapper.
 
 Limitations:
 

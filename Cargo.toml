@@ -20,7 +20,7 @@ authors = [
     "Philippe J <https://www.linkedin.com/in/philippewilfrandj>",
     "RustBase contributors",
 ]
-description = "A multi-tenant Backend-as-a-Service in Rust — realms, apps, collections, auth, hooks, files, realtime, dashboard."
+description = "A multi-tenant Backend-as-a-Service in Rust — workspaces, apps, collections, auth, hooks, files, realtime, dashboard."
 homepage = "https://pjonaszik.github.io/rustbase/"
 documentation = "https://pjonaszik.github.io/rustbase/"
 repository = "https://github.com/pjonaszik/rustbase"

@@ -1,8 +1,8 @@
 //! Embedded JS hook runtime for RustBase.
 //!
-//! One `AppHooks` per (realm, app). Each holds its own `AsyncRuntime`
+//! One `AppHooks` per (workspace, app). Each holds its own `AsyncRuntime`
 //! and `AsyncContext`. At load time we evaluate every `.js` file under
-//! `data/hooks/<realm>/<app>/` against the context; user code registers
+//! `data/hooks/<workspace>/<app>/` against the context; user code registers
 //! handlers via the injected `$app` global:
 //!
 //! ```js
@@ -13,7 +13,7 @@
 //!
 //! When a record CRUD endpoint succeeds, the API layer calls
 //! `HookEngine::dispatch(...)`. We look up the AppHooks for the
-//! (realm, app), then evaluate a tiny driver script that pulls
+//! (workspace, app), then evaluate a tiny driver script that pulls
 //! handlers out of a global handler table and invokes them with the
 //! record JSON. Errors inside a hook are caught + stashed; they don't
 //! fail the HTTP request — hooks are post-write observers, not
@@ -75,7 +75,7 @@ impl From<rquickjs::Error> for RuntimeError {
 pub struct HookRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth: Option<HookAuth>,
-    pub realm: String,
+    pub workspace: String,
     pub app: String,
     pub collection: String,
 }
@@ -85,16 +85,16 @@ pub struct HookAuth {
     pub id: String,
     pub role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub realm: Option<String>,
+    pub workspace: Option<String>,
 }
 
 impl HookRequest {
     /// A blank request — used for tests and for internal callers
     /// (e.g. the bridge) that don't have an authenticated principal.
-    pub fn system(realm: &str, app: &str, collection: &str) -> Self {
+    pub fn system(workspace: &str, app: &str, collection: &str) -> Self {
         Self {
             auth: None,
-            realm: realm.to_string(),
+            workspace: workspace.to_string(),
             app: app.to_string(),
             collection: collection.to_string(),
         }
@@ -158,7 +158,7 @@ pub enum HookEvent {
     UserAfterRegister,
 }
 
-/// Pseudo-collection name used as the routing key for realm-wide
+/// Pseudo-collection name used as the routing key for workspace-wide
 /// user-lifecycle hooks. Records can't use this name (the API
 /// already rejects identifiers starting with `_`).
 pub const USER_HOOK_COLLECTION: &str = "_user";
@@ -270,7 +270,7 @@ impl<T: AsyncRecordsBridge> RecordsBridge for SyncBridge<T> {
     }
 }
 
-/// JS host bound to one (realm, app). Multiple `.js` files share its
+/// JS host bound to one (workspace, app). Multiple `.js` files share its
 /// QuickJS context, so they can cooperate via globals.
 pub struct AppHooks {
     ctx: AsyncContext,
@@ -916,7 +916,7 @@ impl AppHooks {
                     onRecordBeforeCreate(collection, fn) { register('before_create', collection, fn); },
                     onRecordBeforeUpdate(collection, fn) { register('before_update', collection, fn); },
                     onRecordBeforeDelete(collection, fn) { register('before_delete', collection, fn); },
-                    // Realm-wide user-lifecycle hooks. No collection
+                    // Workspace-wide user-lifecycle hooks. No collection
                     // argument; they fire on every authentication
                     // track (password / OTP / OAuth) and signup path.
                     // The handler receives `(user)` where user is
@@ -935,9 +935,9 @@ impl AppHooks {
                     onMailerBeforeSend(fn) { register('mailer_before_send', '_mail', fn); },
                     onMailerAfterSend(fn)  { register('mailer_after_send',  '_mail', fn); },
                     // Custom HTTP endpoints. Mounted under
-                    //   /api/realms/<realm>/apps/<app>/custom<path>
+                    //   /api/workspaces/<workspace>/apps/<app>/custom<path>
                     // so routerAdd("GET", "/hello", fn) becomes
-                    //   GET /api/realms/<realm>/apps/<app>/custom/hello.
+                    //   GET /api/workspaces/<workspace>/apps/<app>/custom/hello.
                     //
                     // The handler receives an object with these fields:
                     //   method   uppercased verb (string)
@@ -1336,7 +1336,7 @@ fn register_mailer_native(
 }
 
 /// Engine bound to the whole server. Holds one `AppHooks` per
-/// (realm, app) — lazily created on first hook load. `Clone` is
+/// (workspace, app) — lazily created on first hook load. `Clone` is
 /// cheap; the inner map is `Arc`'d.
 #[derive(Clone, Default)]
 pub struct HookEngine {
@@ -1348,7 +1348,7 @@ impl HookEngine {
         Self::default()
     }
 
-    /// Load (or reload) hooks for `(realm, app)` from `dir`. Existing
+    /// Load (or reload) hooks for `(workspace, app)` from `dir`. Existing
     /// state for this app is discarded — a fresh `AppHooks` is built
     /// and any previously-registered handlers vanish.
     ///
@@ -1357,7 +1357,7 @@ impl HookEngine {
     /// matching JS surface throws "no bridge bound" when invoked.
     pub async fn load_app(
         &self,
-        realm: &str,
+        workspace: &str,
         app: &str,
         dir: &Path,
         bridge: Option<Arc<dyn RecordsBridge>>,
@@ -1373,36 +1373,36 @@ impl HookEngine {
         // can hand each task a Weak<AppHooks> for clean shutdown on
         // reload.
         if let Err(e) = hooks.start_cron_tasks().await {
-            tracing::warn!(realm = %realm, app = %app, error = %e, "starting cron tasks failed");
+            tracing::warn!(workspace = %workspace, app = %app, error = %e, "starting cron tasks failed");
         }
         self.apps
-            .insert((realm.to_string(), app.to_string()), hooks);
+            .insert((workspace.to_string(), app.to_string()), hooks);
         Ok(loaded)
     }
 
-    /// Look up the AppHooks for `(realm, app)`. Returns `None` if no
+    /// Look up the AppHooks for `(workspace, app)`. Returns `None` if no
     /// hooks were ever loaded for that app — dispatch then becomes a
     /// no-op.
-    pub fn get(&self, realm: &str, app: &str) -> Option<Arc<AppHooks>> {
+    pub fn get(&self, workspace: &str, app: &str) -> Option<Arc<AppHooks>> {
         self.apps
-            .get(&(realm.to_string(), app.to_string()))
+            .get(&(workspace.to_string(), app.to_string()))
             .map(|h| h.clone())
     }
 
     /// Dispatch an event. No-op when no hooks are loaded for the
-    /// (realm, app). Hook errors are caught by the dispatch driver
+    /// (workspace, app). Hook errors are caught by the dispatch driver
     /// and stashed in `__rb_errors`; this method itself succeeds even
     /// when a handler threw.
     pub async fn dispatch<T: Serialize>(
         &self,
-        realm: &str,
+        workspace: &str,
         app: &str,
         collection: &str,
         event: HookEvent,
         request: &HookRequest,
         payload: &T,
     ) -> Result<()> {
-        let Some(hooks) = self.get(realm, app) else {
+        let Some(hooks) = self.get(workspace, app) else {
             return Ok(());
         };
         hooks.dispatch(collection, event, request, payload).await
@@ -1412,13 +1412,13 @@ impl HookEngine {
     /// unchanged. `Err(Veto)` is propagated to the API layer as 400.
     pub async fn dispatch_before_create(
         &self,
-        realm: &str,
+        workspace: &str,
         app: &str,
         collection: &str,
         request: &HookRequest,
         payload: BTreeMap<String, Json>,
     ) -> Result<BTreeMap<String, Json>> {
-        let Some(hooks) = self.get(realm, app) else {
+        let Some(hooks) = self.get(workspace, app) else {
             return Ok(payload);
         };
         hooks
@@ -1428,14 +1428,14 @@ impl HookEngine {
 
     pub async fn dispatch_before_update<E: Serialize>(
         &self,
-        realm: &str,
+        workspace: &str,
         app: &str,
         collection: &str,
         request: &HookRequest,
         existing: &E,
         patch: BTreeMap<String, Json>,
     ) -> Result<BTreeMap<String, Json>> {
-        let Some(hooks) = self.get(realm, app) else {
+        let Some(hooks) = self.get(workspace, app) else {
             return Ok(patch);
         };
         hooks
@@ -1445,13 +1445,13 @@ impl HookEngine {
 
     pub async fn dispatch_before_delete<E: Serialize>(
         &self,
-        realm: &str,
+        workspace: &str,
         app: &str,
         collection: &str,
         request: &HookRequest,
         existing: &E,
     ) -> Result<()> {
-        let Some(hooks) = self.get(realm, app) else {
+        let Some(hooks) = self.get(workspace, app) else {
             return Ok(());
         };
         hooks
@@ -1464,12 +1464,12 @@ impl HookEngine {
     /// the login. If the app's hooks aren't loaded yet, no veto fires.
     pub async fn dispatch_user_before_login<U: Serialize>(
         &self,
-        realm: &str,
+        workspace: &str,
         app: &str,
         request: &HookRequest,
         user: &U,
     ) -> Result<()> {
-        if let Some(hooks) = self.get(realm, app) {
+        if let Some(hooks) = self.get(workspace, app) {
             hooks
                 .dispatch_before_user_event(HookEvent::UserBeforeLogin, request, user)
                 .await?;
@@ -1483,12 +1483,12 @@ impl HookEngine {
     /// would have surfaced at load time).
     pub async fn dispatch_user_after_login<U: Serialize>(
         &self,
-        realm: &str,
+        workspace: &str,
         app: &str,
         request: &HookRequest,
         user: &U,
     ) -> Result<()> {
-        if let Some(hooks) = self.get(realm, app) {
+        if let Some(hooks) = self.get(workspace, app) {
             hooks
                 .dispatch(
                     USER_HOOK_COLLECTION,
@@ -1504,12 +1504,12 @@ impl HookEngine {
     /// Observer fan-out for fresh signups (any track), for one app.
     pub async fn dispatch_user_after_register<U: Serialize>(
         &self,
-        realm: &str,
+        workspace: &str,
         app: &str,
         request: &HookRequest,
         user: &U,
     ) -> Result<()> {
-        if let Some(hooks) = self.get(realm, app) {
+        if let Some(hooks) = self.get(workspace, app) {
             hooks
                 .dispatch(
                     USER_HOOK_COLLECTION,
@@ -1522,19 +1522,19 @@ impl HookEngine {
         Ok(())
     }
 
-    /// Dispatch a custom-route invocation to the `(realm, app)` hook
+    /// Dispatch a custom-route invocation to the `(workspace, app)` hook
     /// engine. Returns `Ok(None)` when no hooks are loaded for that
     /// app OR when the app has no handler for `(method, path)`. The
     /// API layer maps both cases to HTTP 404.
     pub async fn invoke_custom_route(
         &self,
-        realm: &str,
+        workspace: &str,
         app: &str,
         method: &str,
         path: &str,
         ctx: &CustomRouteContext,
     ) -> Result<Option<CustomRouteResponse>> {
-        let Some(hooks) = self.get(realm, app) else {
+        let Some(hooks) = self.get(workspace, app) else {
             return Ok(None);
         };
         hooks.invoke_custom_route(method, path, ctx).await
@@ -1670,7 +1670,7 @@ mod tests {
     #[tokio::test]
     async fn user_after_register_fires_only_on_target_app() {
         let engine = HookEngine::new();
-        // Two apps in the same realm; each registers an
+        // Two apps in the same workspace; each registers an
         // onUserAfterRegister that logs the user id. Only the
         // dispatched app should fire — users live per-app now.
         for app in ["mobile", "web"] {
@@ -1688,7 +1688,7 @@ mod tests {
         let other = tempdir().unwrap();
         std::fs::write(
             other.path().join("hook.js"),
-            r#"$app.onUserAfterRegister(() => $app.log("widgets-realm"));"#,
+            r#"$app.onUserAfterRegister(() => $app.log("widgets-workspace"));"#,
         )
         .unwrap();
         engine
@@ -1726,7 +1726,7 @@ mod tests {
             .unwrap();
         assert_eq!(acme_mobile, vec!["mobile saw u-1".to_string()]);
         assert!(acme_web.is_empty(), "sibling app must not fire");
-        assert!(widgets.is_empty(), "unrelated realm must not fire");
+        assert!(widgets.is_empty(), "unrelated workspace must not fire");
     }
 
     #[tokio::test]
@@ -3219,9 +3219,9 @@ mod tests {
             auth: Some(HookAuth {
                 id: "u123".into(),
                 role: "user".into(),
-                realm: Some("acme".into()),
+                workspace: Some("acme".into()),
             }),
-            realm: "acme".into(),
+            workspace: "acme".into(),
             app: "mobile".into(),
             collection: "notes".into(),
         };
@@ -3271,7 +3271,7 @@ mod tests {
             .eval(
                 r#"
                 $app.onRecordAfterCreate("notes", (rec) => {
-                    $app.log("ctx:" + $app.request.realm + "/" + $app.request.app + "/" + $app.request.collection);
+                    $app.log("ctx:" + $app.request.workspace + "/" + $app.request.app + "/" + $app.request.collection);
                 });
                 "#,
                 "<t>",

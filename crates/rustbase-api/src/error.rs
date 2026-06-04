@@ -49,7 +49,7 @@ impl IntoResponse for ApiError {
         let (status, code) = match &self {
             ApiError::Core(e) => match e {
                 CoreError::NotFound { .. } => (StatusCode::NOT_FOUND, "not_found"),
-                CoreError::RealmNotFound(_) => (StatusCode::NOT_FOUND, "realm_not_found"),
+                CoreError::WorkspaceNotFound(_) => (StatusCode::NOT_FOUND, "workspace_not_found"),
                 CoreError::AppNotFound { .. } => (StatusCode::NOT_FOUND, "app_not_found"),
                 CoreError::Validation(_) => (StatusCode::BAD_REQUEST, "validation"),
                 CoreError::PolicyViolation { .. } => (StatusCode::CONFLICT, "policy_violation"),

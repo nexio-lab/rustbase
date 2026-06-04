@@ -8,8 +8,8 @@ listen = "0.0.0.0:8080"
 # Path to the data directory. Created if missing.
 data_dir = "./data"
 
-# LRU caps for per-realm and per-app SQLite pools.
-realm_pool_cap = 32
+# LRU caps for per-workspace and per-app SQLite pools.
+workspace_pool_cap = 32
 app_pool_cap = 64
 
 # HTTP hardening at the entry layer. Defaults shown.

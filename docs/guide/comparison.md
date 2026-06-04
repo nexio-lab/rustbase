@@ -23,7 +23,7 @@ at the bottom.
   policy-by-policy.
 - **Appwrite** — *projects* concept, but multi-tenant on shared MariaDB.
   Isolation is logical, not physical.
-- **RustBase** — built-in. `System → Realm → App` is enforced at the storage
+- **RustBase** — built-in. `System → Workspace → App` is enforced at the storage
   layer. One SQLite file per app means deleting an app removes its data
   bit-for-bit, and a noisy app can't corrupt a sibling.
 

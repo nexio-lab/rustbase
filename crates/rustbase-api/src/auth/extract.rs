@@ -1,7 +1,7 @@
 //! `AdminAuth` axum extractor.
 //!
 //! Pulls a `Bearer` token from `Authorization`, decodes it against the
-//! master signing key (we don't have per-realm keys yet), consults the
+//! master signing key (we don't have per-workspace keys yet), consults the
 //! revocation set, and exposes the resulting `Claims` to the handler.
 //!
 //! Authorization is the handler's responsibility — call the appropriate
@@ -31,7 +31,7 @@ fn extract_claims(parts: &Parts, state: &AppState) -> Result<Option<Claims>, Api
         return Ok(None);
     };
     let claims = state.jwt.verify(&token)?;
-    let key = match &claims.realm {
+    let key = match &claims.workspace {
         Some(r) => SubjectKey::scoped(r, &claims.sub),
         None => SubjectKey::master(&claims.sub),
     };
@@ -57,15 +57,15 @@ impl AdminAuth {
         }
     }
 
-    /// Reject the request unless the principal can act on `realm`.
-    /// Master admins can act on every realm; realm admins only on the
-    /// realm in their token claim; app admins inherit realm access from
-    /// their app's realm claim.
-    pub fn require_realm_access(&self, realm: &str) -> Result<(), ApiError> {
+    /// Reject the request unless the principal can act on `workspace`.
+    /// Master admins can act on every workspace; workspace admins only on the
+    /// workspace in their token claim; app admins inherit workspace access from
+    /// their app's workspace claim.
+    pub fn require_realm_access(&self, workspace: &str) -> Result<(), ApiError> {
         match self.claims.role {
             TokenRole::MasterAdmin => Ok(()),
-            TokenRole::RealmAdmin | TokenRole::AppAdmin => {
-                if self.claims.realm.as_deref() == Some(realm) {
+            TokenRole::WorkspaceAdmin | TokenRole::AppAdmin => {
+                if self.claims.workspace.as_deref() == Some(workspace) {
                     Ok(())
                 } else {
                     Err(ApiError::Core(CoreError::Forbidden))
@@ -75,21 +75,21 @@ impl AdminAuth {
         }
     }
 
-    /// Reject the request unless the principal can act on `(realm, app)`.
-    /// Master admins always pass; realm admins pass when the realm
-    /// matches; app admins must match both realm and app.
-    pub fn require_app_access(&self, realm: &str, app: &str) -> Result<(), ApiError> {
+    /// Reject the request unless the principal can act on `(workspace, app)`.
+    /// Master admins always pass; workspace admins pass when the workspace
+    /// matches; app admins must match both workspace and app.
+    pub fn require_app_access(&self, workspace: &str, app: &str) -> Result<(), ApiError> {
         match self.claims.role {
             TokenRole::MasterAdmin => Ok(()),
-            TokenRole::RealmAdmin => {
-                if self.claims.realm.as_deref() == Some(realm) {
+            TokenRole::WorkspaceAdmin => {
+                if self.claims.workspace.as_deref() == Some(workspace) {
                     Ok(())
                 } else {
                     Err(ApiError::Core(CoreError::Forbidden))
                 }
             }
             TokenRole::AppAdmin => {
-                if self.claims.realm.as_deref() == Some(realm)
+                if self.claims.workspace.as_deref() == Some(workspace)
                     && self.claims.app.as_deref() == Some(app)
                 {
                     Ok(())
@@ -128,30 +128,30 @@ pub struct PrincipalAuth {
 }
 
 impl PrincipalAuth {
-    pub fn is_admin_for_app(&self, realm: &str, app: &str) -> bool {
+    pub fn is_admin_for_app(&self, workspace: &str, app: &str) -> bool {
         match self.claims.role {
             TokenRole::MasterAdmin => true,
-            TokenRole::RealmAdmin => self.claims.realm.as_deref() == Some(realm),
+            TokenRole::WorkspaceAdmin => self.claims.workspace.as_deref() == Some(workspace),
             TokenRole::AppAdmin => {
-                self.claims.realm.as_deref() == Some(realm)
+                self.claims.workspace.as_deref() == Some(workspace)
                     && self.claims.app.as_deref() == Some(app)
             }
             TokenRole::User => false,
         }
     }
 
-    /// Realm the (user) principal is bound to, or `None` if this is an
+    /// Workspace the (user) principal is bound to, or `None` if this is an
     /// admin principal.
-    pub fn user_realm(&self) -> Option<&str> {
+    pub fn user_workspace(&self) -> Option<&str> {
         match self.claims.role {
-            TokenRole::User => self.claims.realm.as_deref(),
+            TokenRole::User => self.claims.workspace.as_deref(),
             _ => None,
         }
     }
 
     /// App the (user) principal is bound to. Since the refactor that
-    /// moved users from realm to app, every TokenRole::User token must
-    /// carry both realm and app claims.
+    /// moved users from workspace to app, every TokenRole::User token must
+    /// carry both workspace and app claims.
     pub fn user_app(&self) -> Option<&str> {
         match self.claims.role {
             TokenRole::User => self.claims.app.as_deref(),
@@ -159,12 +159,12 @@ impl PrincipalAuth {
         }
     }
 
-    /// Convenience: assert the (user) principal owns `(realm, app)`.
+    /// Convenience: assert the (user) principal owns `(workspace, app)`.
     /// Returns `Forbidden` for admins (they don't match a user route),
-    /// for users in another realm/app, or for tokens missing claims.
-    pub fn require_user_in_app(&self, realm: &str, app: &str) -> Result<(), ApiError> {
-        match (self.user_realm(), self.user_app()) {
-            (Some(r), Some(a)) if r == realm && a == app => Ok(()),
+    /// for users in another workspace/app, or for tokens missing claims.
+    pub fn require_user_in_app(&self, workspace: &str, app: &str) -> Result<(), ApiError> {
+        match (self.user_workspace(), self.user_app()) {
+            (Some(r), Some(a)) if r == workspace && a == app => Ok(()),
             _ => Err(ApiError::Core(CoreError::Forbidden)),
         }
     }

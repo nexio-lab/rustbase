@@ -11,14 +11,14 @@
 
 	/**
 	 * Scope-agnostic policies list + editor. Used by the three policy
-	 * pages (system / realm / app), each of which passes the right
+	 * pages (system / workspace / app), each of which passes the right
 	 * REST endpoint base — everything below just appends `/{field}`
 	 * for the per-row endpoints.
 	 *
 	 * `apiBase` examples:
 	 *   /api/system/policies
-	 *   /api/realms/acme/policies
-	 *   /api/realms/acme/apps/mobile/policies
+	 *   /api/workspaces/acme/policies
+	 *   /api/workspaces/acme/apps/mobile/policies
 	 */
 	let { apiBase, scopeLabel }: { apiBase: string; scopeLabel: string } = $props();
 
@@ -141,8 +141,8 @@
 			Policies — {scopeLabel}
 		</h1>
 		<p class="mt-1 text-sm text-slate-500">
-			Hierarchical knobs. Master sets the outer bound; realms tighten within master; apps
-			tighten within their realm. Cascade auto-clamps existing children when a parent
+			Hierarchical knobs. Master sets the outer bound; workspaces tighten within master; apps
+			tighten within their workspace. Cascade auto-clamps existing children when a parent
 			narrows.
 		</p>
 	</div>
@@ -225,7 +225,7 @@
 					<ul class="mt-1 list-disc pl-5 text-xs text-amber-800">
 						{#each editing.cascade as c}
 							<li>
-								<span class="font-mono">{c.realm}{c.app ? `/${c.app}` : ''}</span>
+								<span class="font-mono">{c.workspace}{c.app ? `/${c.app}` : ''}</span>
 								— {c.field}
 							</li>
 						{/each}

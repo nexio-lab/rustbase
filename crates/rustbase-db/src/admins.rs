@@ -1,7 +1,7 @@
 //! Storage of the three admin kinds.
 //!
 //! - `MasterAdmin` rows live in `system.db`.
-//! - `RealmAdmin` and `AppAdmin` rows live in their realm's `realm.db`.
+//! - `WorkspaceAdmin` and `AppAdmin` rows live in their workspace's `workspace.db`.
 //!
 //! The structs hold no password material beyond the PHC-encoded hash;
 //! plain-text passwords are only handled by `rustbase-auth`.
@@ -23,7 +23,7 @@ pub struct MasterAdmin {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::FromRow)]
-pub struct RealmAdmin {
+pub struct WorkspaceAdmin {
     pub id: String,
     pub email: String,
     pub password_hash: String,
@@ -164,18 +164,18 @@ pub async fn delete_master_admin(pool: &SqlitePool, id: &str) -> Result<()> {
     Ok(())
 }
 
-// ---- realm admins (realm.db) -----------------------------------------------
+// ---- workspace admins (workspace.db) -----------------------------------------------
 
 pub async fn insert_realm_admin(
     pool: &SqlitePool,
     email: &str,
     password_hash: &str,
     name: Option<&str>,
-) -> Result<RealmAdmin> {
+) -> Result<WorkspaceAdmin> {
     let id = Uuid::now_v7().to_string();
     let now = Utc::now();
     sqlx::query(
-        "INSERT INTO realm_admins (id, email, password_hash, name, created_at) \
+        "INSERT INTO workspace_admins (id, email, password_hash, name, created_at) \
          VALUES (?, ?, ?, ?, ?)",
     )
     .bind(&id)
@@ -185,7 +185,7 @@ pub async fn insert_realm_admin(
     .bind(now)
     .execute(pool)
     .await?;
-    Ok(RealmAdmin {
+    Ok(WorkspaceAdmin {
         id,
         email: email.to_string(),
         password_hash: password_hash.to_string(),
@@ -197,9 +197,9 @@ pub async fn insert_realm_admin(
 pub async fn find_realm_admin_by_email(
     pool: &SqlitePool,
     email: &str,
-) -> Result<Option<RealmAdmin>> {
-    let row: Option<RealmAdmin> = sqlx::query_as(
-        "SELECT id, email, password_hash, name, created_at FROM realm_admins WHERE email = ?",
+) -> Result<Option<WorkspaceAdmin>> {
+    let row: Option<WorkspaceAdmin> = sqlx::query_as(
+        "SELECT id, email, password_hash, name, created_at FROM workspace_admins WHERE email = ?",
     )
     .bind(email)
     .fetch_optional(pool)
@@ -207,7 +207,7 @@ pub async fn find_realm_admin_by_email(
     Ok(row)
 }
 
-// ---- app admins (realm.db, scoped to a single app) -------------------------
+// ---- app admins (workspace.db, scoped to a single app) -------------------------
 
 pub async fn insert_app_admin(
     pool: &SqlitePool,
@@ -259,7 +259,7 @@ pub async fn find_app_admin_by_email(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::migrations::{REALM_MIGRATIONS, SYSTEM_MIGRATIONS, apply_migrations};
+    use crate::migrations::{SYSTEM_MIGRATIONS, WORKSPACE_MIGRATIONS, apply_migrations};
     use crate::pool::open_memory_pool;
 
     async fn system_pool() -> SqlitePool {
@@ -270,9 +270,9 @@ mod tests {
         pool
     }
 
-    async fn realm_pool() -> SqlitePool {
+    async fn workspace_pool() -> SqlitePool {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(pool.clone(), REALM_MIGRATIONS)
+        apply_migrations(pool.clone(), WORKSPACE_MIGRATIONS)
             .await
             .unwrap();
         pool
@@ -335,8 +335,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn realm_admin_insert_then_find() {
-        let pool = realm_pool().await;
+    async fn workspace_admin_insert_then_find() {
+        let pool = workspace_pool().await;
         let inserted = insert_realm_admin(&pool, "ops@acme.com", "hash", Some("Ops"))
             .await
             .unwrap();
@@ -349,7 +349,7 @@ mod tests {
 
     #[tokio::test]
     async fn app_admin_scoped_by_app_id() {
-        let pool = realm_pool().await;
+        let pool = workspace_pool().await;
         // Need an `apps` row because app_admins.app_id has a FK.
         sqlx::query("INSERT INTO apps (id, name, created_at) VALUES (?, ?, ?)")
             .bind("mobile")

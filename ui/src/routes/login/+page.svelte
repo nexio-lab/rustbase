@@ -3,7 +3,7 @@
 	import { api, ApiError, type MasterLoginResponse } from '$lib/api';
 	import { auth } from '$lib/auth.svelte';
 
-	// Master-admin login. The realm-admin form lives elsewhere and
+	// Master-admin login. The workspace-admin form lives elsewhere and
 	// keeps email-based credentials; this one accepts the master
 	// admin's username (default "admin"). If the server hasn't been
 	// initialized yet, the setup gate returns 503 and we link to /setup.
@@ -27,7 +27,7 @@
 			// Session cookies were just set by the server response;
 			// we only retain the non-secret identity blob in JS.
 			auth.setMasterSession({ admin: login.admin });
-			await goto('/realms');
+			await goto('/workspaces');
 		} catch (e) {
 			if (e instanceof ApiError) {
 				if (e.code === 'service_unavailable' || e.status === 503) {

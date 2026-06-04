@@ -11,13 +11,13 @@ Every significant change writes a row to the matching scope's `audit_log` table.
 | `policy_deleted` | scope where the policy was deleted |
 | `oauth_provider_set` | app |
 | `oauth_provider_deleted` | app |
-| `realm_admin_added` | system |
-| `app_admin_added` | realm |
+| `workspace_admin_added` | system |
+| `app_admin_added` | workspace |
 | `user_force_verified` | app |
 | `user_totp_reset` | app |
 | `user_deleted` | app |
-| `realm_deleted` | system |
-| `app_deleted` | realm |
+| `workspace_deleted` | system |
+| `app_deleted` | workspace |
 | `collection_deleted` | app |
 | `access_rule_set` | app |
 | `hooks_reloaded` | app |
@@ -45,8 +45,8 @@ The list grows; the dashboard's **Audit** tab reflects whatever's in the table.
 
 ```http
 GET /api/system/audit?page=&per_page=&action=&actor=
-GET /api/realms/:realm/audit?...
-GET /api/realms/:realm/apps/:app/audit?...
+GET /api/workspaces/:workspace/audit?...
+GET /api/workspaces/:workspace/apps/:app/audit?...
 ```
 
 - `action` is a case-insensitive substring match.

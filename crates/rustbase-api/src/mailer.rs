@@ -16,7 +16,7 @@ use dashmap::DashMap;
 use lettre::message::{MultiPart, header::ContentType};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor, message::Mailbox};
-use rustbase_core::{AppId, EmailMessage, Mailer, MailerError, PolicySpec, RealmId};
+use rustbase_core::{AppId, EmailMessage, Mailer, MailerError, PolicySpec, WorkspaceId};
 use rustbase_db::{AppPoolManager, policies};
 use serde::Deserialize;
 use std::sync::Arc;
@@ -158,7 +158,7 @@ impl Mailer for SmtpMailer {
 /// cap and the lower bound is unused.
 pub const MAILER_DAILY_QUOTA_FIELD: &str = "mailer.daily_quota";
 
-/// Per-(realm, app) wrapper that enforces a hierarchical daily-send
+/// Per-(workspace, app) wrapper that enforces a hierarchical daily-send
 /// quota on top of any other `Mailer`. The wrapped mailer (LogMailer
 /// or SmtpMailer) handles delivery; this layer adds:
 ///
@@ -177,7 +177,7 @@ pub const MAILER_DAILY_QUOTA_FIELD: &str = "mailer.daily_quota";
 /// throttle the server's own auth flows.
 pub struct QuotedMailer {
     inner: Arc<dyn Mailer>,
-    realm: RealmId,
+    workspace: WorkspaceId,
     app: AppId,
     apps: Arc<AppPoolManager>,
     counts: Arc<DashMap<NaiveDate, u32>>,
@@ -186,13 +186,13 @@ pub struct QuotedMailer {
 impl QuotedMailer {
     pub fn new(
         inner: Arc<dyn Mailer>,
-        realm: RealmId,
+        workspace: WorkspaceId,
         app: AppId,
         apps: Arc<AppPoolManager>,
     ) -> Self {
         Self {
             inner,
-            realm,
+            workspace,
             app,
             apps,
             counts: Arc::new(DashMap::new()),
@@ -207,7 +207,7 @@ impl QuotedMailer {
     async fn current_quota(&self) -> Result<Option<u32>, MailerError> {
         let pool = self
             .apps
-            .pool_for(&self.realm, &self.app)
+            .pool_for(&self.workspace, &self.app)
             .await
             .map_err(|e| MailerError::Transport(format!("quota pool: {e}")))?;
         let spec = policies::get_policy(&pool, MAILER_DAILY_QUOTA_FIELD)
@@ -217,7 +217,7 @@ impl QuotedMailer {
             Some(PolicySpec::Range(r)) if r.max >= 0 => Some(r.max as u32),
             Some(other) => {
                 tracing::warn!(
-                    realm = %self.realm.as_str(),
+                    workspace = %self.workspace.as_str(),
                     app = %self.app.as_str(),
                     kind = ?other,
                     "mailer.daily_quota policy is not a Range — ignoring"
@@ -253,7 +253,7 @@ impl Mailer for QuotedMailer {
                 *e -= 1;
                 return Err(MailerError::Rejected(format!(
                     "daily mail quota of {q} reached for {}/{}",
-                    self.realm.as_str(),
+                    self.workspace.as_str(),
                     self.app.as_str()
                 )));
             }
@@ -438,43 +438,43 @@ mod tests {
     // ------------- QuotedMailer -------------
 
     use rustbase_core::{PolicySpec, RangePolicy};
-    use rustbase_db::migrations::{APP_MIGRATIONS, REALM_MIGRATIONS, apply_migrations};
+    use rustbase_db::migrations::{APP_MIGRATIONS, WORKSPACE_MIGRATIONS, apply_migrations};
     use rustbase_db::pool::AppPoolManager;
     use std::path::PathBuf;
     use tempfile::tempdir;
 
-    /// Spin up a temp on-disk universe and pre-seed the realm + app DBs.
-    /// Returns the app pool manager plus the (realm, app) keys so a
+    /// Spin up a temp on-disk universe and pre-seed the workspace + app DBs.
+    /// Returns the app pool manager plus the (workspace, app) keys so a
     /// QuotedMailer can be parameterised.
     async fn fresh_app_universe() -> (
         Arc<AppPoolManager>,
-        RealmId,
+        WorkspaceId,
         AppId,
         tempfile::TempDir,
         sqlx::SqlitePool,
     ) {
         let dir = tempdir().unwrap();
         let data_dir: PathBuf = dir.path().to_path_buf();
-        // Realm DB needs its migrations so the apps table exists for
+        // Workspace DB needs its migrations so the apps table exists for
         // pool resolution; app DB needs its migrations so the
         // _policies table exists for QuotedMailer's policy lookup.
-        let realm_pools = Arc::new(rustbase_db::pool::RealmPoolManager::new(
+        let workspace_pools = Arc::new(rustbase_db::pool::WorkspacePoolManager::new(
             data_dir.clone(),
             4,
         ));
-        let realm = RealmId::from("acme");
+        let workspace = WorkspaceId::from("acme");
         let app = AppId::from("mobile");
-        let realm_pool = realm_pools.pool_for(&realm).await.unwrap();
-        apply_migrations(realm_pool.clone(), REALM_MIGRATIONS)
+        let workspace_pool = workspace_pools.pool_for(&workspace).await.unwrap();
+        apply_migrations(workspace_pool.clone(), WORKSPACE_MIGRATIONS)
             .await
             .unwrap();
 
         let apps = Arc::new(AppPoolManager::new(data_dir.clone(), 4));
-        let app_pool = apps.pool_for(&realm, &app).await.unwrap();
+        let app_pool = apps.pool_for(&workspace, &app).await.unwrap();
         apply_migrations(app_pool.clone(), APP_MIGRATIONS)
             .await
             .unwrap();
-        (apps, realm, app, dir, app_pool)
+        (apps, workspace, app, dir, app_pool)
     }
 
     /// Counting MailerError-clean transport. Bare Vec under a mutex
@@ -510,9 +510,9 @@ mod tests {
 
     #[tokio::test]
     async fn quoted_mailer_passes_through_when_no_policy_set() {
-        let (apps, realm, app, _dir, _app_pool) = fresh_app_universe().await;
+        let (apps, workspace, app, _dir, _app_pool) = fresh_app_universe().await;
         let inner = Arc::new(CountingMailer::default());
-        let qm = QuotedMailer::new(inner.clone(), realm, app, apps);
+        let qm = QuotedMailer::new(inner.clone(), workspace, app, apps);
 
         // 100 sends, no policy → all succeed (unlimited).
         for _ in 0..100 {
@@ -524,13 +524,13 @@ mod tests {
 
     #[tokio::test]
     async fn quoted_mailer_enforces_daily_cap() {
-        let (apps, realm, app, _dir, app_pool) = fresh_app_universe().await;
+        let (apps, workspace, app, _dir, app_pool) = fresh_app_universe().await;
         policies::upsert_policy(&app_pool, MAILER_DAILY_QUOTA_FIELD, &quota_spec(3))
             .await
             .unwrap();
 
         let inner = Arc::new(CountingMailer::default());
-        let qm = QuotedMailer::new(inner.clone(), realm, app, apps);
+        let qm = QuotedMailer::new(inner.clone(), workspace, app, apps);
         // Three sends succeed, fourth must be Rejected with the cap
         // in the message.
         for _ in 0..3 {
@@ -551,12 +551,12 @@ mod tests {
 
     #[tokio::test]
     async fn quoted_mailer_refunds_slot_on_transport_failure() {
-        let (apps, realm, app, _dir, app_pool) = fresh_app_universe().await;
+        let (apps, workspace, app, _dir, app_pool) = fresh_app_universe().await;
         policies::upsert_policy(&app_pool, MAILER_DAILY_QUOTA_FIELD, &quota_spec(2))
             .await
             .unwrap();
 
-        let qm = QuotedMailer::new(Arc::new(FailingMailer), realm, app, apps);
+        let qm = QuotedMailer::new(Arc::new(FailingMailer), workspace, app, apps);
         // Three failing sends → each refunds; count stays at 0.
         for _ in 0..3 {
             let err = qm.send(msg()).await.unwrap_err();
@@ -569,7 +569,7 @@ mod tests {
     async fn quoted_mailer_ignores_non_range_policy() {
         // A misconfigured field (Toggle instead of Range) should not
         // silently lock out all mail; we log + treat as unlimited.
-        let (apps, realm, app, _dir, app_pool) = fresh_app_universe().await;
+        let (apps, workspace, app, _dir, app_pool) = fresh_app_universe().await;
         policies::upsert_policy(
             &app_pool,
             MAILER_DAILY_QUOTA_FIELD,
@@ -579,7 +579,7 @@ mod tests {
         .unwrap();
 
         let inner = Arc::new(CountingMailer::default());
-        let qm = QuotedMailer::new(inner.clone(), realm, app, apps);
+        let qm = QuotedMailer::new(inner.clone(), workspace, app, apps);
         for _ in 0..5 {
             qm.send(msg()).await.unwrap();
         }

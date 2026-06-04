@@ -15,7 +15,7 @@
 //! Supported paths today:
 //!   - `request.auth.id`
 //!   - `request.auth.email`
-//!   - `request.auth.realm`
+//!   - `request.auth.workspace`
 //!
 //! Unknown paths return an error; this is by design — silently
 //! emitting `null` would invite rules that look strict but are
@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 pub struct RuleContext {
     pub user_id: Option<String>,
     pub user_email: Option<String>,
-    pub user_realm: Option<String>,
+    pub user_workspace: Option<String>,
 }
 
 pub fn substitute(template: &str, ctx: &RuleContext) -> Result<String, CoreError> {
@@ -65,7 +65,7 @@ fn resolve(path: &str, ctx: &RuleContext) -> Result<String, CoreError> {
     let value: Option<&str> = match path {
         "request.auth.id" => ctx.user_id.as_deref(),
         "request.auth.email" => ctx.user_email.as_deref(),
-        "request.auth.realm" => ctx.user_realm.as_deref(),
+        "request.auth.workspace" => ctx.user_workspace.as_deref(),
         other => {
             return Err(CoreError::Validation(format!(
                 "unknown rule-template path: {other}"
@@ -86,7 +86,7 @@ mod tests {
         RuleContext {
             user_id: Some(id.into()),
             user_email: Some("u@example.com".into()),
-            user_realm: Some("acme".into()),
+            user_workspace: Some("acme".into()),
         }
     }
 
@@ -97,13 +97,13 @@ mod tests {
     }
 
     #[test]
-    fn substitutes_email_and_realm() {
+    fn substitutes_email_and_workspace() {
         let out = substitute(
-            "domain = {{request.auth.email}} && realm = {{request.auth.realm}}",
+            "domain = {{request.auth.email}} && workspace = {{request.auth.workspace}}",
             &ctx("u1"),
         )
         .unwrap();
-        assert_eq!(out, r#"domain = "u@example.com" && realm = "acme""#);
+        assert_eq!(out, r#"domain = "u@example.com" && workspace = "acme""#);
     }
 
     #[test]

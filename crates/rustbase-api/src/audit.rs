@@ -1,8 +1,8 @@
 //! Audit log read endpoints, one per scope.
 //!
 //! - `GET /api/system/audit`              master scope (master admins only)
-//! - `GET /api/realms/:realm/audit`       realm scope
-//! - `GET /api/realms/:realm/apps/:app/audit`  app scope
+//! - `GET /api/workspaces/:workspace/audit`       workspace scope
+//! - `GET /api/workspaces/:workspace/apps/:app/audit`  app scope
 //!
 //! All three accept the same `?page=&per_page=&action=&actor=` query
 //! string and return the same `ListedAuditResponse` shape so a single
@@ -13,11 +13,11 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
-use rustbase_core::{AppId, CoreError, RealmId};
+use rustbase_core::{AppId, CoreError, WorkspaceId};
 use rustbase_db::{
     apps::find_app,
     audit::{AuditQuery, list_paginated},
-    realms::find_realm,
+    workspaces::find_realm,
 };
 use serde::{Deserialize, Serialize};
 
@@ -101,17 +101,22 @@ pub async fn system_list(
     Ok(Json(into_response(listed)))
 }
 
-pub async fn realm_list(
+pub async fn workspace_list(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path(realm): Path<String>,
+    Path(workspace): Path<String>,
     Query(q): Query<AuditListQuery>,
 ) -> Result<Json<ListedAuditResponse>, ApiError> {
-    auth.require_realm_access(&realm)?;
-    find_realm(state.system.pool(), &realm)
+    auth.require_realm_access(&workspace)?;
+    find_realm(state.system.pool(), &workspace)
         .await?
-        .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.clone())))?;
-    let pool = state.realms.pool_for(&RealmId::from(realm)).await?;
+        .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(
+            workspace.clone(),
+        )))?;
+    let pool = state
+        .workspaces
+        .pool_for(&WorkspaceId::from(workspace))
+        .await?;
     let listed = list_paginated(&pool, build_query(q)).await?;
     Ok(Json(into_response(listed)))
 }
@@ -119,23 +124,28 @@ pub async fn realm_list(
 pub async fn app_list(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((realm, app)): Path<(String, String)>,
+    Path((workspace, app)): Path<(String, String)>,
     Query(q): Query<AuditListQuery>,
 ) -> Result<Json<ListedAuditResponse>, ApiError> {
-    auth.require_app_access(&realm, &app)?;
-    find_realm(state.system.pool(), &realm)
+    auth.require_app_access(&workspace, &app)?;
+    find_realm(state.system.pool(), &workspace)
         .await?
-        .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.clone())))?;
-    let realm_pool = state.realms.pool_for(&RealmId::from(realm.clone())).await?;
-    find_app(&realm_pool, &app)
+        .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(
+            workspace.clone(),
+        )))?;
+    let workspace_pool = state
+        .workspaces
+        .pool_for(&WorkspaceId::from(workspace.clone()))
+        .await?;
+    find_app(&workspace_pool, &app)
         .await?
         .ok_or(ApiError::Core(CoreError::AppNotFound {
-            realm: realm.clone(),
+            workspace: workspace.clone(),
             app: app.clone(),
         }))?;
     let app_pool = state
         .apps
-        .pool_for(&RealmId::from(realm), &AppId::from(app))
+        .pool_for(&WorkspaceId::from(workspace), &AppId::from(app))
         .await?;
     let listed = list_paginated(&app_pool, build_query(q)).await?;
     Ok(Json(into_response(listed)))

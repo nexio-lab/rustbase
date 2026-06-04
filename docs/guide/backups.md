@@ -1,6 +1,6 @@
 # Backups (Litestream)
 
-[Litestream](https://litestream.io) is a sidecar that streams WAL changes from SQLite to S3 (or any S3-compatible bucket) **continuously**. RustBase ships first-class integration: turn it on in `rustbase.toml`, point it at a bucket, and your `system.db`, every `realm.db`, and every app `data.db` are replicated.
+[Litestream](https://litestream.io) is a sidecar that streams WAL changes from SQLite to S3 (or any S3-compatible bucket) **continuously**. RustBase ships first-class integration: turn it on in `rustbase.toml`, point it at a bucket, and your `system.db`, every `workspace.db`, and every app `data.db` are replicated.
 
 ## Why Litestream
 
@@ -38,13 +38,13 @@ s3://my-rustbase-backups/
     system.db/
       generations/<id>/snapshots/...
       generations/<id>/wal/...
-    realms/acme/realm.db/
+    workspaces/acme/workspace.db/
       generations/<id>/...
-    realms/acme/apps/web/data.db/
+    workspaces/acme/apps/web/data.db/
       generations/<id>/...
 ```
 
-The on-disk path becomes the prefix in the bucket. Adding a realm or app on disk → next replication cycle catches it automatically.
+The on-disk path becomes the prefix in the bucket. Adding a workspace or app on disk → next replication cycle catches it automatically.
 
 ## Credentials
 
@@ -74,8 +74,8 @@ AWS_ENDPOINT_URL_S3=https://<account>.r2.cloudflarestorage.com
      -o data/system.db \
      s3://my-rustbase-backups/prod/system.db
    ```
-   Do the same for every `realm.db` and every app `data.db`.
-4. Copy the matching `data/realms/<realm>/apps/<app>/storage/` (the file blobs) from wherever you mirrored them. If you used the S3 storage backend, this step is automatic — the blobs already live in S3.
+   Do the same for every `workspace.db` and every app `data.db`.
+4. Copy the matching `data/workspaces/<workspace>/apps/<app>/storage/` (the file blobs) from wherever you mirrored them. If you used the S3 storage backend, this step is automatic — the blobs already live in S3.
 5. `systemctl start rustbase`.
 
 That's the entire DR drill.
@@ -84,7 +84,7 @@ That's the entire DR drill.
 
 | Component | Backed up by | RPO | RTO |
 |---|---|---|---|
-| `system.db` + every `realm.db` + every `data.db` | Litestream → S3 | `replicate_interval_sec` (default 10s) | Minutes to download + restart |
+| `system.db` + every `workspace.db` + every `data.db` | Litestream → S3 | `replicate_interval_sec` (default 10s) | Minutes to download + restart |
 | File blobs (local backend) | Your own `rsync` / `restic` | Whatever you set | Minutes |
 | File blobs (S3 backend) | S3 itself | — | — |
 | Hooks (JS/TS source) | Your version control or your `rsync` | Whatever you set | Seconds |

@@ -1,8 +1,8 @@
 //! Refresh-token storage.
 //!
 //! Refresh tokens live in `_refresh_tokens`. Both `system.db` and every
-//! `realm.db` have a table with the same schema; this module is generic
-//! over the pool so the same code serves master and realm scopes —
+//! `workspace.db` have a table with the same schema; this module is generic
+//! over the pool so the same code serves master and workspace scopes —
 //! callers decide which pool to pass.
 
 use crate::error::Result;
@@ -13,7 +13,7 @@ use sqlx::SqlitePool;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubjectKind {
     MasterAdmin,
-    RealmAdmin,
+    WorkspaceAdmin,
     AppAdmin,
     User,
 }
@@ -22,7 +22,7 @@ impl SubjectKind {
     pub fn as_str(&self) -> &'static str {
         match self {
             SubjectKind::MasterAdmin => "master_admin",
-            SubjectKind::RealmAdmin => "realm_admin",
+            SubjectKind::WorkspaceAdmin => "workspace_admin",
             SubjectKind::AppAdmin => "app_admin",
             SubjectKind::User => "user",
         }

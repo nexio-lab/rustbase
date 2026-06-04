@@ -49,38 +49,39 @@ macro_rules! id_type {
 }
 
 id_type!(
-    RealmId,
-    "Identifier for a realm (identity / organization boundary)."
+    WorkspaceId,
+    "Identifier for a workspace (identity / organization boundary)."
 );
-id_type!(AppId, "Identifier for an app within a realm.");
-id_type!(UserId, "Identifier for an end user within a realm.");
-id_type!(AdminId, "Identifier for a master, realm, or app admin.");
+id_type!(AppId, "Identifier for an app within a workspace.");
+id_type!(UserId, "Identifier for an end user within a workspace.");
+id_type!(AdminId, "Identifier for a master, workspace, or app admin.");
 id_type!(CollectionId, "Identifier for a collection within an app.");
 id_type!(RecordId, "Identifier for a record within a collection.");
 
-/// Reserved id of the master realm. It cannot be deleted.
-pub const MASTER_REALM_ID: &str = "master";
+/// Reserved id of the master workspace. It cannot be deleted.
+pub const MASTER_WORKSPACE_ID: &str = "master";
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn realm_id_round_trips_through_json() {
-        let id = RealmId::new("acme");
+    fn workspace_id_round_trips_through_json() {
+        let id = WorkspaceId::new("acme");
         let json = serde_json::to_string(&id).unwrap();
         assert_eq!(json, "\"acme\"");
-        let parsed: RealmId = serde_json::from_str(&json).unwrap();
+        let parsed: WorkspaceId = serde_json::from_str(&json).unwrap();
         assert_eq!(id, parsed);
     }
 
     #[test]
     fn id_types_are_distinct() {
-        // This is a compile-time guarantee — RealmId and AppId cannot be
-        // assigned to each other. We just smoke-test the constructors.
-        let r = RealmId::from("acme");
+        // This is a compile-time guarantee — WorkspaceId and AppId
+        // cannot be assigned to each other. We just smoke-test the
+        // constructors.
+        let w = WorkspaceId::from("acme");
         let a = AppId::from("mobile");
-        assert_eq!(r.as_str(), "acme");
+        assert_eq!(w.as_str(), "acme");
         assert_eq!(a.as_str(), "mobile");
     }
 }

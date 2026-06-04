@@ -1,13 +1,13 @@
 //! Admin CRUD for per-app OAuth provider configuration.
 //!
-//! Four endpoints under `/api/realms/:realm/apps/:app/auth/oauth/providers`:
+//! Four endpoints under `/api/workspaces/:workspace/apps/:app/auth/oauth/providers`:
 //!
 //! - `GET    /`             list providers (summary; no secrets)
 //! - `GET    /:provider`    fetch one provider (summary; no secret)
 //! - `PUT    /:provider`    upsert provider + client_secret
 //! - `DELETE /:provider`    remove the row
 //!
-//! Auth: requires master OR realm-admin of the target realm OR app-admin
+//! Auth: requires master OR workspace-admin of the target workspace OR app-admin
 //! of the target app — `AdminAuth::require_app_access` enforces the
 //! matrix.
 //!
@@ -25,7 +25,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
 };
-use rustbase_core::{AppId, CoreError, RealmId};
+use rustbase_core::{AppId, CoreError, WorkspaceId};
 use rustbase_db::oauth_providers::{
     self, OAuthProvider, OAuthProviderConfig, OAuthProviderSummary,
 };
@@ -67,26 +67,26 @@ impl From<OAuthProviderSummary> for ProviderResponse {
     }
 }
 
-/// `GET /api/realms/:realm/apps/:app/auth/oauth/providers`.
+/// `GET /api/workspaces/:workspace/apps/:app/auth/oauth/providers`.
 pub async fn list(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((realm, app)): Path<(String, String)>,
+    Path((workspace, app)): Path<(String, String)>,
 ) -> Result<Json<Vec<ProviderResponse>>, ApiError> {
-    auth.require_app_access(&realm, &app)?;
-    let pool = app_pool(&state, &realm, &app).await?;
+    auth.require_app_access(&workspace, &app)?;
+    let pool = app_pool(&state, &workspace, &app).await?;
     let rows = oauth_providers::list_providers(&pool).await?;
     Ok(Json(rows.into_iter().map(ProviderResponse::from).collect()))
 }
 
-/// `GET /api/realms/:realm/apps/:app/auth/oauth/providers/:provider`.
+/// `GET /api/workspaces/:workspace/apps/:app/auth/oauth/providers/:provider`.
 pub async fn get(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((realm, app, provider)): Path<(String, String, String)>,
+    Path((workspace, app, provider)): Path<(String, String, String)>,
 ) -> Result<Json<ProviderResponse>, ApiError> {
-    auth.require_app_access(&realm, &app)?;
-    let pool = app_pool(&state, &realm, &app).await?;
+    auth.require_app_access(&workspace, &app)?;
+    let pool = app_pool(&state, &workspace, &app).await?;
     let row = oauth_providers::find_provider(&pool, &provider)
         .await?
         .ok_or(ApiError::Core(CoreError::NotFound {
@@ -100,15 +100,15 @@ pub async fn get(
     }))
 }
 
-/// `PUT /api/realms/:realm/apps/:app/auth/oauth/providers/:provider`.
+/// `PUT /api/workspaces/:workspace/apps/:app/auth/oauth/providers/:provider`.
 pub async fn put(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((realm, app, provider)): Path<(String, String, String)>,
+    Path((workspace, app, provider)): Path<(String, String, String)>,
     Json(body): Json<PutProviderBody>,
 ) -> Result<Json<ProviderResponse>, ApiError> {
-    auth.require_app_access(&realm, &app)?;
-    let pool = app_pool(&state, &realm, &app).await?;
+    auth.require_app_access(&workspace, &app)?;
+    let pool = app_pool(&state, &workspace, &app).await?;
 
     let secret_enc = match body.client_secret.as_deref().filter(|s| !s.is_empty()) {
         Some(plain) => {
@@ -137,7 +137,7 @@ pub async fn put(
     )
     .await?;
 
-    tracing::info!(realm = %realm, app = %app, provider = %provider, "OAuth provider upserted");
+    tracing::info!(workspace = %workspace, app = %app, provider = %provider, "OAuth provider upserted");
     Ok(Json(ProviderResponse {
         provider,
         client_id: body.client_id,
@@ -145,14 +145,14 @@ pub async fn put(
     }))
 }
 
-/// `DELETE /api/realms/:realm/apps/:app/auth/oauth/providers/:provider`.
+/// `DELETE /api/workspaces/:workspace/apps/:app/auth/oauth/providers/:provider`.
 pub async fn delete(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((realm, app, provider)): Path<(String, String, String)>,
+    Path((workspace, app, provider)): Path<(String, String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    auth.require_app_access(&realm, &app)?;
-    let pool = app_pool(&state, &realm, &app).await?;
+    auth.require_app_access(&workspace, &app)?;
+    let pool = app_pool(&state, &workspace, &app).await?;
     let n = oauth_providers::delete_provider(&pool, &provider).await?;
     if n == 0 {
         return Err(ApiError::Core(CoreError::NotFound {
@@ -160,16 +160,20 @@ pub async fn delete(
             id: provider,
         }));
     }
-    tracing::info!(realm = %realm, app = %app, provider = %provider, "OAuth provider deleted");
+    tracing::info!(workspace = %workspace, app = %app, provider = %provider, "OAuth provider deleted");
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn app_pool(state: &AppState, realm: &str, app: &str) -> Result<sqlx::SqlitePool, ApiError> {
-    require_app_exists(state, realm, app).await?;
+async fn app_pool(
+    state: &AppState,
+    workspace: &str,
+    app: &str,
+) -> Result<sqlx::SqlitePool, ApiError> {
+    require_app_exists(state, workspace, app).await?;
     Ok(state
         .apps
         .pool_for(
-            &RealmId::from(realm.to_string()),
+            &WorkspaceId::from(workspace.to_string()),
             &AppId::from(app.to_string()),
         )
         .await?)

@@ -20,14 +20,14 @@
 			// 1. Set the master admin password.
 			await api.post('/_/setup', { password }, { auth: false });
 			// 2. Immediately log in with the canonical "admin" username so
-			//    the user lands on /realms without retyping anything.
+			//    the user lands on /workspaces without retyping anything.
 			const login = await api.post<MasterLoginResponse>(
 				'/_/auth/admin/login',
 				{ username: 'admin', password },
 				{ auth: false }
 			);
 			auth.setMasterSession({ admin: login.admin });
-			await goto('/realms');
+			await goto('/workspaces');
 		} catch (e) {
 			if (e instanceof ApiError) {
 				if (e.code === 'conflict' || e.status === 409) {

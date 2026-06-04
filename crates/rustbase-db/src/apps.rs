@@ -1,4 +1,4 @@
-//! App rows inside a realm's `realm.db`.
+//! App rows inside a workspace's `workspace.db`.
 
 use crate::error::{DbError, Result};
 use chrono::{DateTime, Utc};
@@ -69,12 +69,12 @@ pub async fn delete_app(pool: &SqlitePool, id: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::migrations::{REALM_MIGRATIONS, apply_migrations};
+    use crate::migrations::{WORKSPACE_MIGRATIONS, apply_migrations};
     use crate::pool::open_memory_pool;
 
     async fn fresh_pool() -> SqlitePool {
         let pool = open_memory_pool().await.unwrap();
-        apply_migrations(pool.clone(), REALM_MIGRATIONS)
+        apply_migrations(pool.clone(), WORKSPACE_MIGRATIONS)
             .await
             .unwrap();
         pool

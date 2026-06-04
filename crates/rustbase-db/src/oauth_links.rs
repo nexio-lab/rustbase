@@ -1,6 +1,6 @@
 //! Mapping from `(provider, provider_user_id)` to a local user.
 //!
-//! Backed by the `user_oauth_links` table that the realm initial
+//! Backed by the `user_oauth_links` table that the workspace initial
 //! migration provisioned. A user can link multiple providers (one
 //! row per provider); a single provider account only links to one
 //! user (enforced by the `(user_id, provider)` PK plus the

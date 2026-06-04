@@ -1,12 +1,12 @@
 //! Endpoints for managing JS/TS hook source files.
 //!
-//! - `GET    /api/realms/:realm/apps/:app/hooks`
-//! - `GET    /api/realms/:realm/apps/:app/hooks/:filename`
-//! - `PUT    /api/realms/:realm/apps/:app/hooks/:filename`     write + reload
-//! - `DELETE /api/realms/:realm/apps/:app/hooks/:filename`     delete + reload
-//! - `POST   /api/realms/:realm/apps/:app/hooks/reload`        reload without writing
+//! - `GET    /api/workspaces/:workspace/apps/:app/hooks`
+//! - `GET    /api/workspaces/:workspace/apps/:app/hooks/:filename`
+//! - `PUT    /api/workspaces/:workspace/apps/:app/hooks/:filename`     write + reload
+//! - `DELETE /api/workspaces/:workspace/apps/:app/hooks/:filename`     delete + reload
+//! - `POST   /api/workspaces/:workspace/apps/:app/hooks/reload`        reload without writing
 //!
-//! Files live on disk under `data/hooks/<realm>/<app>/`. Every mutating
+//! Files live on disk under `data/hooks/<workspace>/<app>/`. Every mutating
 //! call rebuilds the app's `AppHooks` via `HookEngine::load_app` and
 //! returns any errors that piled up during script evaluation — the
 //! dashboard surfaces them next to the editor so a syntax error doesn't
@@ -16,8 +16,8 @@ use axum::{
     Json,
     extract::{Path, State},
 };
-use rustbase_core::{AppId, CoreError, RealmId};
-use rustbase_db::{apps::find_app, realms::find_realm};
+use rustbase_core::{AppId, CoreError, WorkspaceId};
+use rustbase_db::{apps::find_app, workspaces::find_realm};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -66,12 +66,12 @@ pub struct PutHookResponse {
 pub async fn list(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((realm, app)): Path<(String, String)>,
+    Path((workspace, app)): Path<(String, String)>,
 ) -> Result<Json<Vec<HookFile>>, ApiError> {
-    auth.require_app_access(&realm, &app)?;
-    require_app_exists(&state, &realm, &app).await?;
+    auth.require_app_access(&workspace, &app)?;
+    require_app_exists(&state, &workspace, &app).await?;
 
-    let dir = hooks_dir(&state, &realm, &app);
+    let dir = hooks_dir(&state, &workspace, &app);
     let mut files = Vec::new();
     if dir.exists() {
         let mut rd = tokio::fs::read_dir(&dir).await.map_err(io_err)?;
@@ -100,13 +100,13 @@ pub async fn list(
 pub async fn get(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((realm, app, filename)): Path<(String, String, String)>,
+    Path((workspace, app, filename)): Path<(String, String, String)>,
 ) -> Result<Json<HookFileBody>, ApiError> {
-    auth.require_app_access(&realm, &app)?;
-    require_app_exists(&state, &realm, &app).await?;
+    auth.require_app_access(&workspace, &app)?;
+    require_app_exists(&state, &workspace, &app).await?;
     validate_filename(&filename)?;
 
-    let path = hooks_dir(&state, &realm, &app).join(&filename);
+    let path = hooks_dir(&state, &workspace, &app).join(&filename);
     if !path.exists() {
         return Err(ApiError::Core(CoreError::NotFound {
             collection: "hook".into(),
@@ -128,21 +128,21 @@ pub async fn get(
 pub async fn put(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((realm, app, filename)): Path<(String, String, String)>,
+    Path((workspace, app, filename)): Path<(String, String, String)>,
     Json(body): Json<PutHookBody>,
 ) -> Result<Json<PutHookResponse>, ApiError> {
-    auth.require_app_access(&realm, &app)?;
-    require_app_exists(&state, &realm, &app).await?;
+    auth.require_app_access(&workspace, &app)?;
+    require_app_exists(&state, &workspace, &app).await?;
     validate_filename(&filename)?;
 
-    let dir = hooks_dir(&state, &realm, &app);
+    let dir = hooks_dir(&state, &workspace, &app);
     tokio::fs::create_dir_all(&dir).await.map_err(io_err)?;
     let path = dir.join(&filename);
     tokio::fs::write(&path, body.source.as_bytes())
         .await
         .map_err(io_err)?;
 
-    let reload = reload_app(&state, &realm, &app).await?;
+    let reload = reload_app(&state, &workspace, &app).await?;
     let meta = tokio::fs::metadata(&path).await.map_err(io_err)?;
     Ok(Json(PutHookResponse {
         file: HookFileBody {
@@ -158,13 +158,13 @@ pub async fn put(
 pub async fn delete(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((realm, app, filename)): Path<(String, String, String)>,
+    Path((workspace, app, filename)): Path<(String, String, String)>,
 ) -> Result<Json<ReloadOutcome>, ApiError> {
-    auth.require_app_access(&realm, &app)?;
-    require_app_exists(&state, &realm, &app).await?;
+    auth.require_app_access(&workspace, &app)?;
+    require_app_exists(&state, &workspace, &app).await?;
     validate_filename(&filename)?;
 
-    let path = hooks_dir(&state, &realm, &app).join(&filename);
+    let path = hooks_dir(&state, &workspace, &app).join(&filename);
     if !path.exists() {
         return Err(ApiError::Core(CoreError::NotFound {
             collection: "hook".into(),
@@ -173,25 +173,25 @@ pub async fn delete(
     }
     tokio::fs::remove_file(&path).await.map_err(io_err)?;
 
-    let reload = reload_app(&state, &realm, &app).await?;
+    let reload = reload_app(&state, &workspace, &app).await?;
     Ok(Json(reload))
 }
 
 pub async fn reload(
     auth: AdminAuth,
     State(state): State<AppState>,
-    Path((realm, app)): Path<(String, String)>,
+    Path((workspace, app)): Path<(String, String)>,
 ) -> Result<Json<ReloadOutcome>, ApiError> {
-    auth.require_app_access(&realm, &app)?;
-    require_app_exists(&state, &realm, &app).await?;
-    let outcome = reload_app(&state, &realm, &app).await?;
+    auth.require_app_access(&workspace, &app)?;
+    require_app_exists(&state, &workspace, &app).await?;
+    let outcome = reload_app(&state, &workspace, &app).await?;
     Ok(Json(outcome))
 }
 
 // ----- helpers -----
 
-fn hooks_dir(state: &AppState, realm: &str, app: &str) -> PathBuf {
-    state.data_dir.join("hooks").join(realm).join(app)
+fn hooks_dir(state: &AppState, workspace: &str, app: &str) -> PathBuf {
+    state.data_dir.join("hooks").join(workspace).join(app)
 }
 
 /// Reject anything that could escape the hooks directory or fool the JS
@@ -250,18 +250,20 @@ fn mtime_rfc3339(mt: Option<SystemTime>) -> String {
     }
 }
 
-async fn require_app_exists(state: &AppState, realm: &str, app: &str) -> Result<(), ApiError> {
-    find_realm(state.system.pool(), realm)
+async fn require_app_exists(state: &AppState, workspace: &str, app: &str) -> Result<(), ApiError> {
+    find_realm(state.system.pool(), workspace)
         .await?
-        .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.to_string())))?;
+        .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(
+            workspace.to_string(),
+        )))?;
     let pool = state
-        .realms
-        .pool_for(&RealmId::from(realm.to_string()))
+        .workspaces
+        .pool_for(&WorkspaceId::from(workspace.to_string()))
         .await?;
     find_app(&pool, app)
         .await?
         .ok_or(ApiError::Core(rustbase_core::CoreError::AppNotFound {
-            realm: realm.to_string(),
+            workspace: workspace.to_string(),
             app: app.to_string(),
         }))?;
     Ok(())
@@ -270,30 +272,34 @@ async fn require_app_exists(state: &AppState, realm: &str, app: &str) -> Result<
 /// Rebuild the app's `AppHooks` from disk and return any per-script
 /// errors the runtime captured. Bridge + mailer wiring mirrors what
 /// `apps::create` does on first load — they must stay in sync.
-async fn reload_app(state: &AppState, realm: &str, app: &str) -> Result<ReloadOutcome, ApiError> {
-    let dir = hooks_dir(state, realm, app);
+async fn reload_app(
+    state: &AppState,
+    workspace: &str,
+    app: &str,
+) -> Result<ReloadOutcome, ApiError> {
+    let dir = hooks_dir(state, workspace, app);
     let bridge = crate::hook_bridge::ApiBridge::new(
-        RealmId::from(realm.to_string()),
+        WorkspaceId::from(workspace.to_string()),
         AppId::from(app.to_string()),
         state.apps.clone(),
     )
     .into_sync();
     let quoted = Arc::new(crate::mailer::QuotedMailer::new(
         state.mailer.clone(),
-        RealmId::from(realm.to_string()),
+        WorkspaceId::from(workspace.to_string()),
         AppId::from(app.to_string()),
         state.apps.clone(),
     )) as Arc<dyn rustbase_core::Mailer>;
 
     let loaded = state
         .hooks
-        .load_app(realm, app, &dir, Some(bridge), Some(quoted))
+        .load_app(workspace, app, &dir, Some(bridge), Some(quoted))
         .await
         .map_err(|e| ApiError::Core(CoreError::Internal(format!("hook reload failed: {e}"))))?;
 
     // Drain anything user scripts logged via `__rb_errors` during load.
-    // `get(realm, app)` is `Some` immediately after `load_app`.
-    let errors = match state.hooks.get(realm, app) {
+    // `get(workspace, app)` is `Some` immediately after `load_app`.
+    let errors = match state.hooks.get(workspace, app) {
         Some(h) => h.drain_errors().await.unwrap_or_default(),
         None => Vec::new(),
     };

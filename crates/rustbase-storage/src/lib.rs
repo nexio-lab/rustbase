@@ -4,7 +4,7 @@
 //! workspace can use. Backends:
 //!
 //! - `Storage::local(root)` — files under
-//!   `data/realms/<id>/apps/<id>/storage/`.
+//!   `data/workspaces/<id>/apps/<id>/storage/`.
 //! - `Storage::s3(cfg)` — any S3-compatible bucket. The `endpoint`
 //!   field opts into a non-AWS host (MinIO on `http://localhost:9000`,
 //!   Cloudflare R2 at `https://<acct>.r2.cloudflarestorage.com`, etc.)

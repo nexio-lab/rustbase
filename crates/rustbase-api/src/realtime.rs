@@ -1,6 +1,6 @@
 //! Server-Sent Events subscription endpoint.
 //!
-//! `GET /api/realms/:realm/apps/:app/collections/:coll/events`
+//! `GET /api/workspaces/:workspace/apps/:app/collections/:coll/events`
 //!
 //! Authorisation reuses the records-list rule: a subscriber must
 //! pass the same `AccessAction::List` check as `GET .../records`.
@@ -27,13 +27,13 @@ use crate::state::AppState;
 pub async fn record_events(
     auth: PrincipalAuth,
     State(state): State<AppState>,
-    Path((realm, app, coll)): Path<(String, String, String)>,
+    Path((workspace, app, coll)): Path<(String, String, String)>,
 ) -> Result<impl IntoResponse, ApiError> {
     // Same gate as the records list. Subscribers see exactly what a
     // GET /records would return rows for.
-    authorize_subscribe(&auth, &state, &realm, &app, &coll).await?;
+    authorize_subscribe(&auth, &state, &workspace, &app, &coll).await?;
 
-    let key = SubscriptionKey::new(&realm, &app, &coll);
+    let key = SubscriptionKey::new(&workspace, &app, &coll);
     let rx = state.broker.subscribe(&key);
 
     let stream = BroadcastStream::new(rx).filter_map(|result| match result {
@@ -60,26 +60,28 @@ fn realtime_event_to_sse(ev: RealtimeEvent) -> Result<Event, Infallible> {
 async fn authorize_subscribe(
     auth: &PrincipalAuth,
     state: &AppState,
-    realm: &str,
+    workspace: &str,
     app: &str,
     coll: &str,
 ) -> Result<(), ApiError> {
-    use rustbase_core::{AppId, CoreError, RealmId};
-    use rustbase_db::{apps::find_app, collections::find_collection, realms::find_realm};
+    use rustbase_core::{AppId, CoreError, WorkspaceId};
+    use rustbase_db::{apps::find_app, collections::find_collection, workspaces::find_realm};
 
-    find_realm(state.system.pool(), realm)
+    find_realm(state.system.pool(), workspace)
         .await?
-        .ok_or(ApiError::Core(CoreError::RealmNotFound(realm.to_string())))?;
-    let realm_id = RealmId::from(realm.to_string());
-    let realm_pool = state.realms.pool_for(&realm_id).await?;
-    find_app(&realm_pool, app).await?.ok_or_else(|| {
+        .ok_or(ApiError::Core(CoreError::WorkspaceNotFound(
+            workspace.to_string(),
+        )))?;
+    let workspace_id = WorkspaceId::from(workspace.to_string());
+    let workspace_pool = state.workspaces.pool_for(&workspace_id).await?;
+    find_app(&workspace_pool, app).await?.ok_or_else(|| {
         ApiError::Core(CoreError::AppNotFound {
-            realm: realm.to_string(),
+            workspace: workspace.to_string(),
             app: app.to_string(),
         })
     })?;
     let app_id = AppId::from(app.to_string());
-    let app_pool = state.apps.pool_for(&realm_id, &app_id).await?;
+    let app_pool = state.apps.pool_for(&workspace_id, &app_id).await?;
     find_collection(&app_pool, coll).await?.ok_or_else(|| {
         ApiError::Core(CoreError::NotFound {
             collection: coll.to_string(),
@@ -87,10 +89,10 @@ async fn authorize_subscribe(
         })
     })?;
 
-    if auth.is_admin_for_app(realm, app) {
+    if auth.is_admin_for_app(workspace, app) {
         return Ok(());
     }
-    if auth.user_realm() != Some(realm) {
+    if auth.user_workspace() != Some(workspace) {
         return Err(ApiError::Core(CoreError::Forbidden));
     }
     let rule = get_rule(&app_pool, coll, AccessAction::List).await?;

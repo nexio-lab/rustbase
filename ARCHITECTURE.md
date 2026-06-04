@@ -8,12 +8,12 @@ new maintainer needs to find their way around the codebase.
 
 ```
 System
-  └── Realm  (organization boundary — admins live here)
+  └── Workspace  (organization boundary — admins live here)
         └── App  (data product — collections, records, files, end-users, OAuth live here)
 ```
 
 - One `system.db` per RustBase instance.
-- One `realm.db` per realm, holding the apps registry + admin tiers.
+- One `workspace.db` per workspace, holding the apps registry + admin tiers.
 - One `data.db` per app, holding collections / records / users / OAuth.
 
 Full mental model: [docs / concepts / mental-model](https://pjonaszik.github.io/rustbase/concepts/mental-model).
@@ -22,8 +22,8 @@ Full mental model: [docs / concepts / mental-model](https://pjonaszik.github.io/
 
 | Crate | Purpose | Depends on |
 |---|---|---|
-| `rustbase-core` | IO-free domain types (`RealmId`, `AppId`, `Schema`, `FilterNode`, error enum, filter parser). | nothing IO |
-| `rustbase-db` | SQLite layer: system / realm / app pools, migrations, CRUD, `FilterNode → SQL`, cascade-delete, auto-clamp. | `core` |
+| `rustbase-core` | IO-free domain types (`WorkspaceId`, `AppId`, `Schema`, `FilterNode`, error enum, filter parser). | nothing IO |
+| `rustbase-db` | SQLite layer: system / workspace / app pools, migrations, CRUD, `FilterNode → SQL`, cascade-delete, auto-clamp. | `core` |
 | `rustbase-auth` | JWT (HS256), argon2, AES-GCM KEK for at-rest OAuth secrets, TOTP, OAuth2 client. | `core` |
 | `rustbase-realtime` | In-process pub/sub broker over `tokio::sync::broadcast`. | `core` |
 | `rustbase-storage` | File backend abstraction (`object_store`): local disk + S3. | `core` |
@@ -43,11 +43,11 @@ Dependency rules:
 
 ```
 data/
-  system.db                           # realms registry, master admins, master audit
-  realms/
-    <realm_id>/
-      realm.db                        # apps, realm/app admins, admin refresh tokens, realm audit
-      storage/                        # realm-level files (rarely used)
+  system.db                           # workspaces registry, master admins, master audit
+  workspaces/
+    <workspace_id>/
+      workspace.db                        # apps, workspace/app admins, admin refresh tokens, workspace audit
+      storage/                        # workspace-level files (rarely used)
       apps/
         <app_id>/
           data.db                     # collections, records, users, oauth,
@@ -56,7 +56,7 @@ data/
                                       # file metadata, app audit
           storage/                    # app-level files (binary blobs)
   hooks/
-    <realm_id>/<app_id>/              # JS/TS hook source files (*.js, *.ts)
+    <workspace_id>/<app_id>/              # JS/TS hook source files (*.js, *.ts)
 ```
 
 Per-connection PRAGMAs (set on every pool):
@@ -73,8 +73,8 @@ Pool management lives in `rustbase-db::pool`:
 | Pool | Key | Cap (default) | Eviction |
 |---|---|---|---|
 | System | — | always open | n/a |
-| Realm | `RealmId` | 32 | LRU |
-| App | `(RealmId, AppId)` | 64 | LRU |
+| Workspace | `WorkspaceId` | 32 | LRU |
+| App | `(WorkspaceId, AppId)` | 64 | LRU |
 
 ## Filter parser
 
@@ -91,11 +91,11 @@ The same AST is reused by:
 
 ## Tokens
 
-| Role | `realm` claim | `app` claim | Stored where |
+| Role | `workspace` claim | `app` claim | Stored where |
 |---|---|---|---|
 | `master_admin` | — | — | system.db |
-| `realm_admin` | yes | — | realm.db |
-| `app_admin` | yes | yes | realm.db |
+| `workspace_admin` | yes | — | workspace.db |
+| `app_admin` | yes | yes | workspace.db |
 | `user` | yes | yes | app.db |
 
 Access tokens are HS256 JWTs with a 15-minute default TTL. Refresh tokens
@@ -120,15 +120,15 @@ hook enforces this.
 
 1. Load config (file + env vars).
 2. Open the system pool, run system migrations.
-3. Ensure the master realm row exists.
+3. Ensure the master workspace row exists.
 4. `ensure_seed_master_admin` (idempotent) inserts the `admin` row with
    NULL password if missing. The setup wizard at `POST /_/setup` finalizes
    the bootstrap by setting that password.
-5. Discover existing realms / apps and run pending migrations.
-6. Initialize the realm and app pool managers (LRU caps).
+5. Discover existing workspaces / apps and run pending migrations.
+6. Initialize the workspace and app pool managers (LRU caps).
 7. Initialize realtime broker.
 8. Initialize storage backend (local or S3).
-9. Initialize the JS/TS runtime; load hooks for every loaded `(realm, app)`.
+9. Initialize the JS/TS runtime; load hooks for every loaded `(workspace, app)`.
 10. Optionally start Litestream sidecars.
 11. Start the axum HTTP server.
 
@@ -148,9 +148,9 @@ hook enforces this.
 - Add `unwrap()` / `expect()` outside `#[cfg(test)]`.
 - Write raw SQL strings that interpolate user input — every value is a
   bound parameter.
-- Bypass `AppCtx` / `RealmCtx` — there is no "admin mode" that skips the
-  realm / app scope.
-- Allow the master realm to be deleted; renaming is fine, deletion is not.
+- Bypass `AppCtx` / `WorkspaceCtx` — there is no "admin mode" that skips the
+  workspace / app scope.
+- Allow the master workspace to be deleted; renaming is fine, deletion is not.
 - Make `rustbase-core` depend on any IO crate.
 - Store binary file data in the database.
 - Change the `FilterNode` AST without updating the SQL translator, the

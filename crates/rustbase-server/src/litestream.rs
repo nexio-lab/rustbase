@@ -6,7 +6,7 @@
 //! `data_dir`, so the on-disk layout is mirrored verbatim in the
 //! bucket prefix.
 //!
-//! The set of DBs is fixed at generation time — adding a new realm or
+//! The set of DBs is fixed at generation time — adding a new workspace or
 //! app after `litestream.yml` was written requires regenerating + a
 //! litestream restart. A future feature can automate that.
 
@@ -127,16 +127,16 @@ mod tests {
     fn discover_finds_all_db_files_recursively() {
         let dir = tempdir().unwrap();
         touch(dir.path(), "system.db");
-        touch(dir.path(), "realms/acme/realm.db");
-        touch(dir.path(), "realms/acme/apps/mobile/data.db");
-        touch(dir.path(), "realms/acme/apps/mobile/data.db-wal");
+        touch(dir.path(), "workspaces/acme/workspace.db");
+        touch(dir.path(), "workspaces/acme/apps/mobile/data.db");
+        touch(dir.path(), "workspaces/acme/apps/mobile/data.db-wal");
         touch(dir.path(), "litestream.yml");
 
         let dbs = discover_dbs(dir.path(), None).unwrap();
         let names: Vec<_> = dbs.iter().map(|d| d.bucket_path.clone()).collect();
         assert!(names.contains(&"system".to_string()));
-        assert!(names.contains(&"realms/acme/realm".to_string()));
-        assert!(names.contains(&"realms/acme/apps/mobile/data".to_string()));
+        assert!(names.contains(&"workspaces/acme/workspace".to_string()));
+        assert!(names.contains(&"workspaces/acme/apps/mobile/data".to_string()));
         // wal + yaml sidecars excluded
         assert_eq!(dbs.len(), 3);
     }
@@ -153,13 +153,13 @@ mod tests {
     fn render_yaml_contains_all_entries() {
         let dir = tempdir().unwrap();
         touch(dir.path(), "system.db");
-        touch(dir.path(), "realms/acme/realm.db");
+        touch(dir.path(), "workspaces/acme/workspace.db");
 
         let yaml = render_yaml(dir.path(), &cfg("s3://my-bucket", Some("prod"))).unwrap();
         assert!(yaml.contains("dbs:"));
         assert!(yaml.contains("s3://my-bucket"));
         assert!(yaml.contains("path: prod/system"));
-        assert!(yaml.contains("path: prod/realms/acme/realm"));
+        assert!(yaml.contains("path: prod/workspaces/acme/workspace"));
         assert!(yaml.contains("sync-interval: 10s"));
     }
 

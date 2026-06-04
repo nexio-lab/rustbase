@@ -1,6 +1,6 @@
 //! Audit log helper.
 //!
-//! Every scope (system, realm, app) has an `audit_log` table with the
+//! Every scope (system, workspace, app) has an `audit_log` table with the
 //! same shape. This module is generic over the pool — callers pass the
 //! one matching the event's scope.
 
