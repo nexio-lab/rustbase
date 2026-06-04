@@ -50,6 +50,19 @@ POST /_/auth/refresh
 
 Both return `{access_token, refresh_token, admin}`. The refresh token rotates on every exchange — old refresh tokens are revoked.
 
+### JWKS
+
+```http
+GET /.well-known/jwks.json
+GET /_/auth/jwks.json
+```
+
+Anonymous. Returns the JSON Web Key Set the server uses to sign
+access tokens (`Content-Type: application/jwk-set+json`). Tokens are
+signed with **RS256**; the `kid` header on each JWT matches a `kid`
+in the JWKS. Cache for up to one hour (`Cache-Control: public,
+max-age=3600`).
+
 ---
 
 ## Realm admin auth

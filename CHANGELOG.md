@@ -39,6 +39,20 @@ versioning follows [Semantic Versioning](https://semver.org/).
     every auth flow.
 - New error variant `CoreError::TooManyRequests { retry_after_secs }`
   → HTTP 429 with `Retry-After` header. Reference docs updated.
+- **JWT signing now uses RS256 by default** with a deterministic `kid`
+  derived from the SHA-256 of the public key. RSA-2048 keypair is
+  generated once at first boot and persisted as PKCS#8 DER under
+  `system.db._secrets`.
+- **JWKS endpoint** at `/.well-known/jwks.json` and
+  `/_/auth/jwks.json`. Returns `Content-Type:
+  application/jwk-set+json`, `Cache-Control: public, max-age=3600`,
+  and stays reachable pre-setup so external smoke probes can discover
+  the key. Standard JWT libraries (jose, jsonwebtoken,
+  oidc-client-ts) consume it without custom config.
+- `rustbase-auth::JwtIssuer` is the new issuance/verification surface
+  (`issue`, `verify`, `jwks`). HS256 tokens issued before the upgrade
+  continue to verify until they expire on their own; the legacy HMAC
+  key is kept as a verification-only fallback.
 
 ### Changed
 - README hero copy and badge row aligned with the new positioning.

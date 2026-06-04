@@ -10,6 +10,11 @@ use chrono::Utc;
 use sqlx::SqlitePool;
 
 pub const MASTER_SIGNING_KEY: &str = "master_signing_key";
+/// PKCS#8 DER of the master RS256 keypair. Generated once at first
+/// boot and re-loaded on every subsequent start. Coexists with
+/// [`MASTER_SIGNING_KEY`] so already-issued HS256 tokens keep
+/// verifying until they expire.
+pub const MASTER_RSA_PKCS8: &str = "master_jwt_rsa_pkcs8_v1";
 
 pub async fn get_secret(pool: &SqlitePool, name: &str) -> Result<Option<Vec<u8>>> {
     let row: Option<Vec<u8>> = sqlx::query_scalar("SELECT value FROM _secrets WHERE name = ?")

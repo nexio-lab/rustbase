@@ -25,7 +25,28 @@ Every login returns:
 }
 ```
 
-Send `Authorization: Bearer <access_token>` on every authenticated call. Refresh tokens are exchanged at the matching `/auth/refresh` for the principal's scope:
+Send `Authorization: Bearer <access_token>` on every authenticated call. Refresh tokens are exchanged at the matching `/auth/refresh` for the principal's scope.
+
+::: tip JWT signing algorithm
+Access tokens are signed with **RS256** (RSA-2048) by default. The
+public verification key is published unauthenticated at:
+
+```
+GET /.well-known/jwks.json
+GET /_/auth/jwks.json
+```
+
+Both routes return the same JSON Web Key Set. The `kid` field on the
+JWT header matches a `kid` in the JWKS — standard JWT libraries
+(jose, jsonwebtoken, oidc-client-ts, etc.) consume this format
+without any custom configuration.
+
+Servers upgraded from v0.1.x continue to accept HS256 tokens already
+in flight; those naturally retire once the access-token TTL expires.
+Newly-issued tokens are RS256.
+:::
+
+Refresh tokens are exchanged at the matching `/auth/refresh` for the principal's scope:
 
 ```http
 POST /_/auth/refresh                              # master admin

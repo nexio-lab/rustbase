@@ -42,3 +42,4 @@ governor.workspace = true
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 parking_lot.workspace = true
+jsonwebtoken.workspace = true

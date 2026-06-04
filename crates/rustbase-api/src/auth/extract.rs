@@ -10,7 +10,7 @@
 //! lets one endpoint serve multiple roles.
 
 use axum::{extract::FromRequestParts, http::request::Parts};
-use rustbase_auth::{Claims, SubjectKey, TokenRole, decode_token};
+use rustbase_auth::{Claims, SubjectKey, TokenRole};
 use rustbase_core::CoreError;
 
 use crate::error::ApiError;
@@ -30,7 +30,7 @@ fn extract_claims(parts: &Parts, state: &AppState) -> Result<Option<Claims>, Api
     let Some(token) = header.strip_prefix("Bearer ") else {
         return Ok(None);
     };
-    let claims = decode_token(token, &state.master_key)?;
+    let claims = state.jwt.verify(token)?;
     let key = match &claims.realm {
         Some(r) => SubjectKey::scoped(r, &claims.sub),
         None => SubjectKey::master(&claims.sub),

@@ -1,13 +1,13 @@
 use anyhow::Result;
 use axum::{Router, routing::get};
 use rustbase_api::{AppState, build_router};
-use rustbase_auth::{RevocationSet, SigningKey};
+use rustbase_auth::{JwtIssuer, RevocationSet, RsaSigningKey, SigningKey, generate_rsa_with_pkcs8};
 use rustbase_db::{
     AppPoolManager, RealmPoolManager, SYSTEM_MIGRATIONS, SystemPool,
     admins::{ensure_seed_master_admin, master_admin_is_initialized},
     apply_migrations,
     realms::ensure_master_realm,
-    secrets::{MASTER_SIGNING_KEY, get_or_init_secret},
+    secrets::{MASTER_RSA_PKCS8, MASTER_SIGNING_KEY, get_or_init_secret, get_secret, put_secret},
 };
 use rustbase_realtime::RealtimeBroker;
 use rustbase_runtime::HookEngine;
@@ -53,6 +53,24 @@ async fn main() -> Result<()> {
     let fresh = SigningKey::generate();
     let key_bytes = get_or_init_secret(system.pool(), MASTER_SIGNING_KEY, fresh.as_bytes()).await?;
     let master_key = Arc::new(SigningKey::from_secret(&key_bytes));
+
+    // RS256 keypair. Generated once on first boot, persisted as
+    // PKCS#8 DER, and re-loaded on every subsequent start. The HS256
+    // `master_key` above stays around as a *verification-only*
+    // fallback so already-issued legacy tokens validate until they
+    // expire on their own. New tokens are always RS256.
+    let rsa_key = match get_secret(system.pool(), MASTER_RSA_PKCS8).await? {
+        Some(der) => RsaSigningKey::from_pkcs8_der(&der)?,
+        None => {
+            tracing::info!("jwt: generating master RS256 keypair (first boot)");
+            let (key, pkcs8) = generate_rsa_with_pkcs8()?;
+            put_secret(system.pool(), MASTER_RSA_PKCS8, &pkcs8).await?;
+            key
+        }
+    };
+    tracing::info!(kid = %rsa_key.kid, "jwt: RS256 active key");
+    let jwt =
+        Arc::new(JwtIssuer::new(rsa_key).with_legacy_hmac(SigningKey::from_secret(&key_bytes)));
 
     // OAuth client_secret encryption key. Generated once at first boot
     // and persisted; loaded as-is on subsequent boots so existing
@@ -143,6 +161,7 @@ async fn main() -> Result<()> {
         apps: Arc::new(AppPoolManager::new(cfg.data_dir.clone(), cfg.app_pool_cap)),
         revocations: RevocationSet::default(),
         master_key,
+        jwt,
         broker: RealtimeBroker::default(),
         hooks: HookEngine::new(),
         data_dir: Arc::new(cfg.data_dir.clone()),

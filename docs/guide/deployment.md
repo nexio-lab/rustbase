@@ -400,10 +400,43 @@ See [Configuration → rate_limit / lockout / http / cors](configuration.html#fu
 for every knob, and [Error codes → 429](../reference/errors.html#status--code-mapping)
 for the response shape.
 
+## JWT verification by external systems
+
+RustBase issues **RS256** access tokens and publishes the public
+verification key at:
+
+```
+GET https://<your-domain>/.well-known/jwks.json
+GET https://<your-domain>/_/auth/jwks.json
+```
+
+Both endpoints return the same JSON Web Key Set (`Content-Type:
+application/jwk-set+json`). The response carries `Cache-Control:
+public, max-age=3600`, so a downstream service should cache the key
+for up to one hour and refresh on cache miss.
+
+Standard JWT libraries (jose, jsonwebtoken, oidc-client-ts, etc.)
+consume this format without any custom config — point them at the
+`/.well-known/jwks.json` URL and they pick the right key by `kid`.
+
+The RSA-2048 keypair is generated once at first boot and persisted as
+PKCS#8 DER under `system.db._secrets`. The `kid` is deterministic
+(SHA-256 of the public key, truncated) so it does not change across
+restarts; rotation will arrive in a later milestone.
+
+::: warning HS256 transition
+A server upgraded from v0.1.x keeps a legacy HS256 verification key
+loaded so already-issued symmetric tokens continue to validate until
+their access-token TTL expires. Once the TTL window has elapsed, the
+fallback path is effectively dormant; fresh installs never touch it.
+:::
+
 ## What's still on the v0.2+ roadmap
 
 - `/metrics` endpoint (Prometheus exposition format).
-- PKCE on the OAuth flows + JWKS rotation.
+- PKCE on the OAuth flows.
 - Cookie-based session for the dashboard (httpOnly, SameSite=Strict).
+- Operator-driven key rotation flow (regenerate RSA key + dual-key
+  serving window).
 
 This guide will be updated as each lands.

@@ -22,7 +22,7 @@ use axum::{
     http::StatusCode,
 };
 use rand_core::{OsRng, RngCore};
-use rustbase_auth::{TokenRole, build_claims, encode_token};
+use rustbase_auth::{TokenRole, build_claims};
 use rustbase_core::{AppId, CoreError, EmailMessage, RealmId};
 use rustbase_db::{
     email_otps::{self, ConsumeOutcome},
@@ -294,7 +294,7 @@ async fn issue_tokens_for(
         Some(app.to_string()),
         default_access_ttl(),
     );
-    let access_token = encode_token(&claims, &state.master_key)?;
+    let access_token = state.jwt.issue(&claims)?;
     let refresh = insert_refresh_token(
         pool,
         &new_refresh_token(),

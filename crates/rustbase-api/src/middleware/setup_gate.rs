@@ -18,6 +18,14 @@ fn is_allowed_before_setup(method: &axum::http::Method, path: &str) -> bool {
     if path == "/healthz" || path == "/_/setup" {
         return true;
     }
+    // JWKS is anonymous public material. Exposing it pre-setup costs
+    // nothing and lets external systems (CI smoke tests, OIDC
+    // discovery probes) reach it from the very first boot.
+    if method == axum::http::Method::GET
+        && (path == "/.well-known/jwks.json" || path == "/_/auth/jwks.json")
+    {
+        return true;
+    }
     // Dashboard reads are always safe — the setup wizard itself lives
     // inside the dashboard.
     method == axum::http::Method::GET && (path == "/_/" || path.starts_with("/_/"))

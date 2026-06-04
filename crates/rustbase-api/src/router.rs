@@ -34,6 +34,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/_/setup", post(setup))
         .route("/_/auth/admin/login", post(master_admin_login))
         .route("/_/auth/refresh", post(master_admin_refresh))
+        .route("/_/auth/jwks.json", get(crate::auth::jwks::jwks))
+        .route("/.well-known/jwks.json", get(crate::auth::jwks::jwks))
         .route("/api/realms", get(realms::list).post(realms::create))
         .route(
             "/api/realms/{id}",
@@ -282,12 +284,16 @@ mod tests {
         ensure_seed_master_admin(system.pool()).await.unwrap();
         let data_dir = dir.path().to_path_buf();
         let storage = rustbase_storage::Storage::local(&data_dir).await.unwrap();
+        let hmac = SigningKey::generate();
+        let (rsa_key, _pkcs8) = rustbase_auth::generate_rsa_with_pkcs8().unwrap();
+        let jwt = Arc::new(rustbase_auth::JwtIssuer::new(rsa_key).with_legacy_hmac(hmac.clone()));
         let state = AppState {
             system: Arc::new(system),
             realms: Arc::new(RealmPoolManager::new(data_dir.clone(), 4)),
             apps: Arc::new(AppPoolManager::new(data_dir.clone(), 4)),
             revocations: RevocationSet::default(),
-            master_key: Arc::new(SigningKey::generate()),
+            master_key: Arc::new(hmac),
+            jwt,
             broker: RealtimeBroker::default(),
             hooks: HookEngine::new(),
             data_dir: Arc::new(data_dir),
@@ -533,6 +539,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn issued_access_token_is_rs256_with_kid() {
+        let (state, _dir, _) = initialized_state_with_admin("hunter22").await;
+        let app = build_router(state.clone());
+        let resp = post_json(
+            app,
+            "/_/auth/admin/login",
+            &serde_json::json!({"username":"admin","password":"hunter22"}),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let j = json_body(resp).await;
+        let token = j["access_token"].as_str().unwrap();
+        let header = jsonwebtoken::decode_header(token).unwrap();
+        assert_eq!(header.alg, jsonwebtoken::Algorithm::RS256);
+        assert_eq!(header.kid.as_deref(), Some(state.jwt.active.kid.as_str()));
+    }
+
+    #[tokio::test]
+    async fn jwks_returns_active_key_unauthenticated_pre_setup() {
+        // No setup yet — JWKS must still be reachable.
+        let (state, _dir) = fresh_state().await;
+        let kid = state.jwt.active.kid.clone();
+        let app = build_router(state);
+        let req = Request::builder()
+            .uri("/.well-known/jwks.json")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get("content-type")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "application/jwk-set+json"
+        );
+        let j = json_body(resp).await;
+        let keys = j["keys"].as_array().unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0]["kty"], "RSA");
+        assert_eq!(keys[0]["alg"], "RS256");
+        assert_eq!(keys[0]["use"], "sig");
+        assert_eq!(keys[0]["kid"], kid);
+        assert!(keys[0]["n"].as_str().unwrap().len() > 100);
+        assert_eq!(keys[0]["e"], "AQAB");
+    }
+
+    #[tokio::test]
+    async fn jwks_under_underscore_mount_returns_same_keyset() {
+        let (state, _dir) = fresh_state().await;
+        let app = build_router(state);
+        let req = Request::builder()
+            .uri("/_/auth/jwks.json")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn legacy_hs256_token_validates_against_jwt_issuer() {
+        // An HS256 token issued before the RS256 swap (we emulate by
+        // hand-signing with the legacy `master_key`) must still verify
+        // on the principal extractor.
+        let (state, _dir, _) = initialized_state_with_admin("hunter22").await;
+        let claims = rustbase_auth::build_claims(
+            "u1",
+            rustbase_auth::TokenRole::MasterAdmin,
+            None,
+            None,
+            chrono::Duration::minutes(15),
+        );
+        let legacy = rustbase_auth::encode_token(&claims, &state.master_key).unwrap();
+        // Use the JwtIssuer directly to assert legacy HS256 validates.
+        let decoded = state.jwt.verify(&legacy).unwrap();
+        assert_eq!(decoded.sub, "u1");
+    }
+
+    #[tokio::test]
     async fn repeated_bad_password_eventually_locks_with_429() {
         let (mut state, _dir, _) = initialized_state_with_admin("hunter22").await;
         // Tight policy for a fast test: 3 failures, 60-second window,
@@ -641,7 +727,7 @@ mod tests {
             None,
             chrono::Duration::minutes(15),
         );
-        rustbase_auth::encode_token(&claims, &state.master_key).unwrap()
+        state.jwt.issue(&claims).unwrap()
     }
 
     fn req_with_auth(
@@ -911,7 +997,7 @@ mod tests {
             None,
             chrono::Duration::minutes(15),
         );
-        let token = rustbase_auth::encode_token(&claims, &state.master_key).unwrap();
+        let token = state.jwt.issue(&claims).unwrap();
         let app = build_router(state);
         let resp = app
             .oneshot(req_with_auth("GET", "/api/realms", Some(&token), None))
@@ -971,7 +1057,7 @@ mod tests {
             None,
             chrono::Duration::minutes(15),
         );
-        rustbase_auth::encode_token(&claims, &state.master_key).unwrap()
+        state.jwt.issue(&claims).unwrap()
     }
 
     #[tokio::test]
@@ -3171,7 +3257,7 @@ mod tests {
             None,
             chrono::Duration::minutes(15),
         );
-        let w_tok = rustbase_auth::encode_token(&claims, &state.master_key).unwrap();
+        let w_tok = state.jwt.issue(&claims).unwrap();
 
         let app = build_router(state);
         let resp = app

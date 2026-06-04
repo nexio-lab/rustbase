@@ -2,7 +2,7 @@ use axum::{
     Json,
     extract::{Path, State},
 };
-use rustbase_auth::{TokenRole, build_claims, encode_token, verify_password};
+use rustbase_auth::{TokenRole, build_claims, verify_password};
 use rustbase_core::{AppId, CoreError, RealmId};
 use rustbase_db::{
     admins::{find_master_admin_by_username, find_realm_admin_by_email},
@@ -206,7 +206,7 @@ pub async fn master_admin_login(
         None,
         default_access_ttl(),
     );
-    let access_token = encode_token(&claims, &state.master_key)?;
+    let access_token = state.jwt.issue(&claims)?;
 
     let refresh = insert_refresh_token(
         state.system.pool(),
@@ -292,7 +292,7 @@ pub async fn realm_admin_login(
         None,
         default_access_ttl(),
     );
-    let access_token = encode_token(&claims, &state.master_key)?;
+    let access_token = state.jwt.issue(&claims)?;
 
     let refresh = insert_refresh_token(
         &pool,
@@ -436,7 +436,7 @@ pub async fn user_login(
         Some(app.clone()),
         default_access_ttl(),
     );
-    let access_token = encode_token(&claims, &state.master_key)?;
+    let access_token = state.jwt.issue(&claims)?;
 
     let refresh = insert_refresh_token(
         &pool,

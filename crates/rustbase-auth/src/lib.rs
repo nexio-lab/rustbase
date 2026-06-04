@@ -8,12 +8,14 @@
 //! OAuth2 flows and OTP come in later feature branches.
 
 pub mod error;
+pub mod jwt;
 pub mod password;
 pub mod revocation;
 pub mod secret_box;
 pub mod token;
 
 pub use error::{AuthError, Result};
+pub use jwt::{Jwks, JwksKey, JwtIssuer, RsaSigningKey, generate_rsa_with_pkcs8};
 pub use password::{hash_password, verify_password};
 pub use revocation::{RevocationSet, SubjectKey};
 pub use secret_box::{SecretBoxError, decrypt, encrypt, fresh_kek};

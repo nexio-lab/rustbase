@@ -1,5 +1,5 @@
 use crate::security::{LockoutPolicy, LoginAttempts};
-use rustbase_auth::{RevocationSet, SigningKey};
+use rustbase_auth::{JwtIssuer, RevocationSet, SigningKey};
 use rustbase_core::Mailer;
 use rustbase_db::{AppPoolManager, RealmPoolManager, SystemPool};
 use rustbase_realtime::RealtimeBroker;
@@ -16,9 +16,16 @@ pub struct AppState {
     pub realms: Arc<RealmPoolManager>,
     pub apps: Arc<AppPoolManager>,
     pub revocations: RevocationSet,
-    /// HS256 signing key for master-admin tokens. Persisted in
-    /// `system.db._secrets` so it survives restarts.
+    /// Legacy HS256 signing key. Kept around until the post-0.1.x
+    /// transition is over so already-issued symmetric tokens stay
+    /// valid until they naturally expire. New tokens are always RS256
+    /// — issue them via [`AppState::jwt`].
     pub master_key: Arc<SigningKey>,
+    /// Active JWT issuer/verifier. Issues RS256, accepts RS256 + the
+    /// legacy HS256 transition key for inbound tokens. Backed by the
+    /// PKCS#8 DER persisted under `system.db._secrets` so the public
+    /// key (and JWKS `kid`) is stable across restarts.
+    pub jwt: Arc<JwtIssuer>,
     /// In-process pub/sub broker for record CRUD events.
     pub broker: RealtimeBroker,
     /// Embedded JS hook runtime, keyed per (realm, app).

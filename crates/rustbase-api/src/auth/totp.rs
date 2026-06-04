@@ -30,7 +30,7 @@ use axum::{
 };
 use chrono::Duration;
 use rand_core::{OsRng, RngCore};
-use rustbase_auth::{TokenRole, build_claims, encode_token};
+use rustbase_auth::{TokenRole, build_claims};
 use rustbase_core::{AppId, CoreError, RealmId};
 use rustbase_db::{
     mfa_challenges::{self, ConsumeOutcome as MfaConsume},
@@ -290,7 +290,7 @@ pub async fn login_totp(
         Some(app.clone()),
         default_access_ttl(),
     );
-    let access_token = encode_token(&claims, &state.master_key)?;
+    let access_token = state.jwt.issue(&claims)?;
     let refresh = insert_refresh_token(
         &pool,
         &new_refresh_token(),

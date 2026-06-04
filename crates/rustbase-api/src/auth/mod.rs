@@ -9,6 +9,7 @@
 pub mod audit_events;
 pub mod email_otp;
 pub mod extract;
+pub mod jwks;
 pub mod login;
 pub mod oauth;
 pub mod oauth_admin;

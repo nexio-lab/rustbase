@@ -31,7 +31,7 @@ use axum::{
 };
 use chrono::Duration;
 use rand_core::{OsRng, RngCore};
-use rustbase_auth::{TokenRole, build_claims, encode_token};
+use rustbase_auth::{TokenRole, build_claims};
 use rustbase_core::{AppId, CoreError, RealmId};
 use rustbase_db::{
     oauth_links,
@@ -211,7 +211,7 @@ pub async fn callback(
         Some(app.clone()),
         default_access_ttl(),
     );
-    let access_token = encode_token(&claims, &app_state.master_key)?;
+    let access_token = app_state.jwt.issue(&claims)?;
     let refresh = insert_refresh_token(
         &pool,
         &new_refresh_token(),
