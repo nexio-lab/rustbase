@@ -171,6 +171,7 @@ async fn main() -> Result<()> {
         storage,
         login_attempts: rustbase_api::security::LoginAttempts::new(),
         lockout_policy,
+        cookie_secure: cfg.http.cookie_secure,
     };
 
     // Load JS hooks for every (realm, app) that exists on disk.

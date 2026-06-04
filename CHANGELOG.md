@@ -59,6 +59,15 @@ versioning follows [Semantic Versioning](https://semver.org/).
   to the upstream provider; `/callback` replays the verifier on the
   token exchange. New `_oauth_states.code_verifier` column added via
   app-scoped migration `20260604_000001_oauth_pkce`.
+- **Dashboard session moved to `HttpOnly` cookies.** Login + refresh
+  responses set `rb_at` (Path `/`) and `rb_rt` (Path `/_/auth`) with
+  `HttpOnly; SameSite=Strict` (and `Secure` when
+  `[http].cookie_secure = true`, the default). The dashboard SPA
+  removes JWT/refresh tokens from `localStorage`; the React-y identity
+  blob it keeps is no longer secret. New `POST /_/auth/logout`
+  endpoint clears both cookies and revokes the refresh token.
+  `AdminAuth` / `PrincipalAuth` accept `rb_at` as a fallback for
+  `Authorization: Bearer …` so SDK clients are unaffected.
 
 ### Changed
 - README hero copy and badge row aligned with the new positioning.

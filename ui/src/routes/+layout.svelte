@@ -4,6 +4,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { base } from '$app/paths';
+	import { api } from '$lib/api';
 	import { auth } from '$lib/auth.svelte';
 
 	let { children } = $props();
@@ -32,6 +33,14 @@
 	});
 
 	async function logout() {
+		// Ask the server to clear the HttpOnly session cookies and
+		// revoke the refresh token; swallow errors so we always get
+		// back to the login screen even if the network call fails.
+		try {
+			await api.post('/_/auth/logout', {});
+		} catch {
+			/* best-effort */
+		}
 		auth.clear();
 		await goto(`${base}/login`, { replaceState: true });
 	}

@@ -16,21 +16,21 @@ use rustbase_core::CoreError;
 use crate::error::ApiError;
 use crate::state::AppState;
 
-/// Decode `Authorization: Bearer …` into raw claims, no role filtering.
-/// Returns `None` if the header is missing; only signature / expiry /
-/// revocation errors are surfaced.
+/// Decode the principal's access token into raw claims, no role
+/// filtering. The token is taken from the `Authorization: Bearer …`
+/// header (SDK clients, mobile apps, server-to-server), falling back
+/// to the `rb_at` cookie set by the dashboard login flow.
 fn extract_claims(parts: &Parts, state: &AppState) -> Result<Option<Claims>, ApiError> {
-    let Some(header) = parts
+    let token = parts
         .headers
         .get("authorization")
         .and_then(|h| h.to_str().ok())
-    else {
+        .and_then(|h| h.strip_prefix("Bearer ").map(str::to_string))
+        .or_else(|| super::cookies::read_cookie(&parts.headers, super::cookies::ACCESS_COOKIE));
+    let Some(token) = token else {
         return Ok(None);
     };
-    let Some(token) = header.strip_prefix("Bearer ") else {
-        return Ok(None);
-    };
-    let claims = state.jwt.verify(token)?;
+    let claims = state.jwt.verify(&token)?;
     let key = match &claims.realm {
         Some(r) => SubjectKey::scoped(r, &claims.sub),
         None => SubjectKey::master(&claims.sub),

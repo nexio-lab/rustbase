@@ -1,8 +1,11 @@
 use axum::{
     Json,
     extract::{Path, State},
+    response::{IntoResponse, Response},
 };
 use rustbase_auth::{TokenRole, build_claims, verify_password};
+
+use super::cookies::{CookieFlags, build_access_cookie, build_refresh_cookie};
 use rustbase_core::{AppId, CoreError, RealmId};
 use rustbase_db::{
     admins::{find_master_admin_by_username, find_realm_admin_by_email},
@@ -16,6 +19,36 @@ use super::audit_events::{AuthEvent, AuthOutcome, Scope, record as record_audit}
 use super::{default_access_ttl, default_refresh_ttl, new_refresh_token, require_app_exists};
 use crate::error::ApiError;
 use crate::state::AppState;
+
+/// Attach `Set-Cookie: rb_at=...` and `Set-Cookie: rb_rt=...` to the
+/// response carrying the JSON `body`. Used by every dashboard-facing
+/// login path so a browser session no longer needs to keep tokens in
+/// `localStorage`.
+fn with_session_cookies<T: serde::Serialize>(
+    state: &AppState,
+    body: T,
+    access_token: &str,
+    refresh_token: &str,
+) -> Response {
+    let flags = CookieFlags {
+        secure: state.cookie_secure,
+    };
+    let access_cookie = build_access_cookie(
+        access_token,
+        super::default_access_ttl().num_seconds(),
+        flags,
+    );
+    let refresh_cookie = build_refresh_cookie(
+        refresh_token,
+        super::default_refresh_ttl().num_seconds(),
+        flags,
+    );
+    let mut resp = Json(body).into_response();
+    let headers = resp.headers_mut();
+    headers.append(axum::http::header::SET_COOKIE, access_cookie);
+    headers.append(axum::http::header::SET_COOKIE, refresh_cookie);
+    resp
+}
 
 /// Subject keys used by both the lockout map and the audit log.
 fn master_subject(username: &str) -> String {
@@ -149,7 +182,7 @@ pub enum UserLoginResponse {
 pub async fn master_admin_login(
     State(state): State<AppState>,
     Json(req): Json<MasterLoginRequest>,
-) -> Result<Json<MasterLoginResponse>, ApiError> {
+) -> Result<Response, ApiError> {
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
 
@@ -230,23 +263,29 @@ pub async fn master_admin_login(
     )
     .await;
 
-    Ok(Json(MasterLoginResponse {
-        access_token,
-        refresh_token: refresh.token,
+    let body = MasterLoginResponse {
+        access_token: access_token.clone(),
+        refresh_token: refresh.token.clone(),
         admin: MasterAdminPublic {
             id: admin.id,
             username: admin.username,
             email: admin.email,
             name: admin.name,
         },
-    }))
+    };
+    Ok(with_session_cookies(
+        &state,
+        body,
+        &access_token,
+        &refresh.token,
+    ))
 }
 
 pub async fn realm_admin_login(
     State(state): State<AppState>,
     Path(realm): Path<String>,
     Json(req): Json<LoginRequest>,
-) -> Result<Json<LoginResponse>, ApiError> {
+) -> Result<Response, ApiError> {
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
 
@@ -316,22 +355,28 @@ pub async fn realm_admin_login(
     )
     .await;
 
-    Ok(Json(LoginResponse {
-        access_token,
-        refresh_token: refresh.token,
+    let body = LoginResponse {
+        access_token: access_token.clone(),
+        refresh_token: refresh.token.clone(),
         admin: AdminPublic {
             id: admin.id,
             email: admin.email,
             name: admin.name,
         },
-    }))
+    };
+    Ok(with_session_cookies(
+        &state,
+        body,
+        &access_token,
+        &refresh.token,
+    ))
 }
 
 pub async fn user_login(
     State(state): State<AppState>,
     Path((realm, app)): Path<(String, String)>,
     Json(req): Json<LoginRequest>,
-) -> Result<Json<UserLoginResponse>, ApiError> {
+) -> Result<Response, ApiError> {
     req.validate()
         .map_err(|e| ApiError::Core(CoreError::Validation(e.to_string())))?;
 
@@ -421,10 +466,13 @@ pub async fn user_login(
             user_id = %user.id,
             "password ok; awaiting TOTP second step"
         );
+        // MFA challenge: no session cookies yet — the access token
+        // is only minted after the second step.
         return Ok(Json(UserLoginResponse::MfaRequired {
             mfa_required: true,
             mfa_token,
-        }));
+        })
+        .into_response());
     }
 
     record_last_login(&pool, &user.id).await?;
@@ -473,13 +521,19 @@ pub async fn user_login(
         tracing::warn!(error = %e, realm = %realm, app = %app, "user_after_login hook errored");
     }
 
-    Ok(Json(UserLoginResponse::Tokens {
-        access_token,
-        refresh_token: refresh.token,
+    let body = UserLoginResponse::Tokens {
+        access_token: access_token.clone(),
+        refresh_token: refresh.token.clone(),
         user: UserPublic {
             id: user.id,
             email: user.email,
             verified: user.verified,
         },
-    }))
+    };
+    Ok(with_session_cookies(
+        &state,
+        body,
+        &access_token,
+        &refresh.token,
+    ))
 }

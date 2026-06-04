@@ -48,7 +48,8 @@
 		return new Promise((resolve, reject) => {
 			const xhr = new XMLHttpRequest();
 			xhr.open('POST', apiBase, true);
-			if (auth.token) xhr.setRequestHeader('authorization', `Bearer ${auth.token}`);
+			// HttpOnly session cookies — let the browser attach them.
+			xhr.withCredentials = true;
 			xhr.setRequestHeader('x-filename', file.name);
 			xhr.setRequestHeader('content-type', file.type || 'application/octet-stream');
 			xhr.upload.onprogress = (e) => {
@@ -136,7 +137,7 @@
 	async function download(f: FileMeta) {
 		try {
 			const resp = await fetch(downloadHref(f.id), {
-				headers: auth.token ? { authorization: `Bearer ${auth.token}` } : {}
+				credentials: 'include'
 			});
 			if (!resp.ok) {
 				uploadError = `download failed: ${resp.status} ${resp.statusText}`;

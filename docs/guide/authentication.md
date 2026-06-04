@@ -190,6 +190,36 @@ auth.require_app_access(realm, app)?; // master OR realm admin OR app admin scop
 
 Tokens are stateless. Revocation lives in an in-memory `DashSet` checked by middleware and auto-expires after the access-token TTL.
 
+## Dashboard session cookies
+
+The embedded dashboard authenticates with `HttpOnly` session cookies
+rather than reading the JWT directly. Two cookies are set on every
+successful master / realm / user login response (and on every
+`/auth/refresh`):
+
+| Cookie  | Path       | Max-Age          | Notes |
+|---------|------------|------------------|-------|
+| `rb_at` | `/`        | access TTL (15 min) | Sent on every same-origin call so the REST surface authenticates implicitly. |
+| `rb_rt` | `/_/auth`  | refresh TTL (30 days) | Scoped so the refresh token only travels to dashboard auth endpoints. |
+
+Both cookies are `HttpOnly` + `SameSite=Strict`. JS in the dashboard
+cannot read them — an XSS bug in a rendered cell can no longer
+exfiltrate the user's tokens, and `SameSite=Strict` blocks the
+cross-site CSRF vector without a separate token.
+
+A flag `[http].cookie_secure` controls whether the `Secure`
+attribute is emitted. Defaults to `true` (production behind TLS); set
+to `false` for local-dev HTTP — browsers reject `Secure` cookies on
+plain origins.
+
+`POST /_/auth/logout` clears both cookies (`Max-Age=0`) and revokes
+the refresh token server-side. The endpoint is anonymous: a session
+that's lost its access token can still log out cleanly.
+
+The Bearer header path stays fully supported — SDK clients,
+server-to-server callers, and CLI tools keep using `Authorization:
+Bearer <jwt>` unchanged.
+
 ## TTL policies
 
 `tokens.access_ttl_sec` and `tokens.refresh_ttl_sec` are [hierarchical policies](/concepts/hierarchical-policies). Default access TTL is 15 minutes, default refresh TTL is 30 days. Master sets the bounds; realms (and apps) tighten.

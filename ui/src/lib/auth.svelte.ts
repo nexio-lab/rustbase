@@ -1,23 +1,17 @@
 /**
- * Session store — JWT + refresh token + the principal identity, kept
- * in localStorage so a tab reload doesn't kick the user back to the
- * login screen.
- *
- * Trade-off: XSS in the dashboard would let an attacker read the
- * tokens. The alternative (httponly cookies) would need the server
- * to issue a cookie alongside the JWT and would couple the dashboard
- * to a specific deployment URL — not worth it for an admin tool
- * served from the same origin as the API. The dashboard sandbox is
- * tight (no user-provided HTML rendering yet), so this is acceptable.
+ * Session store — keeps only the **non-secret** identity blob
+ * (role / admin profile / realm scope) so the SPA can route + render
+ * conditionally. The actual JWT and refresh token live in HttpOnly
+ * cookies (`rb_at`, `rb_rt`) issued by the server on login and
+ * cleared on logout. JS cannot read them, which kills the XSS
+ * token-theft surface the old `localStorage` design had.
  */
 
 import type { MasterAdmin } from './api';
 
-const STORAGE_KEY = 'rustbase.session.v1';
+const STORAGE_KEY = 'rustbase.session.v2';
 
 type SessionShape = {
-	access_token: string;
-	refresh_token: string;
 	role: 'master' | 'realm' | 'app' | 'user';
 	admin?: MasterAdmin;
 	/** Which realm the principal is bound to, if any. */
@@ -48,9 +42,6 @@ class Auth {
 	get session() {
 		return this.#session;
 	}
-	get token() {
-		return this.#session?.access_token ?? null;
-	}
 	get isAuthenticated() {
 		return this.#session !== null;
 	}
@@ -61,10 +52,8 @@ class Auth {
 		return this.#session?.admin ?? null;
 	}
 
-	setMasterSession(login: { access_token: string; refresh_token: string; admin: MasterAdmin }) {
+	setMasterSession(login: { admin: MasterAdmin }) {
 		this.#session = {
-			access_token: login.access_token,
-			refresh_token: login.refresh_token,
 			role: 'master',
 			admin: login.admin
 		};

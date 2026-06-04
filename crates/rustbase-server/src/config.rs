@@ -85,6 +85,13 @@ pub struct HttpConfig {
     /// Whether to add `includeSubDomains` to the HSTS header.
     #[serde(default = "default_hsts_include_subdomains")]
     pub hsts_include_subdomains: bool,
+    /// Whether the dashboard session cookies (`rb_at`, `rb_rt`) are
+    /// emitted with the `Secure` attribute. Defaults to `true`
+    /// (production assumption: TLS-terminated). Set to `false` for
+    /// local dev over plain HTTP — browsers reject `Secure` cookies
+    /// on non-TLS origins.
+    #[serde(default = "default_cookie_secure")]
+    pub cookie_secure: bool,
 }
 
 impl Default for HttpConfig {
@@ -94,6 +101,7 @@ impl Default for HttpConfig {
             security_headers: default_security_headers(),
             hsts_max_age_secs: default_hsts_max_age(),
             hsts_include_subdomains: default_hsts_include_subdomains(),
+            cookie_secure: default_cookie_secure(),
         }
     }
 }
@@ -211,6 +219,9 @@ fn default_hsts_max_age() -> u64 {
 fn default_hsts_include_subdomains() -> bool {
     true
 }
+fn default_cookie_secure() -> bool {
+    true
+}
 fn default_cors_max_age() -> u64 {
     600
 }
@@ -277,6 +288,7 @@ pub fn load() -> Result<ServerConfig> {
             "http.hsts_include_subdomains",
             default_hsts_include_subdomains(),
         )?
+        .set_default("http.cookie_secure", default_cookie_secure())?
         // cors
         .set_default::<&str, Vec<String>>("cors.allow_origins", Vec::new())?
         .set_default("cors.allow_credentials", false)?

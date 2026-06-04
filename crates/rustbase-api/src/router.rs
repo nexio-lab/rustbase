@@ -34,6 +34,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/_/setup", post(setup))
         .route("/_/auth/admin/login", post(master_admin_login))
         .route("/_/auth/refresh", post(master_admin_refresh))
+        .route("/_/auth/logout", post(crate::auth::logout::logout))
         .route("/_/auth/jwks.json", get(crate::auth::jwks::jwks))
         .route("/.well-known/jwks.json", get(crate::auth::jwks::jwks))
         .route("/api/realms", get(realms::list).post(realms::create))
@@ -303,6 +304,10 @@ mod tests {
             storage,
             login_attempts: crate::security::LoginAttempts::new(),
             lockout_policy: crate::security::LockoutPolicy::default(),
+            // Tests use plain HTTP; emitting `Secure` cookies would
+            // make assertions on the header brittle (and would make a
+            // browser drop the cookie outright in a real run).
+            cookie_secure: false,
         };
         (state, dir)
     }
@@ -616,6 +621,197 @@ mod tests {
         // Use the JwtIssuer directly to assert legacy HS256 validates.
         let decoded = state.jwt.verify(&legacy).unwrap();
         assert_eq!(decoded.sub, "u1");
+    }
+
+    #[tokio::test]
+    async fn login_sets_httponly_session_cookies() {
+        let (state, _dir, _) = initialized_state_with_admin("hunter22").await;
+        let app = build_router(state);
+        let resp = post_json(
+            app,
+            "/_/auth/admin/login",
+            &serde_json::json!({"username":"admin","password":"hunter22"}),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let cookies: Vec<_> = resp
+            .headers()
+            .get_all(axum::http::header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            cookies.len(),
+            2,
+            "expected access + refresh cookies, got {cookies:?}"
+        );
+        let access = cookies.iter().find(|c| c.starts_with("rb_at=")).unwrap();
+        let refresh = cookies.iter().find(|c| c.starts_with("rb_rt=")).unwrap();
+        for c in [access, refresh] {
+            assert!(c.contains("HttpOnly"), "missing HttpOnly: {c}");
+            assert!(
+                c.contains("SameSite=Strict"),
+                "missing SameSite=Strict: {c}"
+            );
+            // fresh_state uses cookie_secure = false (plain HTTP tests).
+            assert!(!c.contains("Secure"), "should not be Secure in tests: {c}");
+        }
+        assert!(
+            refresh.contains("Path=/_/auth"),
+            "refresh cookie wrong Path: {refresh}"
+        );
+        assert!(
+            access.contains("Path=/"),
+            "access cookie wrong Path: {access}"
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_auth_accepts_rb_at_cookie() {
+        let (state, _dir, _) = initialized_state_with_admin("hunter22").await;
+        let app = build_router(state);
+        let login = post_json(
+            app.clone(),
+            "/_/auth/admin/login",
+            &serde_json::json!({"username":"admin","password":"hunter22"}),
+        )
+        .await;
+        let access_cookie = login
+            .headers()
+            .get_all(axum::http::header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().unwrap().to_string())
+            .find(|c| c.starts_with("rb_at="))
+            .unwrap();
+        let just_pair = access_cookie.split(';').next().unwrap().to_string();
+
+        // Issue a protected request using only the cookie — no Bearer.
+        let req = Request::builder()
+            .uri("/api/realms")
+            .method("GET")
+            .header(axum::http::header::COOKIE, just_pair)
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn refresh_via_cookie_rotates_tokens_and_returns_new_cookies() {
+        let (state, _dir, _) = initialized_state_with_admin("hunter22").await;
+        let app = build_router(state);
+        let login = post_json(
+            app.clone(),
+            "/_/auth/admin/login",
+            &serde_json::json!({"username":"admin","password":"hunter22"}),
+        )
+        .await;
+        let cookies: Vec<String> = login
+            .headers()
+            .get_all(axum::http::header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().unwrap().to_string())
+            .collect();
+        let refresh_pair = cookies
+            .iter()
+            .find(|c| c.starts_with("rb_rt="))
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string();
+
+        // Empty body — server must read the cookie.
+        let req = Request::builder()
+            .uri("/_/auth/refresh")
+            .method("POST")
+            .header(axum::http::header::COOKIE, refresh_pair.clone())
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let cookies_after: Vec<_> = resp
+            .headers()
+            .get_all(axum::http::header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().unwrap().to_string())
+            .collect();
+        assert_eq!(cookies_after.len(), 2);
+        assert!(cookies_after.iter().any(|c| c.starts_with("rb_at=")));
+        assert!(cookies_after.iter().any(|c| c.starts_with("rb_rt=")));
+        // Rotated — the new refresh `name=value` pair must differ
+        // from the one we just used to redeem.
+        let new_refresh_pair = cookies_after
+            .iter()
+            .find(|c| c.starts_with("rb_rt="))
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap();
+        assert_ne!(new_refresh_pair, refresh_pair);
+    }
+
+    #[tokio::test]
+    async fn logout_clears_session_cookies_and_revokes_refresh() {
+        let (state, _dir, _) = initialized_state_with_admin("hunter22").await;
+        let app = build_router(state);
+        let login = post_json(
+            app.clone(),
+            "/_/auth/admin/login",
+            &serde_json::json!({"username":"admin","password":"hunter22"}),
+        )
+        .await;
+        let refresh_pair = login
+            .headers()
+            .get_all(axum::http::header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().unwrap().to_string())
+            .find(|c| c.starts_with("rb_rt="))
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string();
+
+        // Logout with the refresh cookie attached.
+        let req = Request::builder()
+            .uri("/_/auth/logout")
+            .method("POST")
+            .header(axum::http::header::COOKIE, refresh_pair.clone())
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let cleared: Vec<String> = resp
+            .headers()
+            .get_all(axum::http::header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().unwrap().to_string())
+            .collect();
+        assert!(
+            cleared
+                .iter()
+                .any(|c| c.contains("rb_at=") && c.contains("Max-Age=0"))
+        );
+        assert!(
+            cleared
+                .iter()
+                .any(|c| c.contains("rb_rt=") && c.contains("Max-Age=0"))
+        );
+
+        // The refresh token must no longer be usable.
+        let req = Request::builder()
+            .uri("/_/auth/refresh")
+            .method("POST")
+            .header(axum::http::header::COOKIE, refresh_pair)
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

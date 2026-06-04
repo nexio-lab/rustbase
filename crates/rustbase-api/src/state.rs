@@ -57,6 +57,10 @@ pub struct AppState {
     /// Lockout thresholds applied by `login_attempts`. Loaded from
     /// `[lockout]` in `rustbase.toml` at boot.
     pub lockout_policy: LockoutPolicy,
+    /// Whether the dashboard session cookies (`rb_at`, `rb_rt`)
+    /// should be emitted with the `Secure` attribute. Defaults to
+    /// `true` for production; flip to `false` for local-dev HTTP.
+    pub cookie_secure: bool,
 }
 
 impl AppState {

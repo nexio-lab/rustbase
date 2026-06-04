@@ -6,14 +6,13 @@
  * - Same-origin in dev too — the Vite proxy in `vite.config.ts`
  *   forwards those paths to `localhost:8080`.
  *
- * Every call attaches the access token from the auth store (when set)
- * as `Authorization: Bearer <jwt>`. Non-2xx responses become a thrown
- * `ApiError` so callers can `try { … } catch (e) { … }` with a
- * structured shape and don't have to repeat the same `.ok` / `.json`
- * dance everywhere.
+ * Authentication rides on **`HttpOnly` session cookies** (`rb_at` for
+ * access, `rb_rt` for refresh) issued by the login + refresh
+ * endpoints. Every fetch sets `credentials: 'include'` so the browser
+ * attaches them automatically — no JS-readable token state, no XSS
+ * exfiltration surface. Non-2xx responses become a thrown `ApiError`
+ * so callers don't have to repeat the same `.ok` / `.json` dance.
  */
-
-import { auth } from './auth.svelte';
 
 export class ApiError extends Error {
 	constructor(
@@ -31,20 +30,29 @@ export type RequestOptions = {
 	method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 	body?: unknown;
 	headers?: Record<string, string>;
-	/** When false, skip the `Authorization` header even if a token is set.
-	 *  Useful for `/login`, `/setup`, `/auth/users/register`, etc. */
+	/**
+	 * Retained for API compatibility but no longer needed in practice:
+	 * authentication rides on the HttpOnly session cookies that the
+	 * browser attaches automatically thanks to
+	 * `credentials: 'include'`. The flag is kept so call sites that
+	 * pass `auth: false` still type-check; it just changes nothing.
+	 */
 	auth?: boolean;
 };
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-	const { method = 'GET', body, headers = {}, auth: withAuth = true } = opts;
-	const init: RequestInit = { method, headers: { ...headers } };
+	const { method = 'GET', body, headers = {} } = opts;
+	const init: RequestInit = {
+		method,
+		headers: { ...headers },
+		// Cookies aren't sent on same-origin fetches by default in
+		// some browsers when the request opts into custom headers; be
+		// explicit so the HttpOnly session cookies always travel.
+		credentials: 'include'
+	};
 	if (body !== undefined) {
 		(init.headers as Record<string, string>)['content-type'] = 'application/json';
 		init.body = JSON.stringify(body);
-	}
-	if (withAuth && auth.token) {
-		(init.headers as Record<string, string>)['authorization'] = `Bearer ${auth.token}`;
 	}
 	const resp = await fetch(path, init);
 	if (!resp.ok) {

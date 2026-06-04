@@ -24,7 +24,9 @@
 				{ username, password },
 				{ auth: false }
 			);
-			auth.setMasterSession(login);
+			// Session cookies were just set by the server response;
+			// we only retain the non-secret identity blob in JS.
+			auth.setMasterSession({ admin: login.admin });
 			await goto('/realms');
 		} catch (e) {
 			if (e instanceof ApiError) {

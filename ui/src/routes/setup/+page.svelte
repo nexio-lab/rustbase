@@ -26,7 +26,7 @@
 				{ username: 'admin', password },
 				{ auth: false }
 			);
-			auth.setMasterSession(login);
+			auth.setMasterSession({ admin: login.admin });
 			await goto('/realms');
 		} catch (e) {
 			if (e instanceof ApiError) {

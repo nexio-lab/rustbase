@@ -7,10 +7,12 @@
 //! Realm-admin and end-user flows come later, on their own feature branches.
 
 pub mod audit_events;
+pub mod cookies;
 pub mod email_otp;
 pub mod extract;
 pub mod jwks;
 pub mod login;
+pub mod logout;
 pub mod oauth;
 pub mod oauth_admin;
 pub mod password_reset;

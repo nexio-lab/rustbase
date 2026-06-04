@@ -25,6 +25,11 @@ security_headers = true
 # only way clients reach the server.
 hsts_max_age_secs = 63072000
 hsts_include_subdomains = true
+# Emit the dashboard session cookies (`rb_at`, `rb_rt`) with the
+# `Secure` attribute. Defaults to `true` (production behind TLS). Set
+# to `false` for local-dev HTTP — browsers reject `Secure` cookies
+# on non-TLS origins.
+cookie_secure = true
 
 # CORS allowlist for the REST API. Default: no cross-origin allowed.
 # The dashboard is same-origin and does not need an entry here.
