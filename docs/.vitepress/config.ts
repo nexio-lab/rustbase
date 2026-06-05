@@ -63,7 +63,8 @@ export default defineConfig({
 					items: [
 						{ text: 'Configuration', link: '/guide/configuration' },
 						{ text: 'Deployment', link: '/guide/deployment' },
-						{ text: 'Backups (Litestream)', link: '/guide/backups' }
+						{ text: 'Backups (Litestream)', link: '/guide/backups' },
+						{ text: 'Observability', link: '/guide/observability' }
 					]
 				}
 			],

@@ -18,6 +18,7 @@ use tracing_subscriber::EnvFilter;
 mod config;
 mod dashboard;
 mod litestream;
+mod observability;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -29,6 +30,15 @@ async fn main() -> Result<()> {
 
     let cfg = config::load()?;
     tracing::info!(?cfg, "rustbase: starting");
+
+    // Observability: install the global Prometheus recorder if enabled.
+    // Boot aborts on a misconfigured `[observability]` (e.g. enabled
+    // without a token) rather than silently exposing metrics or
+    // running without them.
+    let metrics_handle = observability::init(&cfg.observability)?;
+    if metrics_handle.is_some() {
+        tracing::info!("observability: metrics recorder installed (GET /metrics, bearer-token)");
+    }
 
     tokio::fs::create_dir_all(&cfg.data_dir).await?;
 
@@ -192,6 +202,16 @@ async fn main() -> Result<()> {
         // dashboard's index so the client-side router takes over.
         .method_not_allowed_fallback(dashboard_or_405);
 
+    if let Some(handle) = metrics_handle.clone() {
+        let metrics_router: Router<()> = Router::new()
+            .route("/metrics", get(observability::metrics_endpoint))
+            .with_state(observability::MetricsState {
+                handle,
+                token: cfg.observability.metrics_token.clone(),
+            });
+        app = app.merge(metrics_router);
+    }
+
     // Body size cap at the HTTP entry layer. Defaults to 8 MiB —
     // override under `[http]` in `rustbase.toml` if your hooks accept
     // larger payloads.
@@ -240,6 +260,15 @@ async fn main() -> Result<()> {
         }
     } else {
         tracing::warn!("rate-limit: disabled in config");
+    }
+
+    // Metrics middleware sits at the outermost layer so it observes
+    // every request — including 429s from the rate limiter and 4xx
+    // bodies rejected by `RequestBodyLimitLayer`. Only installed when
+    // the global recorder is up; otherwise the macros would silently
+    // no-op anyway.
+    if metrics_handle.is_some() {
+        app = app.layer(axum::middleware::from_fn(observability::track_http_metrics));
     }
 
     let listener = tokio::net::TcpListener::bind(&cfg.listen).await?;

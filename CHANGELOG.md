@@ -8,6 +8,22 @@ versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Prometheus `/metrics` endpoint.** New `[observability]` config
+  section toggles a global `metrics_exporter_prometheus` recorder
+  and mounts `GET /metrics` on the main HTTP listener. Every HTTP
+  request flows through a tower middleware that records
+  `rustbase_http_requests_total{method,route,status}` and
+  `rustbase_http_request_duration_seconds{method,route,status}` —
+  the `route` label uses axum's `MatchedPath` template so
+  cardinality stays bounded regardless of how many workspaces/apps
+  are running. Histogram buckets cover `1ms → 10s`. A
+  `rustbase_build_info{version}` gauge ships the running version.
+  Endpoint is bearer-token gated (`metrics_token`); requests
+  without the right token get **404**, not 401 — scrapers without
+  the token never learn the endpoint exists. Boot aborts when
+  `metrics_enabled = true` is set without a non-empty
+  `metrics_token`. New docs page `guide/observability.md` covers
+  the scrape config, label conventions, and tracing fields.
 - **Dashboard schema editor: draft mode + live diff.** The
   collection page no longer writes to the server on every Add / Drop
   click. Edits accumulate in a draft `Field[]` separate from the

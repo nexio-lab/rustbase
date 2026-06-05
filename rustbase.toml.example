@@ -99,3 +99,12 @@ enabled = false
 # access_key_id     = "minioadmin"
 # secret_access_key = "minioadmin"
 # # virtual_hosted_style_request = false  # default; required false for MinIO
+
+# Prometheus metrics endpoint. Off by default. When enabled,
+# `GET /metrics` returns the Prometheus text-format snapshot under
+# `Authorization: Bearer <metrics_token>`; any other request gets 404
+# (so misconfigured scrapers can't enumerate the surface).
+#
+# [observability]
+# metrics_enabled = true
+# metrics_token   = "change-me-to-a-long-random-string"

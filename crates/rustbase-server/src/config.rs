@@ -17,6 +17,8 @@ use rustbase_storage::S3Config;
 use serde::Deserialize;
 use std::path::PathBuf;
 
+use crate::observability::ObservabilityConfig;
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerConfig {
     #[serde(default = "default_listen")]
@@ -51,6 +53,9 @@ pub struct ServerConfig {
     /// `[hooks]` — JS hook runtime knobs.
     #[serde(default)]
     pub hooks: HooksConfig,
+    /// `[observability]` — Prometheus `/metrics` endpoint.
+    #[serde(default)]
+    pub observability: ObservabilityConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -281,6 +286,7 @@ impl Default for ServerConfig {
             rate_limit: RateLimitConfig::default(),
             lockout: LockoutConfig::default(),
             hooks: HooksConfig::default(),
+            observability: ObservabilityConfig::default(),
         }
     }
 }
@@ -331,6 +337,8 @@ pub fn load() -> Result<ServerConfig> {
             "lockout.lockout_secs",
             default_lockout_duration_secs() as i64,
         )?
+        // observability
+        .set_default("observability.metrics_enabled", false)?
         // file
         .add_source(File::with_name("rustbase").required(false))
         // env: prefix=RUSTBASE, "_" splits prefix from key, "__" splits
