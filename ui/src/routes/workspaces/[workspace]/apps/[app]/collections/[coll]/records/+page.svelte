@@ -42,6 +42,42 @@
 	let editorError: string | null = $state(null);
 	let editorBusy = $state(false);
 
+	// Bulk selection. IDs of every selected row on the current page;
+	// pagination / filter / scope changes clear the set because rows
+	// outside the visible page have no checkbox to communicate state.
+	let selected = $state<Set<string>>(new Set());
+	let bulkBusy = $state(false);
+	let bulkError: string | null = $state(null);
+
+	const allOnPageSelected = $derived(
+		items.length > 0 && items.every((r) => selected.has(r.id))
+	);
+	const someOnPageSelected = $derived(
+		!allOnPageSelected && items.some((r) => selected.has(r.id))
+	);
+
+	function toggleRow(id: string, on: boolean) {
+		const next = new Set(selected);
+		if (on) next.add(id);
+		else next.delete(id);
+		selected = next;
+	}
+
+	function toggleAllOnPage() {
+		const next = new Set(selected);
+		if (allOnPageSelected) {
+			for (const r of items) next.delete(r.id);
+		} else {
+			for (const r of items) next.add(r.id);
+		}
+		selected = next;
+	}
+
+	function clearSelection() {
+		selected = new Set();
+		bulkError = null;
+	}
+
 	async function loadCollection() {
 		collection = await api.get<Collection>(
 			`/api/workspaces/${workspace}/apps/${app}/collections/${coll}`
@@ -86,6 +122,7 @@
 		// Reset to page 1 when the collection slug changes.
 		curPage = 1;
 		collection = null;
+		clearSelection();
 		loadAll();
 	});
 
@@ -93,6 +130,7 @@
 		e.preventDefault();
 		appliedFilter = filter.trim();
 		curPage = 1;
+		clearSelection();
 		loadRecords();
 	}
 
@@ -100,12 +138,14 @@
 		filter = '';
 		appliedFilter = '';
 		curPage = 1;
+		clearSelection();
 		loadRecords();
 	}
 
 	function gotoPage(p: number) {
 		if (p < 1 || (totalPages > 0 && p > totalPages)) return;
 		curPage = p;
+		clearSelection();
 		loadRecords();
 	}
 
@@ -189,18 +229,36 @@
 				body[f.name] = parseFieldValue(f, formValues[f.name] ?? '');
 			}
 			if (editing) {
-				await api.patch<RecordRow>(
-					`/api/workspaces/${workspace}/apps/${app}/collections/${coll}/records/${editing.id}`,
-					body
-				);
+				// Optimistic update: swap the row into the table while the
+				// PATCH is in flight. On error, restore the original row
+				// and surface the message inside the modal.
+				const original = editing;
+				const optimistic: RecordRow = {
+					...original,
+					fields: { ...original.fields, ...body },
+					updated_at: new Date().toISOString()
+				};
+				items = items.map((r) => (r.id === original.id ? optimistic : r));
+				try {
+					const server = await api.patch<RecordRow>(
+						`/api/workspaces/${workspace}/apps/${app}/collections/${coll}/records/${original.id}`,
+						body
+					);
+					// Replace the optimistic row with the server's authoritative copy.
+					items = items.map((r) => (r.id === server.id ? server : r));
+					closeEditor();
+				} catch (e) {
+					items = items.map((r) => (r.id === original.id ? original : r));
+					throw e;
+				}
 			} else {
 				await api.post<RecordRow>(
 					`/api/workspaces/${workspace}/apps/${app}/collections/${coll}/records`,
 					body
 				);
+				closeEditor();
+				await loadRecords();
 			}
-			closeEditor();
-			await loadRecords();
 		} catch (e) {
 			editorError = e instanceof ApiError ? e.message : String(e);
 		} finally {
@@ -210,14 +268,66 @@
 
 	async function deleteRow(row: RecordRow) {
 		if (!confirm(`Delete record ${row.id}?`)) return;
+		// Optimistic delete: drop the row immediately, snapshot for rollback.
+		const prevItems = items;
+		const prevTotal = total;
+		items = items.filter((r) => r.id !== row.id);
+		total = Math.max(0, total - 1);
+		if (selected.has(row.id)) {
+			const next = new Set(selected);
+			next.delete(row.id);
+			selected = next;
+		}
 		try {
 			await api.delete(
 				`/api/workspaces/${workspace}/apps/${app}/collections/${coll}/records/${row.id}`
 			);
-			await loadRecords();
 		} catch (e) {
+			items = prevItems;
+			total = prevTotal;
 			alert(e instanceof ApiError ? e.message : String(e));
 		}
+	}
+
+	async function bulkDelete() {
+		if (selected.size === 0) return;
+		const ids = Array.from(selected);
+		const noun = ids.length === 1 ? 'record' : 'records';
+		if (!confirm(`Delete ${ids.length} ${noun}?\n\nThis is irreversible.`)) return;
+		bulkBusy = true;
+		bulkError = null;
+		const prevItems = items;
+		const prevTotal = total;
+		// Optimistically drop every selected row from the visible list.
+		const toDelete = new Set(ids);
+		items = items.filter((r) => !toDelete.has(r.id));
+		total = Math.max(0, total - ids.length);
+		const results = await Promise.allSettled(
+			ids.map((id) =>
+				api.delete(
+					`/api/workspaces/${workspace}/apps/${app}/collections/${coll}/records/${id}`
+				)
+			)
+		);
+		const failed: string[] = [];
+		for (let i = 0; i < results.length; i++) {
+			if (results[i].status === 'rejected') failed.push(ids[i]);
+		}
+		if (failed.length === 0) {
+			selected = new Set();
+		} else if (failed.length === ids.length) {
+			// Nothing actually deleted — restore everything verbatim.
+			items = prevItems;
+			total = prevTotal;
+			selected = new Set(failed);
+			bulkError = `Failed to delete ${failed.length} ${noun}.`;
+		} else {
+			// Partial — let the server tell us the real state.
+			selected = new Set(failed);
+			bulkError = `Failed to delete ${failed.length} of ${ids.length} ${noun}.`;
+			await loadRecords();
+		}
+		bulkBusy = false;
 	}
 
 	/** Compact cell formatter for the table. */
@@ -271,6 +381,34 @@
 	<div class="error-banner mb-4">{loadError}</div>
 {/if}
 
+{#if bulkError}
+	<div class="error-banner mb-4">{bulkError}</div>
+{/if}
+
+{#if selected.size > 0}
+	<div
+		class="mb-3 flex items-center justify-between rounded-lg border border-orange-300 bg-orange-50 px-4 py-2 text-sm dark:border-orange-600 dark:bg-orange-950/30"
+		role="region"
+		aria-label="Bulk actions"
+	>
+		<span class="font-medium text-slate-900 dark:text-slate-100">
+			{selected.size} selected
+		</span>
+		<div class="flex gap-2">
+			<button
+				class="btn-secondary border-red-300 text-red-700 hover:bg-red-50 dark:border-red-600 dark:text-red-300 dark:hover:bg-red-950/40"
+				onclick={bulkDelete}
+				disabled={bulkBusy}
+			>
+				{bulkBusy ? 'Deleting…' : `Delete ${selected.size}`}
+			</button>
+			<button class="btn-secondary" onclick={clearSelection} disabled={bulkBusy}>
+				Clear
+			</button>
+		</div>
+	</div>
+{/if}
+
 {#if loading}
 	<Skeleton rows={3} class="mt-4 space-y-2 max-w-md" />
 {:else if !collection}
@@ -287,6 +425,16 @@
 		<table class="min-w-full divide-y divide-slate-200 text-sm">
 			<thead class="bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-500">
 				<tr>
+					<th class="w-10 px-4 py-2.5 font-medium">
+						<input
+							type="checkbox"
+							class="h-4 w-4 cursor-pointer rounded border-slate-300 text-orange-600 focus:ring-orange-500"
+							checked={allOnPageSelected}
+							indeterminate={someOnPageSelected}
+							onchange={toggleAllOnPage}
+							aria-label="Select all records on this page"
+						/>
+					</th>
 					<th class="px-4 py-2.5 font-medium">ID</th>
 					{#each collection.schema.fields as f}
 						<th class="px-4 py-2.5 font-medium">{f.name}</th>
@@ -297,7 +445,16 @@
 			</thead>
 			<tbody class="divide-y divide-slate-200 bg-white">
 				{#each items as row}
-					<tr class="hover:bg-slate-50">
+					<tr class="hover:bg-slate-50" class:bg-orange-50={selected.has(row.id)}>
+						<td class="px-4 py-2">
+							<input
+								type="checkbox"
+								class="h-4 w-4 cursor-pointer rounded border-slate-300 text-orange-600 focus:ring-orange-500"
+								checked={selected.has(row.id)}
+								onchange={(e) => toggleRow(row.id, e.currentTarget.checked)}
+								aria-label={`Select record ${row.id.slice(0, 8)}`}
+							/>
+						</td>
 						<td class="px-4 py-2 font-mono text-xs text-slate-500" title={row.id}>
 							{row.id.slice(0, 8)}…
 						</td>

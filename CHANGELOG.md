@@ -8,6 +8,21 @@ versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Dashboard records list: optimistic updates + bulk delete.**
+  Single-row delete now drops the row from the table immediately and
+  rolls back the snapshot if the DELETE comes back as an error.
+  Inline edits paint into the table the moment the modal submits and
+  revert if the PATCH fails, with the error surfacing inside the
+  still-open modal. A new checkbox column lets the user fan-select
+  rows; the header checkbox carries the standard tri-state
+  (none / some / all on-page). When at least one row is selected a
+  bulk-actions toolbar floats above the table with **Delete N** and
+  **Clear**. The bulk delete dispatches one DELETE per row via
+  `Promise.allSettled`, optimistically clears the visible rows, and
+  on partial failure re-syncs from the server while keeping the
+  failing IDs in the selection set. Pagination, filter changes, and
+  collection navigation all clear the selection — rows that aren't
+  visible can't communicate state.
 - **Dashboard dark mode + a11y baseline.** Theme rune
   (`$lib/theme.svelte`) persists a 3-state choice — Auto / Light /
   Dark — in `localStorage`. `Auto` follows the OS-level
