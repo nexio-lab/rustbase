@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Skeleton from '$lib/Skeleton.svelte';
 	import { page } from '$app/state';
 	import { api, ApiError, type FileMeta } from '$lib/api';
 	import { auth } from '$lib/auth.svelte';
@@ -228,7 +229,7 @@
 {/if}
 
 {#if loading}
-	<p class="text-sm text-slate-500">Loading…</p>
+	<Skeleton rows={3} class="mt-4 space-y-2 max-w-md" />
 {:else if loadError}
 	<div class="error-banner">{loadError}</div>
 {:else if files.length === 0}

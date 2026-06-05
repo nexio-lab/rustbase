@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Skeleton from '$lib/Skeleton.svelte';
 	import { goto } from "$lib/nav";
 	import { page } from '$app/state';
 	import {
@@ -166,7 +167,7 @@
 {/if}
 
 {#if loading}
-	<p class="text-sm text-slate-500">Loading…</p>
+	<Skeleton rows={3} class="mt-4 space-y-2 max-w-md" />
 {:else if listError}
 	<div class="error-banner">{listError}</div>
 {:else if collections.length === 0}

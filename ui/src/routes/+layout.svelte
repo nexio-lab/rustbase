@@ -6,6 +6,8 @@
 	import { base } from '$app/paths';
 	import { api } from '$lib/api';
 	import { auth } from '$lib/auth.svelte';
+	import { theme } from '$lib/theme.svelte';
+	import ThemeToggle from '$lib/ThemeToggle.svelte';
 
 	let { children } = $props();
 
@@ -14,6 +16,20 @@
 	// Public docs site URL. Override at build time with VITE_DOCS_URL
 	// for self-hosted docs; defaults to the canonical site.
 	const DOCS_URL = import.meta.env.VITE_DOCS_URL ?? 'https://pjonaszik.github.io/rustbase/';
+
+	// Materialise the resolved theme onto <html> so Tailwind's
+	// `.dark`-rooted `dark:` variant lights up app-wide. Also bind
+	// the OS-preference listener so "Auto" reacts to a system
+	// change without a page reload.
+	$effect(() => {
+		if (typeof document === 'undefined') return;
+		document.documentElement.classList.toggle('dark', theme.resolved === 'dark');
+	});
+
+	$effect(() => {
+		const unbind = theme.bindOsListener();
+		return unbind;
+	});
 
 	// Route guard: anything outside the public list requires a session.
 	// Runs on every navigation thanks to runes; redirects don't loop
@@ -51,14 +67,20 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
+<a href="#main-content" class="skip-link">Skip to main content</a>
+
 {#if auth.isAuthenticated}
-	<header class="border-b border-slate-200 bg-white">
+	<header class="border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
 		<div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
-			<a href="/" class="flex items-center gap-2 text-slate-900">
-				<span class="inline-block h-2.5 w-2.5 rounded-sm bg-orange-500"></span>
+			<a
+				href="/"
+				class="flex items-center gap-2 text-slate-900 dark:text-slate-100"
+				aria-label="RustBase home"
+			>
+				<span class="inline-block h-2.5 w-2.5 rounded-sm bg-orange-500" aria-hidden="true"></span>
 				<span class="text-sm font-semibold tracking-tight">RustBase</span>
 			</a>
-			<nav class="flex items-center gap-1 text-sm">
+			<nav class="flex items-center gap-1 text-sm" aria-label="Primary">
 				<a class="nav-link" href="/workspaces">Workspaces</a>
 				{#if auth.isMaster}
 					<a class="nav-link" href="/system">System</a>
@@ -67,16 +89,19 @@
 					Docs ↗
 				</a>
 				{#if auth.admin}
-					<span class="ml-3 text-xs text-slate-500">
+					<span class="ml-3 text-xs text-slate-500 dark:text-slate-400">
 						{auth.admin.username}
 					</span>
 				{/if}
-				<button onclick={logout} class="nav-link ml-2 cursor-pointer">Sign out</button>
+				<button onclick={logout} class="nav-link ml-2 cursor-pointer" type="button">
+					Sign out
+				</button>
+				<ThemeToggle />
 			</nav>
 		</div>
 	</header>
 {/if}
 
-<main class="mx-auto max-w-6xl px-6 py-8">
+<main id="main-content" class="mx-auto max-w-6xl px-6 py-8" tabindex="-1">
 	{@render children()}
 </main>

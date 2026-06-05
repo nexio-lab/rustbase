@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Skeleton from '$lib/Skeleton.svelte';
 	import { api, ApiError, type AuditListResponse, type AuditEntry } from '$lib/api';
 
 	let { apiBase, scopeLabel }: { apiBase: string; scopeLabel: string } = $props();
@@ -118,7 +119,7 @@
 {/if}
 
 {#if loading}
-	<p class="text-sm text-slate-500">Loading…</p>
+	<Skeleton rows={3} class="mt-4 space-y-2 max-w-md" />
 {:else if items.length === 0}
 	<div class="card text-center text-slate-500">
 		<p>No audit entries{appliedAction || appliedActor ? ' match this filter' : ' yet'}.</p>

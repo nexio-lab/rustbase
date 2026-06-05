@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Skeleton from '$lib/Skeleton.svelte';
 	import { goto } from "$lib/nav";
 	import { page } from '$app/state';
 	import { api, ApiError, type OAuthProvider } from '$lib/api';
@@ -63,7 +64,7 @@
 {/if}
 
 {#if loading}
-	<p class="text-sm text-slate-500">Loading…</p>
+	<Skeleton rows={3} class="mt-4 space-y-2 max-w-md" />
 {:else if providers.length === 0}
 	<div class="card text-center text-slate-500">
 		<p>No providers configured.</p>

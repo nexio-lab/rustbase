@@ -8,6 +8,26 @@ versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Dashboard dark mode + a11y baseline.** Theme rune
+  (`$lib/theme.svelte`) persists a 3-state choice — Auto / Light /
+  Dark — in `localStorage`. `Auto` follows the OS-level
+  `prefers-color-scheme` and re-evaluates when the OS preference
+  changes. A new `ThemeToggle` button in the global header cycles
+  through the three states. Tailwind's `dark:` variant is
+  reconfigured for class-based dark mode and the component classes
+  in `routes/layout.css` (`.btn-primary`, `.btn-secondary`,
+  `.input`, `.card`, `.error-banner`, etc.) ship matching dark
+  palettes.
+  A11y baseline lands alongside: a keyboard-only "Skip to main
+  content" link, a stylesheet-level focus-visible ring on every
+  focusable element, ARIA labels on the global landmarks, and a
+  `<main id="main-content" tabindex="-1">` target. Two new
+  Playwright specs cover the theme persistence + skip-link round
+  trip.
+- New `Skeleton.svelte` component replaces the 12 hand-rolled
+  `<p>Loading…</p>` placeholders across the dashboard with
+  animated, dark-mode-aware skeleton rows. Tagged `role="status"
+  aria-busy="true"` so screen readers announce the loading state.
 - **Realtime gets server-side filters + a WebSocket transport.**
   - `FilterNode::matches(fields)` evaluates the same AST the SQL
     translator consumes against an in-memory record, with parity
