@@ -32,6 +32,12 @@ HANDOFF.md
 # rustbase-server runs `bun --cwd ui run build` to produce ui/build/
 # on demand, so the artifact lives only in target/.
 
+# Playwright artefacts (kept local; CI uploads them on failure).
+/ui/test-results/
+/ui/playwright-report/
+/ui/blob-report/
+/ui/.playwright/
+
 # Override the user-level global ignore that strips out docs/ —
 # we want the VitePress source tracked. docs/.gitignore handles
 # the per-folder exclusions (node_modules, dist, cache).

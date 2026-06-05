@@ -8,6 +8,11 @@ versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Playwright end-to-end smoke suite** in `ui/tests/e2e/` driven by
+  `scripts/e2e-server.sh` (boots a release `rustbase` against a
+  throw-away `data/` dir + the freshly-built dashboard, then runs the
+  suite headless). One spec walks setup → login → workspace → app →
+  collection. Run with `make e2e` after a one-off `make e2e-install`.
 - **Brand: project renamed to RustBase.** New tagline: _"Multi-tenant
   backend. Single binary. Real isolation."_ The on-disk layout, crate
   names, and config keys are unchanged; only public-facing wording
@@ -53,6 +58,16 @@ versioning follows [Semantic Versioning](https://semver.org/).
   (`issue`, `verify`, `jwks`). HS256 tokens issued before the upgrade
   continue to verify until they expire on their own; the legacy HMAC
   key is kept as a verification-only fallback.
+
+### Fixed
+- **Dashboard CSP**: the strict `script-src 'self'` header we shipped
+  in the security-layer-1 rollout was blocking SvelteKit's own
+  SHA-hashed inline boot script, leaving the dashboard a blank page
+  whenever `http.security_headers = true` (the default). The fix
+  moves the dashboard's CSP onto a `<meta http-equiv>` tag emitted
+  by SvelteKit (`kit.csp.mode = 'hash'`), which auto-hashes every
+  inline script per build, and drops the server-side CSP header
+  entirely (JSON API responses don't need CSP).
 
 ### Changed — BREAKING
 

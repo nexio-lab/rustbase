@@ -13,9 +13,15 @@
 //!   - `X-Frame-Options: DENY` (clickjacking defense; CSP `frame-ancestors`
 //!     is the modern replacement but XFO still works on legacy browsers).
 //!   - `Permissions-Policy` — turn off the high-risk APIs by default.
-//!   - `Content-Security-Policy` — restrictive baseline tuned for the
-//!     embedded dashboard (self-only scripts/styles/images plus
-//!     `data:` images for inlined SVGs).
+//!
+//! Content-Security-Policy lives on the dashboard's HTML itself via
+//! SvelteKit's `kit.csp` hash mode (svelte.config.js). The server
+//! does NOT emit a CSP header — sending a strict `script-src 'self'`
+//! at the HTTP layer would also block SvelteKit's own SHA-hashed
+//! inline boot script, and the meta-CSP intersection with the
+//! header is hostile to keep in sync with per-build script hashes.
+//! JSON API responses don't need CSP (browsers ignore it on
+//! non-document responses).
 
 use axum::http::{HeaderName, HeaderValue, header};
 use tower::ServiceBuilder;
@@ -40,15 +46,6 @@ fn hsts_value(cfg: SecurityHeadersConfig) -> Option<HeaderValue> {
     HeaderValue::from_str(&format!("max-age={}{}", cfg.hsts_max_age_secs, suffix)).ok()
 }
 
-const CSP_BASELINE: &str = "default-src 'self'; \
-    img-src 'self' data:; \
-    style-src 'self' 'unsafe-inline'; \
-    script-src 'self'; \
-    connect-src 'self'; \
-    frame-ancestors 'none'; \
-    base-uri 'self'; \
-    form-action 'self'";
-
 const PERMISSIONS_POLICY: &str =
     "geolocation=(), microphone=(), camera=(), payment=(), usb=(), interest-cohort=()";
 
@@ -60,10 +57,7 @@ type HeaderStack = Stack<
             SetResponseHeaderLayer<HeaderValue>,
             Stack<
                 SetResponseHeaderLayer<HeaderValue>,
-                Stack<
-                    SetResponseHeaderLayer<HeaderValue>,
-                    Stack<SetResponseHeaderLayer<HeaderValue>, Identity>,
-                >,
+                Stack<SetResponseHeaderLayer<HeaderValue>, Identity>,
             >,
         >,
     >,
@@ -78,7 +72,6 @@ pub fn layer(cfg: SecurityHeadersConfig) -> ServiceBuilder<HeaderStack> {
     let referrer = HeaderValue::from_static("strict-origin-when-cross-origin");
     let frame_options = HeaderValue::from_static("DENY");
     let permissions = HeaderValue::from_static(PERMISSIONS_POLICY);
-    let csp = HeaderValue::from_static(CSP_BASELINE);
 
     ServiceBuilder::new()
         .layer(SetResponseHeaderLayer::overriding(
@@ -100,10 +93,6 @@ pub fn layer(cfg: SecurityHeadersConfig) -> ServiceBuilder<HeaderStack> {
         .layer(SetResponseHeaderLayer::overriding(
             HeaderName::from_static("permissions-policy"),
             permissions,
-        ))
-        .layer(SetResponseHeaderLayer::overriding(
-            header::CONTENT_SECURITY_POLICY,
-            csp,
         ))
 }
 

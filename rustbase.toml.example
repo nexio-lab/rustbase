@@ -17,7 +17,8 @@ app_pool_cap = 64
 # Maximum request body size, in bytes (8 MiB by default).
 max_body_bytes = 8388608
 # Default-on bundle of security headers (HSTS, X-Content-Type-Options,
-# Referrer-Policy, X-Frame-Options, baseline CSP, Permissions-Policy).
+# Referrer-Policy, X-Frame-Options, Permissions-Policy). The dashboard
+# self-applies its CSP via SvelteKit's hash-mode meta tag.
 # Disable only when an upstream reverse proxy already injects them.
 security_headers = true
 # HSTS `max-age=` value in seconds. `0` omits the header.

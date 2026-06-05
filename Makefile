@@ -7,8 +7,8 @@
 .DEFAULT_GOAL := help
 
 .PHONY: help fmt clippy test check audit build docker docker-run \
-        ui-dev docs-dev docs-build install-hooks setup-dev \
-        changelog release release-push
+        ui-dev docs-dev docs-build e2e e2e-install install-hooks \
+        setup-dev changelog release release-push
 
 help: ## Show this help
 	@awk 'BEGIN {FS=":.*?## "} \
@@ -56,6 +56,14 @@ docs-dev: ## VitePress docs dev server
 
 docs-build: ## Build the docs site to docs/.vitepress/dist
 	bun --cwd docs run build
+
+# ----- end-to-end -----------------------------------------------------
+
+e2e-install: ## One-time: install Playwright's Chromium browser
+	bun --cwd ui run e2e:install
+
+e2e: ## Playwright end-to-end suite against a throw-away rustbase boot
+	bun --cwd ui run e2e
 
 # ----- repo hygiene ---------------------------------------------------
 

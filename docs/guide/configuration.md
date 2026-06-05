@@ -69,7 +69,7 @@ virtual_hosted_style_request = false             # set false for MinIO, true for
 # ------------------------------------------------------------------
 [http]
 max_body_bytes         = 8388608         # 8 MiB
-security_headers       = true            # HSTS / nosniff / Referrer-Policy / XFO / CSP
+security_headers       = true            # HSTS / nosniff / Referrer-Policy / XFO / Permissions-Policy
 hsts_max_age_secs      = 63072000        # 2 years; 0 omits HSTS
 hsts_include_subdomains = true
 

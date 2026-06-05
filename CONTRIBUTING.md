@@ -71,6 +71,10 @@ bun --cwd ui run dev
 
 # docs dev server (VitePress)
 bun --cwd docs run dev
+
+# end-to-end smoke (Playwright + a fresh `rustbase` boot)
+make e2e-install   # one-off: download the Chromium browser
+make e2e           # runs the suite in ui/tests/e2e
 ```
 
 To run the server itself:

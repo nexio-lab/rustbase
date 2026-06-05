@@ -22,6 +22,26 @@ const config = {
 		paths: {
 			base: process.env.VITE_BASE ?? '',
 			relative: false
+		},
+		// Content-Security-Policy in `hash` mode: SvelteKit computes a
+		// SHA-256 of every inline boot script it emits and renders the
+		// directive as a `<meta http-equiv="Content-Security-Policy">`
+		// inside the page itself. That self-protects the dashboard
+		// regardless of which CSP the upstream HTTP layer sends — and
+		// it sidesteps the chicken-and-egg of needing a per-build
+		// script hash baked into the server-side CSP header.
+		csp: {
+			mode: 'hash',
+			directives: {
+				'default-src': ['self'],
+				'img-src': ['self', 'data:'],
+				'style-src': ['self', 'unsafe-inline'],
+				'script-src': ['self'],
+				'connect-src': ['self'],
+				'frame-ancestors': ['none'],
+				'base-uri': ['self'],
+				'form-action': ['self']
+			}
 		}
 	}
 };
