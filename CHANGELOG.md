@@ -8,6 +8,10 @@ versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- New concept page [`docs/concepts/write-amplification.md`](docs/concepts/write-amplification.md)
+  — documents the per-pool fsync ceiling, the post-batching commit
+  count for every hot auth path, and the explicit future-work list
+  for audit + multi-step flows.
 - **Supply-chain hardening.** Every release artefact now ships with
   provenance and a vulnerability paper trail:
   - Each tarball, the container image, and a workspace **CycloneDX
@@ -73,6 +77,17 @@ versioning follows [Semantic Versioning](https://semver.org/).
   (`issue`, `verify`, `jwks`). HS256 tokens issued before the upgrade
   continue to verify until they expire on their own; the legacy HMAC
   key is kept as a verification-only fallback.
+
+### Changed
+- **Write amplification on the auth happy paths cut roughly in half.**
+  Two new combinators in `rustbase_db::tokens` —
+  `commit_user_login` (bumps `users.last_login` + inserts the
+  refresh-token row in one transaction) and `rotate_refresh_token`
+  (revokes the old + inserts the new in one transaction) — collapse
+  the per-fsync cost of every successful login (password / OAuth /
+  TOTP / email-OTP) and every refresh-rotation to a single commit
+  each, down from two. The handler-side migrations are mechanical
+  drop-in replacements; no semantic change to the API.
 
 ### Fixed
 - **Dashboard CSP**: the strict `script-src 'self'` header we shipped

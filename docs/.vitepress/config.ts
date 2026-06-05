@@ -89,6 +89,7 @@ export default defineConfig({
 							link: '/concepts/hierarchical-policies'
 						},
 						{ text: 'Storage layout', link: '/concepts/storage-layout' },
+						{ text: 'Write amplification', link: '/concepts/write-amplification' },
 						{ text: 'Architecture', link: '/concepts/architecture' }
 					]
 				}

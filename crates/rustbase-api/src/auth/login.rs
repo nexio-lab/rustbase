@@ -9,8 +9,8 @@ use super::cookies::{CookieFlags, build_access_cookie, build_refresh_cookie};
 use rustbase_core::{CoreError, WorkspaceId};
 use rustbase_db::{
     admins::{find_master_admin_by_username, find_workspace_admin_by_email},
-    tokens::{SubjectKind, insert_refresh_token},
-    users::{find_user_by_email, record_last_login},
+    tokens::{SubjectKind, commit_user_login, insert_refresh_token},
+    users::find_user_by_email,
 };
 use serde::{Deserialize, Serialize};
 use validator::Validate;
@@ -484,8 +484,6 @@ pub async fn user_login(
         .into_response());
     }
 
-    record_last_login(&pool, &user.id).await?;
-
     let claims = build_claims(
         user.id.clone(),
         TokenRole::User,
@@ -496,14 +494,10 @@ pub async fn user_login(
     );
     let access_token = state.jwt.issue(&claims)?;
 
-    let refresh = insert_refresh_token(
-        &pool,
-        &new_refresh_token(),
-        SubjectKind::User,
-        &user.id,
-        default_refresh_ttl(),
-    )
-    .await?;
+    // Bump users.last_login + insert the refresh row in one txn so the
+    // happy path costs one fsync instead of two.
+    let refresh =
+        commit_user_login(&pool, &user.id, &new_refresh_token(), default_refresh_ttl()).await?;
 
     tracing::info!(workspace = %workspace, user_id = %user.id, "user login");
     record_audit(

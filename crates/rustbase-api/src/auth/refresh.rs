@@ -6,9 +6,7 @@ use axum::{
 };
 use rustbase_auth::{TokenRole, build_claims};
 use rustbase_core::{CoreError, WorkspaceId};
-use rustbase_db::tokens::{
-    SubjectKind, find_active_refresh_token, insert_refresh_token, revoke_refresh_token,
-};
+use rustbase_db::tokens::{SubjectKind, find_active_refresh_token, rotate_refresh_token};
 use serde::{Deserialize, Serialize};
 
 use super::cookies::{
@@ -83,10 +81,9 @@ pub async fn master_admin_refresh(
             .await?
             .ok_or(ApiError::Core(CoreError::Unauthorized))?;
 
-    revoke_refresh_token(state.system.pool(), &existing.token).await?;
-
-    let new_refresh = insert_refresh_token(
+    let new_refresh = rotate_refresh_token(
         state.system.pool(),
+        &existing.token,
         &new_refresh_token(),
         SubjectKind::MasterAdmin,
         &existing.subject_id,
@@ -128,10 +125,9 @@ pub async fn user_refresh(
         .await?
         .ok_or(ApiError::Core(CoreError::Unauthorized))?;
 
-    revoke_refresh_token(&pool, &existing.token).await?;
-
-    let new_refresh = insert_refresh_token(
+    let new_refresh = rotate_refresh_token(
         &pool,
+        &existing.token,
         &new_refresh_token(),
         SubjectKind::User,
         &existing.subject_id,
@@ -172,10 +168,9 @@ pub async fn workspace_admin_refresh(
         .await?
         .ok_or(ApiError::Core(CoreError::Unauthorized))?;
 
-    revoke_refresh_token(&pool, &existing.token).await?;
-
-    let new_refresh = insert_refresh_token(
+    let new_refresh = rotate_refresh_token(
         &pool,
+        &existing.token,
         &new_refresh_token(),
         SubjectKind::WorkspaceAdmin,
         &existing.subject_id,

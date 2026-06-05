@@ -35,9 +35,9 @@ use rustbase_auth::{TokenRole, build_claims};
 use rustbase_core::{CoreError, WorkspaceId};
 use rustbase_db::{
     mfa_challenges::{self, ConsumeOutcome as MfaConsume},
-    tokens::{SubjectKind, insert_refresh_token},
+    tokens::commit_user_login,
     user_totp,
-    users::{find_user_by_email, find_user_by_id, record_last_login},
+    users::{find_user_by_email, find_user_by_id},
 };
 use serde::{Deserialize, Serialize};
 use totp_rs::{Algorithm, Secret, TOTP};
@@ -279,8 +279,6 @@ pub async fn login_totp(
     }
     state.login_attempts.note_success(&subject);
 
-    record_last_login(&pool, &user.id).await?;
-
     let claims = build_claims(
         user.id.clone(),
         TokenRole::User,
@@ -290,14 +288,9 @@ pub async fn login_totp(
         default_access_ttl(),
     );
     let access_token = state.jwt.issue(&claims)?;
-    let refresh = insert_refresh_token(
-        &pool,
-        &new_refresh_token(),
-        SubjectKind::User,
-        &user.id,
-        default_refresh_ttl(),
-    )
-    .await?;
+    // last_login + refresh insert in one txn.
+    let refresh =
+        commit_user_login(&pool, &user.id, &new_refresh_token(), default_refresh_ttl()).await?;
     tracing::info!(workspace = %workspace, user_id = %user.id, "user login (TOTP second step)");
     crate::auth::audit_events::record(
         &state,

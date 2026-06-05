@@ -27,8 +27,8 @@ use rustbase_auth::{TokenRole, build_claims};
 use rustbase_core::{CoreError, EmailMessage, WorkspaceId};
 use rustbase_db::{
     email_otps::{self, ConsumeOutcome},
-    tokens::{SubjectKind, insert_refresh_token},
-    users::{User, find_user_by_email, insert_passwordless_user, mark_verified, record_last_login},
+    tokens::commit_user_login,
+    users::{User, find_user_by_email, insert_passwordless_user, mark_verified},
 };
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
@@ -287,8 +287,6 @@ async fn issue_tokens_for(
             })?;
     }
 
-    record_last_login(pool, &user.id).await?;
-
     let claims = build_claims(
         user.id.clone(),
         TokenRole::User,
@@ -298,14 +296,9 @@ async fn issue_tokens_for(
         default_access_ttl(),
     );
     let access_token = state.jwt.issue(&claims)?;
-    let refresh = insert_refresh_token(
-        pool,
-        &new_refresh_token(),
-        SubjectKind::User,
-        &user.id,
-        default_refresh_ttl(),
-    )
-    .await?;
+    // last_login + refresh insert in one txn — one fsync.
+    let refresh =
+        commit_user_login(pool, &user.id, &new_refresh_token(), default_refresh_ttl()).await?;
 
     tracing::info!(workspace = %workspace, user_id = %user.id, "user login via email OTP");
 

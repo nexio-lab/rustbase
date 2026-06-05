@@ -100,6 +100,87 @@ pub async fn revoke_refresh_token(pool: &SqlitePool, token: &str) -> Result<()> 
     Ok(())
 }
 
+/// Atomic end-user login: bump `users.last_login` AND insert the
+/// fresh refresh-token row in a single transaction. Cuts the
+/// happy-path commit count from two to one — every successful user
+/// login goes through this. Returns the newly issued row.
+pub async fn commit_user_login(
+    pool: &SqlitePool,
+    user_id: &str,
+    refresh_token: &str,
+    ttl: Duration,
+) -> Result<RefreshToken> {
+    let now = Utc::now();
+    let expires_at = now + ttl;
+    let mut tx = pool.begin().await?;
+    sqlx::query("UPDATE users SET last_login = ? WHERE id = ?")
+        .bind(now)
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "INSERT INTO _refresh_tokens (token, subject_kind, subject_id, issued_at, expires_at, revoked) \
+         VALUES (?, ?, ?, ?, ?, 0)",
+    )
+    .bind(refresh_token)
+    .bind(SubjectKind::User.as_str())
+    .bind(user_id)
+    .bind(now)
+    .bind(expires_at)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(RefreshToken {
+        token: refresh_token.to_string(),
+        subject_kind: SubjectKind::User.as_str().to_string(),
+        subject_id: user_id.to_string(),
+        issued_at: now,
+        expires_at,
+        revoked: false,
+    })
+}
+
+/// Atomic rotate: revoke `old_token` and insert `new_token` in a single
+/// transaction. Cuts the refresh path's commit count from two to one
+/// (one fsync vs two under WAL + `synchronous=NORMAL`). Returns the
+/// newly issued row.
+pub async fn rotate_refresh_token(
+    pool: &SqlitePool,
+    old_token: &str,
+    new_token: &str,
+    subject_kind: SubjectKind,
+    subject_id: &str,
+    ttl: Duration,
+) -> Result<RefreshToken> {
+    let issued_at = Utc::now();
+    let expires_at = issued_at + ttl;
+    let mut tx = pool.begin().await?;
+    sqlx::query("UPDATE _refresh_tokens SET revoked = 1 WHERE token = ?")
+        .bind(old_token)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "INSERT INTO _refresh_tokens (token, subject_kind, subject_id, issued_at, expires_at, revoked) \
+         VALUES (?, ?, ?, ?, ?, 0)",
+    )
+    .bind(new_token)
+    .bind(subject_kind.as_str())
+    .bind(subject_id)
+    .bind(issued_at)
+    .bind(expires_at)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(RefreshToken {
+        token: new_token.to_string(),
+        subject_kind: subject_kind.as_str().to_string(),
+        subject_id: subject_id.to_string(),
+        issued_at,
+        expires_at,
+        revoked: false,
+    })
+}
+
 /// Revoke every active refresh token for a subject. Useful for "log out
 /// everywhere" and for cleaning up after a password reset.
 pub async fn revoke_all_for_subject(
@@ -204,6 +285,74 @@ mod tests {
             .await
             .unwrap();
         assert!(found.is_none());
+    }
+
+    #[tokio::test]
+    async fn rotate_revokes_old_and_inserts_new_atomically() {
+        let pool = fresh_pool().await;
+        insert_refresh_token(
+            &pool,
+            "rfsh_old",
+            SubjectKind::MasterAdmin,
+            "admin-1",
+            Duration::days(30),
+        )
+        .await
+        .unwrap();
+        let rotated = rotate_refresh_token(
+            &pool,
+            "rfsh_old",
+            "rfsh_new",
+            SubjectKind::MasterAdmin,
+            "admin-1",
+            Duration::days(30),
+        )
+        .await
+        .unwrap();
+        assert_eq!(rotated.token, "rfsh_new");
+        // old token no longer active
+        let old = find_active_refresh_token(&pool, "rfsh_old", SubjectKind::MasterAdmin)
+            .await
+            .unwrap();
+        assert!(old.is_none());
+        // new one is active
+        let new = find_active_refresh_token(&pool, "rfsh_new", SubjectKind::MasterAdmin)
+            .await
+            .unwrap();
+        assert!(new.is_some());
+    }
+
+    #[tokio::test]
+    async fn commit_user_login_updates_last_login_and_inserts_refresh() {
+        use crate::migrations::WORKSPACE_MIGRATIONS;
+        use crate::users::insert_user;
+        let pool = open_memory_pool().await.unwrap();
+        apply_migrations(pool.clone(), WORKSPACE_MIGRATIONS)
+            .await
+            .unwrap();
+        let user = insert_user(&pool, "u@acme.com", "hash").await.unwrap();
+        let before = user.last_login;
+
+        let row = commit_user_login(&pool, &user.id, "rfsh_new", Duration::days(30))
+            .await
+            .unwrap();
+        assert_eq!(row.token, "rfsh_new");
+        assert_eq!(row.subject_kind, "user");
+        assert_eq!(row.subject_id, user.id);
+
+        // last_login is populated.
+        let after = crate::users::find_user_by_id(&pool, &user.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(after.last_login.is_some());
+        assert_ne!(after.last_login, before);
+
+        // refresh token row is active.
+        let found = find_active_refresh_token(&pool, "rfsh_new", SubjectKind::User)
+            .await
+            .unwrap();
+        assert!(found.is_some());
     }
 
     #[tokio::test]
