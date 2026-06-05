@@ -8,6 +8,24 @@ versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Realtime gets server-side filters + a WebSocket transport.**
+  - `FilterNode::matches(fields)` evaluates the same AST the SQL
+    translator consumes against an in-memory record, with parity
+    semantics for `Eq` / `Ne` / `Gt` / `Gte` / `Lt` / `Lte` /
+    `Like` / `In` / `And` / `Or` / `Not`.
+  - The SSE endpoint (`GET …/collections/:coll/events`) now accepts
+    an optional `?filter=<expression>` and only forwards events
+    whose record matches; `record_deleted` events always pass so
+    subscribers can evict cached rows. For collections with a
+    template access rule (e.g. `owner = @request.auth.id`), the
+    rule is materialised against the subscribing principal and
+    **intersected** with the client filter. Template-rule
+    collections, which previously denied realtime outright, are
+    now supported.
+  - New WebSocket endpoint
+    (`GET …/collections/:coll/events/ws`) — same auth, same
+    `?filter=`, same JSON event payloads as SSE. Push-only; client
+    frames are drained but never interpreted.
 - **JS hook runtime** gains two new bridges on the `$app` global:
   - `$app.fetch(url, init?)` — synchronous outbound HTTP from a hook.
     Backed by a shared `reqwest::Client` with a 30 s timeout; the

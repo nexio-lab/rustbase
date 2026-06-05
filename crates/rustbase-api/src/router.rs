@@ -196,10 +196,17 @@ pub fn build_router(state: AppState) -> Router {
             "/api/workspaces/{workspace}/apps/{app}/files/{id}/meta",
             get(files::meta),
         )
-        // realtime SSE
+        // realtime SSE + WebSocket. Both endpoints accept the same
+        // `?filter=<expression>` query parameter; the SSE route is
+        // the default for browsers, the WS route is for clients that
+        // already keep a long-lived socket open.
         .route(
             "/api/workspaces/{workspace}/apps/{app}/collections/{coll}/events",
             get(realtime::record_events),
+        )
+        .route(
+            "/api/workspaces/{workspace}/apps/{app}/collections/{coll}/events/ws",
+            get(realtime::record_events_ws),
         )
         // Custom JS-defined endpoints. The wildcard catches anything
         // under `/custom/`; the handler delegates to the JS shim's
