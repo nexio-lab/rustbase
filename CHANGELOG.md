@@ -8,6 +8,19 @@ versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Dashboard schema editor: draft mode + live diff.** The
+  collection page no longer writes to the server on every Add / Drop
+  click. Edits accumulate in a draft `Field[]` separate from the
+  server's canonical schema. Required and Unique flags are now
+  in-line checkboxes on every row; new fields land via a "Stage
+  field" form. A live diff banner above the table calls out how
+  many fields are **added** (green dot), **modified** (amber),
+  or **dropped** (red), and the table colour-codes each row to
+  match — dropped rows render with a strikethrough name and a
+  Restore action. **Apply** sends one PATCH (with
+  `force=true` whenever the diff contains a drop) and resets the
+  draft to the server's response. **Discard** rolls the draft back
+  to the saved schema.
 - **Dashboard records list: optimistic updates + bulk delete.**
   Single-row delete now drops the row from the table immediately and
   rolls back the snapshot if the DELETE comes back as an error.
