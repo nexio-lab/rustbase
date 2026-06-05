@@ -49,8 +49,16 @@ printf '%s▶%s  arch: no unwrap/expect outside tests\n' "$DIM" "$RESET"
 # below is considered test scope — we never reset the flag. Good enough
 # for the convention this project follows (one test mod per file at the
 # bottom). Lines inside line comments (// ...) are skipped.
+#
+# Files inside any `*_tests/` directory are test submodules wired via
+# `#[cfg(test)] #[path] mod tests;` from a parent .rs file; the whole
+# file body is test code by construction. Same goes for the
+# top-level `tests/` integration-test convention.
 offenders="$(
     for f in $(git ls-files 'crates/*.rs' 'crates/**/*.rs' 2>/dev/null); do
+        case "$f" in
+            */tests/*|*_tests/*) continue ;;
+        esac
         awk '
             /^#\[cfg\(test\)\]/ { in_test = 1; next }
             /^mod tests[[:space:]]*\{/ { in_test = 1; next }
