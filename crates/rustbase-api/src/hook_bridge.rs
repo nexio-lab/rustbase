@@ -8,14 +8,18 @@
 use async_trait::async_trait;
 use rustbase_core::{AppId, FilterNode, WorkspaceId, parse_filter};
 use rustbase_db::{
-    AppPoolManager, DbError, ListPage,
+    AppPoolManager, DbError, ListPage, audit,
     collections::find_collection,
     records::{create_record, delete_record, find_record, list_records, update_record},
 };
-use rustbase_runtime::{AsyncRecordsBridge, Result as RtResult, RuntimeError, SyncBridge};
+use rustbase_runtime::{
+    AsyncRecordsBridge, AuditBridge, FetchBridge, FetchRequest, FetchResponse, Result as RtResult,
+    RuntimeError, SyncBridge,
+};
 use serde_json::Value as Json;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Per-(workspace, app) bridge. Cheaply cloneable: the pool manager is
 /// already `Arc`'d.
@@ -164,5 +168,136 @@ impl AsyncRecordsBridge for ApiBridge {
                 }
                 other => RuntimeError::Js(format!("delete_record: {other}")),
             })
+    }
+}
+
+/// Audit-log bridge for `$app.audit.write(...)`. Writes hook-side
+/// audit entries into the same per-app `audit_log` table the API
+/// handlers append to, with `actor = "hook"` so the dashboard can
+/// distinguish operator events from user-initiated ones.
+pub struct ApiAuditBridge {
+    workspace: WorkspaceId,
+    app: AppId,
+    apps: Arc<AppPoolManager>,
+}
+
+impl ApiAuditBridge {
+    pub fn new(workspace: WorkspaceId, app: AppId, apps: Arc<AppPoolManager>) -> Arc<Self> {
+        Arc::new(Self {
+            workspace,
+            app,
+            apps,
+        })
+    }
+}
+
+impl AuditBridge for ApiAuditBridge {
+    fn write(&self, action: &str, target: Option<&str>, details_json: &str) -> RtResult<()> {
+        let workspace = self.workspace.clone();
+        let app = self.app.clone();
+        let apps = self.apps.clone();
+        let action = action.to_string();
+        let target = target.map(str::to_string);
+        let details: Json = serde_json::from_str(details_json)
+            .map_err(|e| RuntimeError::Internal(format!("audit details JSON: {e}")))?;
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async move {
+                let pool = apps
+                    .pool_for(&workspace, &app)
+                    .await
+                    .map_err(|e| RuntimeError::Internal(format!("audit pool: {e}")))?;
+                audit::append(&pool, Some("hook"), &action, target.as_deref(), &details)
+                    .await
+                    .map_err(|e| RuntimeError::Internal(format!("audit append: {e}")))?;
+                Ok(())
+            })
+        })
+    }
+}
+
+/// HTTP-fetch bridge for `$app.fetch(url, init)`.
+///
+/// Holds a shared `reqwest::Client` so connection-pooling persists
+/// across hook invocations, and an allowlist of host strings. A
+/// request whose URL's host isn't on the allowlist is rejected with
+/// `RuntimeError::Forbidden` before any network IO happens. Empty
+/// allowlist = `$app.fetch` is effectively disabled.
+pub struct ApiFetchBridge {
+    client: reqwest::Client,
+    allowed_hosts: Vec<String>,
+}
+
+impl ApiFetchBridge {
+    /// Build a fetcher with the supplied host allowlist. The
+    /// `reqwest::Client` is built with a 30 s default timeout so a
+    /// stuck upstream doesn't hold the JS interpreter hostage past
+    /// the hook's CPU budget.
+    pub fn new(allowed_hosts: Vec<String>) -> Arc<Self> {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        Arc::new(Self {
+            client,
+            allowed_hosts,
+        })
+    }
+
+    fn host_allowed(&self, url: &str) -> Option<String> {
+        let after_scheme = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+        let host = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
+        let bare = host.split_once(':').map(|(h, _)| h).unwrap_or(host);
+        if self.allowed_hosts.iter().any(|h| h == bare) {
+            Some(bare.to_string())
+        } else {
+            None
+        }
+    }
+}
+
+impl FetchBridge for ApiFetchBridge {
+    fn request(&self, req: FetchRequest) -> RtResult<FetchResponse> {
+        if self.host_allowed(&req.url).is_none() {
+            return Err(RuntimeError::Forbidden(format!(
+                "host for {:?} not on workspace fetch allowlist",
+                req.url
+            )));
+        }
+        let method = reqwest::Method::from_bytes(req.method.as_bytes())
+            .map_err(|e| RuntimeError::Internal(format!("bad method: {e}")))?;
+        let mut builder = self.client.request(method, &req.url);
+        for (k, v) in &req.headers {
+            builder = builder.header(k, v);
+        }
+        if !req.body.is_empty() {
+            builder = builder.body(req.body);
+        }
+        let client = self.client.clone();
+        let request = builder
+            .build()
+            .map_err(|e| RuntimeError::Internal(format!("build request: {e}")))?;
+        let resp = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async move { client.execute(request).await })
+        })
+        .map_err(|e| RuntimeError::Internal(format!("fetch: {e}")))?;
+
+        let status = resp.status().as_u16();
+        let mut headers = BTreeMap::new();
+        for (k, v) in resp.headers().iter() {
+            headers.insert(
+                k.as_str().to_lowercase(),
+                v.to_str().unwrap_or("").to_string(),
+            );
+        }
+        let body_bytes = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async move { resp.bytes().await })
+        })
+        .map_err(|e| RuntimeError::Internal(format!("read body: {e}")))?;
+        let body = String::from_utf8_lossy(&body_bytes).to_string();
+        Ok(FetchResponse {
+            status,
+            headers,
+            body,
+        })
     }
 }

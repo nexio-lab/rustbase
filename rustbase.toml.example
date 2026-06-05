@@ -56,6 +56,15 @@ max_failures = 5
 window_secs = 300
 lockout_secs = 300
 
+# JS hook runtime.
+[hooks.fetch]
+# Host allowlist for `$app.fetch(url, init)` in user hooks. Each entry
+# is a bare hostname; URLs whose host doesn't appear here throw a
+# Forbidden error before any network IO. Empty (the default) means
+# `$app.fetch` is effectively disabled.
+allowed_hosts = []
+# allowed_hosts = ["api.stripe.com", "hooks.slack.com"]
+
 # Optional SQLite → S3 replication via Litestream. Off by default.
 [litestream]
 enabled = false

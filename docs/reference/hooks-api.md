@@ -62,10 +62,67 @@ Any value is JSON-serialized and pushed to every SSE / WebSocket subscriber on t
 ## HTTP fetch
 
 ```ts
-$app.http.fetch(url: string, init?: RequestInit): Response;
+$app.fetch(url: string, init?: {
+    method?: string,            // default "GET"
+    headers?: Record<string,string>,
+    body?: string,
+}): {
+    status: number,
+    headers: Record<string,string>,
+    text(): string,
+    json(): unknown,
+};
 ```
 
-Issues an outbound HTTP request. Bounded by `hooks.network_allow` (an enum-set of hostnames; empty = no outbound). Returns a `Response`-shaped object: `{ status, headers, body, ok }` where `body` is the response body as a string.
+Synchronous HTTP request from a hook. Gated by the workspace's
+**fetch allowlist** (`[hooks.fetch].allowed_hosts` in `rustbase.toml`,
+or the same enum-set policy at the workspace / app level): the URL's
+host must be listed verbatim or the bridge throws "host blocked"
+before any network IO. An empty allowlist disables `$app.fetch`
+entirely.
+
+```js
+$app.onRecordAfterCreate('webhooks', (rec) => {
+    const res = $app.fetch(rec.url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ event: 'created', id: rec.id }),
+    });
+    if (res.status >= 400) {
+        throw new Error('upstream rejected: ' + res.status);
+    }
+});
+```
+
+The shared `reqwest::Client` carries a 30-second timeout so a stuck
+upstream can't hold the JS interpreter past the per-hook CPU budget.
+
+## Audit log
+
+```ts
+$app.audit.write({
+    action: string,                // required, indexed in the dashboard
+    target?: string,               // optional human-meaningful id
+    details?: Record<string, unknown>, // optional payload, stored as JSON
+}): void;
+```
+
+Append one row to the app's `audit_log`. Hook-written entries surface
+in the audit dashboard with `actor = "hook"` so operators can tell
+them apart from user-initiated events. Throws when no audit bridge is
+bound (test contexts) or when the underlying DB call fails.
+
+```js
+$app.onRecordAfterUpdate('orders', (rec, before) => {
+    if (rec.status === 'refunded' && before.status !== 'refunded') {
+        $app.audit.write({
+            action: 'order.refunded',
+            target: rec.id,
+            details: { amount_cents: rec.total_cents },
+        });
+    }
+});
+```
 
 ## Cron
 

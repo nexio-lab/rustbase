@@ -61,6 +61,11 @@ pub struct AppState {
     /// should be emitted with the `Secure` attribute. Defaults to
     /// `true` for production; flip to `false` for local-dev HTTP.
     pub cookie_secure: bool,
+    /// Host allowlist for `$app.fetch` in JS hooks. Empty (default)
+    /// = `$app.fetch` is disabled; the bridge throws `Forbidden`
+    /// before any network IO. Loaded from `[hooks.fetch]` in
+    /// `rustbase.toml` at boot.
+    pub hook_fetch_allowed_hosts: Vec<String>,
 }
 
 impl AppState {

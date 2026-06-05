@@ -8,6 +8,21 @@ versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **JS hook runtime** gains two new bridges on the `$app` global:
+  - `$app.fetch(url, init?)` — synchronous outbound HTTP from a hook.
+    Backed by a shared `reqwest::Client` with a 30 s timeout; the
+    request is rejected with `Forbidden` before any network IO when
+    the URL's host isn't on the workspace fetch allowlist
+    (`[hooks.fetch].allowed_hosts` in `rustbase.toml`). Returns an
+    object with `status`, `headers`, `text()`, and `json()`.
+  - `$app.audit.write({action, target?, details?})` — append one row
+    to the per-app audit log straight from a hook. Stored with
+    `actor = "hook"` so the dashboard distinguishes operator events
+    from user-initiated ones.
+- `rustbase_runtime::AppHooksConfig` + `HookEngine::load_app_with` —
+  full bridge bundle on one call. Existing `load_app` / `with_records*`
+  signatures stay as-is for tests; production code (`apps.rs`,
+  `hooks.rs`, `main.rs::load_all_hooks`) uses the new path.
 - New concept page [`docs/concepts/write-amplification.md`](docs/concepts/write-amplification.md)
   — documents the per-pool fsync ceiling, the post-batching commit
   count for every hot auth path, and the explicit future-work list

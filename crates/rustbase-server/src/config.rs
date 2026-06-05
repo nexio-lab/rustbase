@@ -48,6 +48,25 @@ pub struct ServerConfig {
     /// Per-subject auth lockout (login_failed → lock for N seconds).
     #[serde(default)]
     pub lockout: LockoutConfig,
+    /// `[hooks]` — JS hook runtime knobs.
+    #[serde(default)]
+    pub hooks: HooksConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct HooksConfig {
+    /// `[hooks.fetch]` — `$app.fetch` allowlist.
+    #[serde(default)]
+    pub fetch: FetchConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct FetchConfig {
+    /// Explicit host allowlist (`example.com`, `api.stripe.com`, …).
+    /// Empty (the default) means `$app.fetch` is disabled and the
+    /// JS bridge throws `Forbidden` before any network IO.
+    #[serde(default)]
+    pub allowed_hosts: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -261,6 +280,7 @@ impl Default for ServerConfig {
             cors: CorsConfig::default(),
             rate_limit: RateLimitConfig::default(),
             lockout: LockoutConfig::default(),
+            hooks: HooksConfig::default(),
         }
     }
 }

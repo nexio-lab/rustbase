@@ -290,10 +290,27 @@ async fn reload_app(
         AppId::from(app.to_string()),
         state.apps.clone(),
     )) as Arc<dyn rustbase_core::Mailer>;
+    let audit = crate::hook_bridge::ApiAuditBridge::new(
+        WorkspaceId::from(workspace.to_string()),
+        AppId::from(app.to_string()),
+        state.apps.clone(),
+    );
+    let fetcher = crate::hook_bridge::ApiFetchBridge::new(state.hook_fetch_allowed_hosts.clone());
 
     let loaded = state
         .hooks
-        .load_app(workspace, app, &dir, Some(bridge), Some(quoted))
+        .load_app_with(
+            workspace,
+            app,
+            &dir,
+            rustbase_runtime::AppHooksConfig {
+                records: Some(bridge),
+                mailer: Some(quoted),
+                audit: Some(audit),
+                fetcher: Some(fetcher),
+                limits: rustbase_runtime::SandboxLimits::default(),
+            },
+        )
         .await
         .map_err(|e| ApiError::Core(CoreError::Internal(format!("hook reload failed: {e}"))))?;
 

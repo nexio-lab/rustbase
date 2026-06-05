@@ -55,6 +55,9 @@ pub(super) async fn fresh_state() -> (AppState, tempfile::TempDir) {
         // make assertions on the header brittle (and would make a
         // browser drop the cookie outright in a real run).
         cookie_secure: false,
+        // Empty allowlist → `$app.fetch` is disabled in tests
+        // unless the spec wires its own bridge directly.
+        hook_fetch_allowed_hosts: Vec::new(),
     };
     (state, dir)
 }

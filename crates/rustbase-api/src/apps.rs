@@ -104,9 +104,26 @@ pub async fn create(
         AppId::from(req.id.clone()),
         state.apps.clone(),
     )) as Arc<dyn rustbase_core::Mailer>;
+    let audit = crate::hook_bridge::ApiAuditBridge::new(
+        WorkspaceId::from(workspace.clone()),
+        AppId::from(req.id.clone()),
+        state.apps.clone(),
+    );
+    let fetcher = crate::hook_bridge::ApiFetchBridge::new(state.hook_fetch_allowed_hosts.clone());
     if let Err(e) = state
         .hooks
-        .load_app(&workspace, &req.id, &hooks_dir, Some(bridge), Some(quoted))
+        .load_app_with(
+            &workspace,
+            &req.id,
+            &hooks_dir,
+            rustbase_runtime::AppHooksConfig {
+                records: Some(bridge),
+                mailer: Some(quoted),
+                audit: Some(audit),
+                fetcher: Some(fetcher),
+                limits: rustbase_runtime::SandboxLimits::default(),
+            },
+        )
         .await
     {
         tracing::warn!(workspace = %workspace, app = %req.id, error = %e, "loading hooks failed");

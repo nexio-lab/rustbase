@@ -172,6 +172,7 @@ async fn main() -> Result<()> {
         login_attempts: rustbase_api::security::LoginAttempts::new(),
         lockout_policy,
         cookie_secure: cfg.http.cookie_secure,
+        hook_fetch_allowed_hosts: cfg.hooks.fetch.allowed_hosts.clone(),
     };
 
     // Load JS hooks for every (workspace, app) that exists on disk.
@@ -304,9 +305,31 @@ async fn load_all_hooks(state: &rustbase_api::AppState) -> Result<()> {
                 app_id.clone(),
                 state.apps.clone(),
             )) as Arc<dyn rustbase_core::Mailer>;
+            let audit = rustbase_api::hook_bridge::ApiAuditBridge::new(
+                workspace_id.clone(),
+                app_id.clone(),
+                state.apps.clone(),
+            );
+            // Fetch allowlist is empty by default — set the
+            // `hook.fetch_allowed_hosts` policy (or future TOML
+            // section) to enable `$app.fetch`.
+            let fetcher = rustbase_api::hook_bridge::ApiFetchBridge::new(
+                state.hook_fetch_allowed_hosts.clone(),
+            );
             match state
                 .hooks
-                .load_app(&workspace.id, &app.id, &dir, Some(bridge), Some(quoted))
+                .load_app_with(
+                    &workspace.id,
+                    &app.id,
+                    &dir,
+                    rustbase_runtime::AppHooksConfig {
+                        records: Some(bridge),
+                        mailer: Some(quoted),
+                        audit: Some(audit),
+                        fetcher: Some(fetcher),
+                        limits: rustbase_runtime::SandboxLimits::default(),
+                    },
+                )
                 .await
             {
                 Ok(n) if n > 0 => {

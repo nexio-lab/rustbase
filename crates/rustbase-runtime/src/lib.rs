@@ -54,6 +54,16 @@ pub enum RuntimeError {
     /// the QuickJS interrupt handler aborted the running script.
     #[error("hook exceeded cpu deadline ({0} ms)")]
     Timeout(u64),
+    /// A bridge denied the call before reaching its underlying
+    /// implementation — currently fired by `$app.fetch` when the URL
+    /// host falls outside the configured allowlist.
+    #[error("forbidden by hook policy: {0}")]
+    Forbidden(String),
+    /// Catch-all for bridge implementations that failed for an
+    /// internal reason (network, DB IO, etc.). The wrapped message
+    /// surfaces to JS as a thrown error.
+    #[error("hook bridge error: {0}")]
+    Internal(String),
 }
 
 pub type Result<T> = std::result::Result<T, RuntimeError>;
@@ -195,6 +205,50 @@ pub trait RecordsBridge: Send + Sync + 'static {
     fn delete(&self, collection: &str, id: &str) -> Result<()>;
 }
 
+/// The thin slice of the audit log the JS runtime needs.
+///
+/// Implemented by `rustbase-api` against the app's `audit_log`
+/// table. Sync because the JS callsite is FFI; the implementation
+/// block-on'd on a tokio worker, same pattern as `RecordsBridge`.
+pub trait AuditBridge: Send + Sync + 'static {
+    /// Append an audit row. `details_json` is already-validated JSON
+    /// (an object literal); the bridge stores it verbatim.
+    fn write(&self, action: &str, target: Option<&str>, details_json: &str) -> Result<()>;
+}
+
+/// HTTP-fetch bridge. The runtime calls into a host-provided
+/// implementation so the policy decision (which hosts are reachable,
+/// what client config to use) stays out of the JS layer.
+pub trait FetchBridge: Send + Sync + 'static {
+    /// Execute one HTTP request. `body` is opaque bytes — the JS shim
+    /// is responsible for stringifying objects. Returns
+    /// `RuntimeError::Forbidden` when the URL's host is outside the
+    /// configured allowlist; other errors come back as
+    /// `RuntimeError::Internal`.
+    fn request(&self, req: FetchRequest) -> Result<FetchResponse>;
+}
+
+/// One HTTP request as the JS layer describes it. Headers are an
+/// owned map so the bridge can sort / lowercase them without
+/// borrowing back through the FFI.
+#[derive(Debug, Clone)]
+pub struct FetchRequest {
+    pub method: String,
+    pub url: String,
+    pub headers: BTreeMap<String, String>,
+    pub body: Vec<u8>,
+}
+
+/// One HTTP response. `body` is whatever the upstream returned;
+/// the JS shim decides whether to `JSON.parse` based on the
+/// `Content-Type` header.
+#[derive(Debug, Clone, Serialize)]
+pub struct FetchResponse {
+    pub status: u16,
+    pub headers: BTreeMap<String, String>,
+    pub body: String,
+}
+
 /// `async_trait` form for tests that want to write the bridge once
 /// async and reuse it; the sync `RecordsBridge` is the canonical
 /// interface the JS runtime calls.
@@ -270,6 +324,19 @@ impl<T: AsyncRecordsBridge> RecordsBridge for SyncBridge<T> {
     }
 }
 
+/// Construction blueprint for `AppHooks::with_bridges_and_limits`.
+/// Every field is independently optional so a test can wire in just
+/// the bridge it cares about while production passes a fully-loaded
+/// config.
+#[derive(Default)]
+pub struct AppHooksConfig {
+    pub records: Option<Arc<dyn RecordsBridge>>,
+    pub mailer: Option<Arc<dyn Mailer>>,
+    pub audit: Option<Arc<dyn AuditBridge>>,
+    pub fetcher: Option<Arc<dyn FetchBridge>>,
+    pub limits: SandboxLimits,
+}
+
 /// JS host bound to one (workspace, app). Multiple `.js` files share its
 /// QuickJS context, so they can cooperate via globals.
 pub struct AppHooks {
@@ -278,6 +345,8 @@ pub struct AppHooks {
     rt: AsyncRuntime,
     records: Option<Arc<dyn RecordsBridge>>,
     mailer: Option<Arc<dyn Mailer>>,
+    audit: Option<Arc<dyn AuditBridge>>,
+    fetcher: Option<Arc<dyn FetchBridge>>,
     limits: SandboxLimits,
     clock: CpuClock,
     /// Tokio task handles for `$app.cron` jobs. Aborted on drop so a
@@ -310,7 +379,14 @@ impl AppHooks {
         records: Option<Arc<dyn RecordsBridge>>,
         limits: SandboxLimits,
     ) -> Result<Self> {
-        Self::build(records, None, limits).await
+        Self::build(AppHooksConfig {
+            records,
+            mailer: None,
+            audit: None,
+            fetcher: None,
+            limits,
+        })
+        .await
     }
 
     /// Like `with_records_and_limits` but also wires a mailer so user
@@ -323,23 +399,36 @@ impl AppHooks {
         mailer: Option<Arc<dyn Mailer>>,
         limits: SandboxLimits,
     ) -> Result<Self> {
-        Self::build(records, mailer, limits).await
+        Self::build(AppHooksConfig {
+            records,
+            mailer,
+            audit: None,
+            fetcher: None,
+            limits,
+        })
+        .await
     }
 
-    async fn build(
-        records: Option<Arc<dyn RecordsBridge>>,
-        mailer: Option<Arc<dyn Mailer>>,
-        limits: SandboxLimits,
-    ) -> Result<Self> {
+    /// The full constructor: every bridge slot wired in one shot.
+    /// Used by `rustbase-server` where the API crate has the audit
+    /// and fetch implementations available; tests can keep using the
+    /// narrower `with_records*` family.
+    pub async fn with_bridges_and_limits(cfg: AppHooksConfig) -> Result<Self> {
+        Self::build(cfg).await
+    }
+
+    async fn build(cfg: AppHooksConfig) -> Result<Self> {
         let rt = AsyncRuntime::new()?;
         let ctx = AsyncContext::full(&rt).await?;
         let clock = CpuClock::new();
         let me = Self {
             rt,
             ctx,
-            records,
-            mailer,
-            limits,
+            records: cfg.records,
+            mailer: cfg.mailer,
+            audit: cfg.audit,
+            fetcher: cfg.fetcher,
+            limits: cfg.limits,
             clock,
             cron_tasks: parking_lot::Mutex::new(Vec::new()),
         };
@@ -1009,6 +1098,8 @@ impl AppHooks {
         // the pure-JS __rb_log array.
         let records = self.records.clone();
         let mailer = self.mailer.clone();
+        let audit = self.audit.clone();
+        let fetcher = self.fetcher.clone();
         self.ctx
             .with(move |ctx| {
                 use rquickjs::Function;
@@ -1030,6 +1121,20 @@ impl AppHooks {
                 // throws "no mailer bound" — same shape as records.
                 if let Some(m) = mailer {
                     register_mailer_native(ctx.clone(), m)?;
+                }
+
+                // $app.audit.write binding. Same pattern: shim throws
+                // when the bridge is absent so the API surface stays
+                // consistent across configurations.
+                if let Some(a) = audit {
+                    register_audit_native(ctx.clone(), a)?;
+                }
+
+                // $app.fetch binding. Without a bridge or with an
+                // empty allowlist the shim throws "fetch not bound" /
+                // "host blocked".
+                if let Some(f) = fetcher {
+                    register_fetch_native(ctx.clone(), f)?;
                 }
 
                 Ok::<_, rquickjs::Error>(())
@@ -1115,6 +1220,81 @@ impl AppHooks {
                             catch (e) { globalThis.__rb_record_error(String(e)); }
                         }
                     },
+                };
+                $app.audit = {
+                    /**
+                     * Append one audit-log entry from a hook.
+                     *
+                     *   $app.audit.write({
+                     *     action: 'order.refunded',
+                     *     target: 'order-42',           // optional
+                     *     details: { reason: 'gift' }, // optional
+                     *   });
+                     *
+                     * `action` is required and indexed in the audit
+                     * dashboard. `target` is the human-meaningful id
+                     * (record id, user id, …). `details` is anything
+                     * JSON-serialisable; the bridge stores it verbatim.
+                     *
+                     * Throws if no audit bridge is bound or if the
+                     * underlying DB call fails. Lifecycle hooks are
+                     * NOT fired around `$app.audit.write` — it's a
+                     * direct append, not a vetoable event.
+                     */
+                    write(entry) {
+                        if (!entry || typeof entry !== 'object') {
+                            throw new Error('$app.audit.write: entry must be an object');
+                        }
+                        if (typeof entry.action !== 'string' || !entry.action) {
+                            throw new Error('$app.audit.write: entry.action must be a non-empty string');
+                        }
+                        const target = entry.target == null ? '' : String(entry.target);
+                        const details = entry.details == null ? '{}' : JSON.stringify(entry.details);
+                        call('__rb_audit_write', [entry.action, target, details]);
+                    },
+                };
+                $app.fetch = function(url, init) {
+                    /**
+                     * Synchronous HTTP fetch from a hook.
+                     *
+                     *   const res = $app.fetch('https://api.example.com/x', {
+                     *     method: 'POST',
+                     *     headers: { 'authorization': 'Bearer …' },
+                     *     body: JSON.stringify({ ping: 1 }),
+                     *   });
+                     *
+                     *   res.status   // 200
+                     *   res.headers  // { 'content-type': 'application/json', … }
+                     *   res.json()   // parsed body if Content-Type was JSON, throws otherwise
+                     *   res.text()   // raw body as a string
+                     *
+                     * Subject to the workspace fetch allowlist —
+                     * anything outside throws "host blocked". When no
+                     * fetcher is bound at all (test contexts), every
+                     * call throws.
+                     */
+                    if (typeof url !== 'string' || !url) {
+                        throw new Error('$app.fetch: url must be a non-empty string');
+                    }
+                    init = init || {};
+                    const method = (init.method || 'GET').toUpperCase();
+                    const headers = init.headers || {};
+                    const body = init.body == null ? '' : String(init.body);
+                    const s = call('__rb_fetch', [
+                        method,
+                        url,
+                        JSON.stringify(headers),
+                        body,
+                    ]);
+                    const parsed = JSON.parse(s);
+                    const headerMap = parsed.headers || {};
+                    const bodyStr = parsed.body || '';
+                    return {
+                        status: parsed.status,
+                        headers: headerMap,
+                        text() { return bodyStr; },
+                        json() { return JSON.parse(bodyStr); },
+                    };
                 };
             })();
         "#;
@@ -1335,6 +1515,74 @@ fn register_mailer_native(
     Ok(())
 }
 
+/// Bind `__rb_audit_write` so `$app.audit.write(entry)` reaches an
+/// `AuditBridge`. The JS shim already validated the `action` shape,
+/// so the only failures here are downstream (parse / DB).
+fn register_audit_native(
+    ctx: rquickjs::Ctx<'_>,
+    bridge: Arc<dyn AuditBridge>,
+) -> std::result::Result<(), rquickjs::Error> {
+    use rquickjs::Function;
+    const ERR: &str = "__rb_err:";
+    let write_fn = Function::new(
+        ctx.clone(),
+        move |action: String, target: String, details: String| -> String {
+            let target_opt = if target.is_empty() {
+                None
+            } else {
+                Some(target.as_str())
+            };
+            // Validate JSON shape up front — the bridge writes the
+            // string verbatim so an unparseable payload would corrupt
+            // the column.
+            if serde_json::from_str::<Json>(&details).is_err() {
+                return format!("{ERR}details must be valid JSON");
+            }
+            match bridge.write(&action, target_opt, &details) {
+                Ok(()) => "null".to_string(),
+                Err(e) => format!("{ERR}{e}"),
+            }
+        },
+    )?
+    .with_name("__rb_audit_write")?;
+    ctx.globals().set("__rb_audit_write", write_fn)?;
+    Ok(())
+}
+
+/// Bind `__rb_fetch` so `$app.fetch(url, init)` reaches a
+/// `FetchBridge`. The JS shim already serialised method / headers /
+/// body; this side parses, calls through, and returns a JSON-encoded
+/// response object (`{status, headers, body}`).
+fn register_fetch_native(
+    ctx: rquickjs::Ctx<'_>,
+    bridge: Arc<dyn FetchBridge>,
+) -> std::result::Result<(), rquickjs::Error> {
+    use rquickjs::Function;
+    const ERR: &str = "__rb_err:";
+    let fetch_fn = Function::new(
+        ctx.clone(),
+        move |method: String, url: String, headers_json: String, body: String| -> String {
+            let headers: BTreeMap<String, String> = match serde_json::from_str(&headers_json) {
+                Ok(v) => v,
+                Err(e) => return format!("{ERR}headers: {e}"),
+            };
+            let req = FetchRequest {
+                method,
+                url,
+                headers,
+                body: body.into_bytes(),
+            };
+            match bridge.request(req) {
+                Ok(resp) => serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into()),
+                Err(e) => format!("{ERR}{e}"),
+            }
+        },
+    )?
+    .with_name("__rb_fetch")?;
+    ctx.globals().set("__rb_fetch", fetch_fn)?;
+    Ok(())
+}
+
 /// Engine bound to the whole server. Holds one `AppHooks` per
 /// (workspace, app) — lazily created on first hook load. `Clone` is
 /// cheap; the inner map is `Arc`'d.
@@ -1363,9 +1611,32 @@ impl HookEngine {
         bridge: Option<Arc<dyn RecordsBridge>>,
         mailer: Option<Arc<dyn Mailer>>,
     ) -> Result<usize> {
-        let hooks =
-            AppHooks::with_records_mailer_and_limits(bridge, mailer, SandboxLimits::default())
-                .await?;
+        self.load_app_with(
+            workspace,
+            app,
+            dir,
+            AppHooksConfig {
+                records: bridge,
+                mailer,
+                audit: None,
+                fetcher: None,
+                limits: SandboxLimits::default(),
+            },
+        )
+        .await
+    }
+
+    /// Like `load_app` but takes the full bridge bundle. Used by
+    /// `rustbase-server` where the audit + fetch implementations are
+    /// available; tests and the legacy callsites stay on `load_app`.
+    pub async fn load_app_with(
+        &self,
+        workspace: &str,
+        app: &str,
+        dir: &Path,
+        cfg: AppHooksConfig,
+    ) -> Result<usize> {
+        let hooks = AppHooks::with_bridges_and_limits(cfg).await?;
         let hooks = Arc::new(hooks);
         let loaded = hooks.load_dir(dir).await?;
         // Spawn schedulers for any $app.cron registrations the hook
@@ -3313,5 +3584,188 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out.get("title"), Some(&serde_json::json!("ok")));
+    }
+
+    // ------------- $app.audit.write via mock bridge -------------
+
+    struct MockAudit {
+        entries: parking_lot::Mutex<Vec<(String, Option<String>, String)>>,
+    }
+    impl MockAudit {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                entries: parking_lot::Mutex::new(Vec::new()),
+            })
+        }
+        fn snapshot(&self) -> Vec<(String, Option<String>, String)> {
+            self.entries.lock().clone()
+        }
+    }
+    impl AuditBridge for MockAudit {
+        fn write(&self, action: &str, target: Option<&str>, details_json: &str) -> Result<()> {
+            self.entries.lock().push((
+                action.to_string(),
+                target.map(str::to_string),
+                details_json.to_string(),
+            ));
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn app_audit_write_reaches_bridge() {
+        let mock = MockAudit::new();
+        let hooks = AppHooks::with_bridges_and_limits(AppHooksConfig {
+            audit: Some(mock.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        hooks
+            .eval(
+                r#"$app.audit.write({ action: 'order.refunded', target: 'o-42', details: { reason: 'gift' } });"#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        let log = mock.snapshot();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].0, "order.refunded");
+        assert_eq!(log[0].1.as_deref(), Some("o-42"));
+        assert!(log[0].2.contains("\"reason\""));
+    }
+
+    #[tokio::test]
+    async fn app_audit_write_rejects_missing_action() {
+        let hooks = AppHooks::with_bridges_and_limits(AppHooksConfig {
+            audit: Some(MockAudit::new()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let err = hooks
+            .eval(r#"$app.audit.write({ target: 'x' });"#, "<t>")
+            .await
+            .unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("action"), "got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn app_audit_throws_without_bridge() {
+        let hooks = AppHooks::new().await.unwrap();
+        let err = hooks
+            .eval(r#"$app.audit.write({ action: 'x' });"#, "<t>")
+            .await
+            .unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("__rb_audit_write"), "got: {msg}");
+    }
+
+    // ------------- $app.fetch via mock bridge -------------
+
+    struct MockFetcher {
+        allowed_hosts: Vec<String>,
+        observed: parking_lot::Mutex<Vec<FetchRequest>>,
+    }
+    impl MockFetcher {
+        fn new(allowed_hosts: &[&str]) -> Arc<Self> {
+            Arc::new(Self {
+                allowed_hosts: allowed_hosts.iter().map(|s| s.to_string()).collect(),
+                observed: parking_lot::Mutex::new(Vec::new()),
+            })
+        }
+        fn drain(&self) -> Vec<FetchRequest> {
+            std::mem::take(&mut *self.observed.lock())
+        }
+    }
+    fn host_of(url: &str) -> String {
+        let after_scheme = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+        let host = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
+        host.split_once(':')
+            .map(|(h, _)| h)
+            .unwrap_or(host)
+            .to_string()
+    }
+    impl FetchBridge for MockFetcher {
+        fn request(&self, req: FetchRequest) -> Result<FetchResponse> {
+            let host = host_of(&req.url);
+            if !self.allowed_hosts.iter().any(|h| h == &host) {
+                return Err(RuntimeError::Forbidden(format!(
+                    "host {host:?} not on allowlist"
+                )));
+            }
+            self.observed.lock().push(req.clone());
+            let mut headers = BTreeMap::new();
+            headers.insert("content-type".into(), "application/json".into());
+            Ok(FetchResponse {
+                status: 200,
+                headers,
+                body: r#"{"hello":"world"}"#.into(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn app_fetch_allowed_host_returns_body() {
+        let mock = MockFetcher::new(&["api.example.com"]);
+        let hooks = AppHooks::with_bridges_and_limits(AppHooksConfig {
+            fetcher: Some(mock.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        hooks
+            .eval(
+                r#"
+                const res = $app.fetch('https://api.example.com/x', {
+                    method: 'POST',
+                    headers: { 'authorization': 'Bearer xyz' },
+                    body: JSON.stringify({ ping: 1 }),
+                });
+                if (res.status !== 200) throw new Error('bad status: ' + res.status);
+                const body = res.json();
+                if (body.hello !== 'world') throw new Error('bad body');
+                "#,
+                "<t>",
+            )
+            .await
+            .unwrap();
+        let observed = mock.drain();
+        assert_eq!(observed.len(), 1);
+        assert_eq!(observed[0].method, "POST");
+        assert_eq!(observed[0].url, "https://api.example.com/x");
+        assert_eq!(
+            observed[0].headers.get("authorization"),
+            Some(&"Bearer xyz".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn app_fetch_blocked_host_throws() {
+        let mock = MockFetcher::new(&["api.example.com"]);
+        let hooks = AppHooks::with_bridges_and_limits(AppHooksConfig {
+            fetcher: Some(mock),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let err = hooks
+            .eval(r#"$app.fetch('https://evil.example.org/x');"#, "<t>")
+            .await
+            .unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("not on allowlist"), "got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn app_fetch_throws_without_bridge() {
+        let hooks = AppHooks::new().await.unwrap();
+        let err = hooks
+            .eval(r#"$app.fetch('https://example.com');"#, "<t>")
+            .await
+            .unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("__rb_fetch"), "got: {msg}");
     }
 }
