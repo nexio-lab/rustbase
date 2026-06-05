@@ -186,33 +186,6 @@
 	]}
 />
 
-<div class="mb-2 flex gap-1 border-b border-slate-200 text-sm">
-	<a
-		href="/workspaces/{workspace}/apps/{app}"
-		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
-	>
-		Collections
-	</a>
-	<a
-		href="/workspaces/{workspace}/apps/{app}/policies"
-		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
-	>
-		Policies
-	</a>
-	<a
-		href="/workspaces/{workspace}/apps/{app}/hooks"
-		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
-	>
-		Hooks
-	</a>
-	<span class="border-b-2 border-orange-500 px-3 py-1.5 font-medium text-slate-900">Files</span>
-	<a
-		href="/workspaces/{workspace}/apps/{app}/audit"
-		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
-	>
-		Audit
-	</a>
-</div>
 
 <div class="mb-4 flex items-end justify-between">
 	<div>

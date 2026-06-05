@@ -238,15 +238,6 @@
 	]}
 />
 
-<div class="mb-2 flex gap-1 border-b border-slate-200 text-sm">
-	<a
-		href="/workspaces/{workspace}/apps/{app}/collections/{coll}"
-		class="border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700"
-	>
-		Schema
-	</a>
-	<span class="border-b-2 border-orange-500 px-3 py-1.5 font-medium text-slate-900">Records</span>
-</div>
 
 <div class="mb-4 flex items-end justify-between">
 	<div>
