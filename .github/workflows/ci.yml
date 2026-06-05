@@ -47,6 +47,47 @@ jobs:
       - name: cargo audit
         run: cargo audit
 
+  trivy-fs:
+    name: trivy filesystem scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Trivy filesystem scan (HIGH + CRITICAL)
+        uses: aquasecurity/trivy-action@0.34.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          # `vuln` covers `Cargo.lock` + `bun.lock` transitive
+          # advisories; `misconfig` flags Dockerfile / workflow
+          # mistakes; `secret` catches accidentally committed
+          # credentials.
+          scanners: vuln,misconfig,secret
+          # Skip vendored test fixtures and historical artefacts
+          # so the noise stays low.
+          skip-dirs: 'target,ui/.svelte-kit,ui/build,docs/.vitepress/dist'
+          format: sarif
+          output: trivy-fs.sarif
+          # Don't fail CI on every advisory — most are upstream
+          # transitives we can't address in this repo. The SARIF
+          # upload below surfaces them on the Security tab so they
+          # stay visible without blocking PRs.
+          exit-code: '0'
+
+      - name: Upload SARIF to GitHub code-scanning
+        # Same image-and-build cache other Trivy jobs use; switch
+        # category names so Code Scanning groups them separately on
+        # the Security tab.
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
   release-build:
     name: release build
     runs-on: ubuntu-latest

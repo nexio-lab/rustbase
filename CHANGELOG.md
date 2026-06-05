@@ -8,6 +8,21 @@ versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Supply-chain hardening.** Every release artefact now ships with
+  provenance and a vulnerability paper trail:
+  - Each tarball, the container image, and a workspace **CycloneDX
+    1.5 SBOM** are signed keylessly with **Sigstore Cosign** (GitHub
+    OIDC → Fulcio short-lived certs). `.sig` + `.pem` sidecars ride
+    along with every artefact. Verification recipe in
+    [`SECURITY.md`](SECURITY.md#verifying-release-artefacts).
+  - **Trivy** scans the workspace filesystem on every PR
+    (Rust + Bun lockfile transitives, Dockerfile mis-configs,
+    secret leaks) and the released container image post-publish.
+    Findings surface on the GitHub Security tab — `exit-code: 0`
+    so a new transitive CVE doesn't block PRs / releases.
+  - **CodeQL** static analysis of the dashboard
+    (JavaScript / TypeScript / Svelte) on push to `main`, every PR,
+    and weekly.
 - **Playwright end-to-end smoke suite** in `ui/tests/e2e/` driven by
   `scripts/e2e-server.sh` (boots a release `rustbase` against a
   throw-away `data/` dir + the freshly-built dashboard, then runs the

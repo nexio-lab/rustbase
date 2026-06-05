@@ -27,18 +27,38 @@ Three options, ranked by laziness:
 
 ```sh
 VERSION=v0.1.1
-curl -fsSL -o rustbase.tar.gz \
-    https://github.com/pjonaszik/rustbase/releases/download/${VERSION}/rustbase-${VERSION}-linux-x86_64-musl.tar.gz
-curl -fsSL -o rustbase.tar.gz.sha256 \
-    https://github.com/pjonaszik/rustbase/releases/download/${VERSION}/rustbase-${VERSION}-linux-x86_64-musl.tar.gz.sha256
-sha256sum -c rustbase.tar.gz.sha256
-tar -xzf rustbase.tar.gz
+BASE="https://github.com/pjonaszik/rustbase/releases/download/${VERSION}"
+ASSET="rustbase-${VERSION}-linux-x86_64-musl.tar.gz"
+
+curl -fsSL -o "$ASSET"        "$BASE/$ASSET"
+curl -fsSL -o "$ASSET.sha256" "$BASE/$ASSET.sha256"
+sha256sum -c "$ASSET.sha256"
+
+# Optional but recommended: verify the tarball's Sigstore signature.
+# Requires `cosign` (https://docs.sigstore.dev/cosign/installation/).
+curl -fsSL -o "$ASSET.sig" "$BASE/$ASSET.sig"
+curl -fsSL -o "$ASSET.pem" "$BASE/$ASSET.pem"
+cosign verify-blob \
+    --certificate "$ASSET.pem" \
+    --signature   "$ASSET.sig" \
+    --certificate-identity-regexp 'https://github.com/pjonaszik/rustbase/.*' \
+    --certificate-oidc-issuer     'https://token.actions.githubusercontent.com' \
+    "$ASSET"
+
+tar -xzf "$ASSET"
 sudo install -m 0755 rustbase /usr/local/bin/rustbase
 ```
 
 ### 2. Run the Docker image
 
 ```sh
+# Optional but recommended: verify the image was built by the
+# RustBase release workflow (keyless Sigstore signature).
+cosign verify \
+    --certificate-identity-regexp 'https://github.com/pjonaszik/rustbase/.*' \
+    --certificate-oidc-issuer     'https://token.actions.githubusercontent.com' \
+    ghcr.io/pjonaszik/rustbase:0.1.1
+
 docker run -d --name rustbase --restart unless-stopped \
     -p 127.0.0.1:8080:8080 \
     -v /srv/rustbase:/home/rustbase/data \

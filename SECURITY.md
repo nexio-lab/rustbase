@@ -48,3 +48,50 @@ When a report is accepted:
 3. Coordinated release of a patched version + GitHub Security Advisory
    (CVE requested when the impact warrants).
 4. Public credit to the reporter (unless they prefer anonymity).
+
+## Verifying release artefacts
+
+Every release tarball, the container image, and the SBOM are
+**signed with [Sigstore Cosign](https://docs.sigstore.dev/cosign/overview/)**
+keylessly — the workflow's GitHub OIDC identity (instead of a long-lived
+maintainer key) is what proves provenance.
+
+### Tarballs
+
+```sh
+TARBALL=rustbase-v0.X.Y-linux-x86_64-musl.tar.gz
+cosign verify-blob \
+    --certificate $TARBALL.pem \
+    --signature   $TARBALL.sig \
+    --certificate-identity-regexp 'https://github.com/pjonaszik/rustbase/.*' \
+    --certificate-oidc-issuer     'https://token.actions.githubusercontent.com' \
+    $TARBALL
+```
+
+### Container image
+
+```sh
+cosign verify \
+    --certificate-identity-regexp 'https://github.com/pjonaszik/rustbase/.*' \
+    --certificate-oidc-issuer     'https://token.actions.githubusercontent.com' \
+    ghcr.io/pjonaszik/rustbase:v0.X.Y
+```
+
+### SBOM
+
+CycloneDX 1.5 JSON, one document per release, sits next to the tarballs
+as `rustbase-v0.X.Y-sbom.cdx.json` (signature + cert as `.sig` /
+`.pem` siblings). Verify the same way as a tarball.
+
+## Static analysis & scanning
+
+- **clippy** runs with `-D warnings` on every PR.
+- **`cargo audit`** scans the Rust dep tree against the RustSec advisory
+  DB on every PR.
+- **Trivy** scans the workspace filesystem (Rust + Bun lockfiles,
+  Dockerfile mis-configs, accidentally committed secrets) on every PR
+  and the released container image post-publish; findings land on the
+  GitHub Security tab.
+- **CodeQL** analyses the dashboard's JavaScript / TypeScript / Svelte
+  source on every push to `main`, every PR, and weekly.
+- **Dependabot** keeps Rust, GitHub Actions, and Bun deps moving.

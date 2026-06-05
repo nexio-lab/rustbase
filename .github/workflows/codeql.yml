@@ -1,0 +1,47 @@
+name: codeql
+
+# CodeQL static analysis. Targets the dashboard (JavaScript /
+# TypeScript / Svelte) on every push to `main`, every pull request,
+# and weekly. Rust isn't first-class in CodeQL today; clippy
+# (-D warnings) and `cargo audit` carry that side of the static
+# analysis story — see `.github/workflows/ci.yml`.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly Monday 06:00 UTC — catches advisories that land between
+    # PRs.
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['javascript-typescript']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # Skip auto-build heuristics; the dashboard is pure JS/TS
+          # and CodeQL extracts it from source without `npm install`.
+          build-mode: none
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:${{ matrix.language }}'

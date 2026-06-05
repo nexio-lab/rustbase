@@ -8,10 +8,12 @@ on:
 permissions:
   contents: write
   packages: write
-
-env:
-  CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
+  # `id-token: write` is required for cosign keyless signing
+  # (GitHub OIDC → Sigstore Fulcio). The signing payload is the
+  # release artefact's SHA-256; Fulcio mints a short-lived cert
+  # bound to this workflow's identity, and we ship the .sig + .pem
+  # next to each tarball so users can verify with `cosign verify-blob`.
+  id-token: write
 
 jobs:
   build:
@@ -80,6 +82,26 @@ jobs:
             shasum -a 256 "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
           fi
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Cosign sign tarball (keyless via GitHub OIDC)
+        # Produces `<asset>.sig` (base64 signature) and
+        # `<asset>.pem` (Fulcio-issued short-lived cert). Both
+        # ship as release assets next to the tarball so users can
+        # run `cosign verify-blob --certificate <asset>.pem
+        # --signature <asset>.sig <asset>` without any pre-shared
+        # public key.
+        env:
+          COSIGN_YES: 'true'
+        run: |
+          cosign sign-blob \
+            --output-signature "${{ matrix.asset }}.sig" \
+            --output-certificate "${{ matrix.asset }}.pem" \
+            "${{ matrix.asset }}"
+
       - name: Upload artifact
         # Pinned alongside `actions/download-artifact` in the publish job.
         # Bumping one without the other produces a digest-mismatch on
@@ -90,6 +112,57 @@ jobs:
           path: |
             ${{ matrix.asset }}
             ${{ matrix.asset }}.sha256
+            ${{ matrix.asset }}.sig
+            ${{ matrix.asset }}.pem
+
+  sbom:
+    name: SBOM (CycloneDX)
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-release
+
+      - name: Install cargo-cyclonedx
+        run: cargo install --locked cargo-cyclonedx
+
+      - name: Generate SBOM
+        # CycloneDX 1.5 JSON, one document per crate in the
+        # workspace plus a top-level aggregate. We ship only the
+        # aggregate as a release asset — it captures the same
+        # graph and downstream tooling expects exactly one file.
+        run: |
+          cargo cyclonedx --format json --all
+          # Move workspace-root aggregate to a stable name.
+          cp rustbaas.cdx.json rustbase-${GITHUB_REF_NAME}-sbom.cdx.json 2>/dev/null \
+            || cp $(ls *.cdx.json | head -1) "rustbase-${GITHUB_REF_NAME}-sbom.cdx.json"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Cosign sign SBOM (keyless via GitHub OIDC)
+        env:
+          COSIGN_YES: 'true'
+        run: |
+          cosign sign-blob \
+            --output-signature "rustbase-${GITHUB_REF_NAME}-sbom.cdx.json.sig" \
+            --output-certificate "rustbase-${GITHUB_REF_NAME}-sbom.cdx.json.pem" \
+            "rustbase-${GITHUB_REF_NAME}-sbom.cdx.json"
+
+      - name: Upload SBOM artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            rustbase-${{ github.ref_name }}-sbom.cdx.json
+            rustbase-${{ github.ref_name }}-sbom.cdx.json.sig
+            rustbase-${{ github.ref_name }}-sbom.cdx.json.pem
 
   docker:
     name: docker image (ghcr.io)
@@ -98,6 +171,10 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Same cosign-OIDC reason as the top-level permissions block:
+      # signing the pushed image with a Fulcio short-lived cert.
+      id-token: write
+      security-events: write
     steps:
       - uses: actions/checkout@v4
 
@@ -123,6 +200,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build + push (amd64 + arm64)
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -133,9 +211,54 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Cosign sign image (keyless via GitHub OIDC)
+        # Signs every tag of the freshly-pushed image by its
+        # immutable manifest digest. Users verify with
+        # `cosign verify --certificate-identity-regexp
+        # 'https://github.com/pjonaszik/rustbase/.*' \
+        # --certificate-oidc-issuer
+        # 'https://token.actions.githubusercontent.com'
+        # ghcr.io/pjonaszik/rustbase@<digest>`.
+        env:
+          COSIGN_YES: 'true'
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          for tag in $TAGS; do
+            cosign sign --recursive "${tag}@${DIGEST}"
+          done
+
+      - name: Trivy image scan (HIGH + CRITICAL)
+        # Reports HIGH and CRITICAL OS / lib CVEs in the released
+        # image. SARIF goes to GitHub Code Scanning so vulnerable
+        # tags stay visible on the Security tab; the step keeps
+        # `exit-code: 0` so a fresh CVE landing on a stable
+        # release doesn't block the publish flow — fix-forward via
+        # a patch release is the expected response.
+        uses: aquasecurity/trivy-action@0.34.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+          severity: HIGH,CRITICAL
+          scanners: vuln
+          format: sarif
+          output: trivy-image.sarif
+          exit-code: '0'
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+
   release:
     name: publish release
-    needs: build
+    needs: [build, sbom]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     steps:
@@ -145,6 +268,8 @@ jobs:
 
       - name: Download artifacts
         # See `upload-artifact` note above — major versions must match.
+        # Pulls every tarball + its `.sha256` / `.sig` / `.pem`
+        # sidecars, plus the CycloneDX SBOM and its signature.
         uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -175,6 +300,9 @@ jobs:
           files: |
             artifacts/*.tar.gz
             artifacts/*.sha256
+            artifacts/*.sig
+            artifacts/*.pem
+            artifacts/*-sbom.cdx.json
           body_path: release-notes.md
           generate_release_notes: false
           draft: false
