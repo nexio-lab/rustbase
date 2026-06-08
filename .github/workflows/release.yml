@@ -240,7 +240,7 @@ jobs:
         # `exit-code: 0` so a fresh CVE landing on a stable
         # release doesn't block the publish flow — fix-forward via
         # a patch release is the expected response.
-        uses: aquasecurity/trivy-action@0.34.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
           severity: HIGH,CRITICAL
