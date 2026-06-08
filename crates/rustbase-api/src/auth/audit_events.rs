@@ -66,6 +66,21 @@ pub struct AuthEvent<'a> {
 /// event. Errors are swallowed at the boundary (they should not break
 /// the user-facing response), but they are logged.
 pub async fn record(state: &AppState, ev: AuthEvent<'_>) {
+    // Domain-level metric: count every login attempt by scope kind +
+    // outcome. Cardinality is bounded — 2 kinds × 3 outcomes = 6
+    // series. Routed through the global recorder; no-op when
+    // observability is off.
+    metrics::counter!(
+        "rustbase_auth_logins_total",
+        "kind"    => match ev.scope { Scope::Master => "master", Scope::Workspace(_) => "workspace" },
+        "outcome" => match ev.outcome {
+            AuthOutcome::Success => "success",
+            AuthOutcome::Failed  => "failed",
+            AuthOutcome::Locked  => "locked",
+        },
+    )
+    .increment(1);
+
     let res = match ev.scope {
         Scope::Master => append_with_log(state.system.pool(), &ev).await,
         Scope::Workspace(workspace) => match state

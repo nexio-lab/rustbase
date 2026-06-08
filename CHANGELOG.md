@@ -8,6 +8,34 @@ versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Domain-level Prometheus metrics.** Second wave of
+  observability counters + gauges on top of the HTTP layer from
+  10.1. Five new metric families, all bounded cardinality:
+  - `rustbase_auth_logins_total{kind,outcome}` — every login
+    funnels through the existing audit-event helper, so master
+    + workspace + user logins are covered in one site. Outcomes:
+    `success`, `failed`, `locked`.
+  - `rustbase_auth_refresh_total{kind,outcome}` — wraps each of
+    the three refresh handlers (master / user / workspace_admin).
+    Failures collapse all 401 reasons (no token, unknown token,
+    rotation race) into one `failed` outcome — from an
+    operator's perspective they're indistinguishable.
+  - `rustbase_db_pools_open{scope}` — gauge re-`.set()` after
+    every `WorkspacePoolManager` / `AppPoolManager` mutation
+    (put, evict, cascade-evict). `scope` ∈ `workspace` | `app`.
+    Sitting at the configured cap means the LRU is evicting on
+    every new tenant access.
+  - `rustbase_realtime_channels_open` — gauge re-`.set()` after
+    every broker channel insert / drop. One series, no labels
+    (a per-collection breakdown would explode cardinality).
+  - `rustbase_realtime_events_published_total{outcome}` —
+    counter on every `publish()`. `outcome` ∈ `delivered`
+    (at least one subscriber received it) | `no_subscribers`
+    (event dropped).
+  All emissions are no-ops when the global recorder isn't
+  installed (i.e. when `[observability]` is off), so the change
+  is zero-cost in default deployments. Docs updated with the
+  full per-family explainer and operator-facing reading guide.
 - **JavaScript / TypeScript SDK (`@rustbase/client`).** New
   `sdks/js/` package implementing an idiomatic, fully-typed
   client around the OpenAPI-documented surface. Owns a single

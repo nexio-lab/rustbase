@@ -2735,6 +2735,7 @@ dependencies = [
  "governor",
  "jsonwebtoken",
  "lettre",
+ "metrics",
  "oauth2",
  "parking_lot",
  "rand_core 0.6.4",
@@ -2805,6 +2806,7 @@ dependencies = [
  "chrono",
  "dashmap",
  "lru",
+ "metrics",
  "parking_lot",
  "rustbase-core",
  "serde",
@@ -2823,6 +2825,7 @@ version = "0.1.1"
 dependencies = [
  "chrono",
  "dashmap",
+ "metrics",
  "rustbase-core",
  "serde",
  "serde_json",

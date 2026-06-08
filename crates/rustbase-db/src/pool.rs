@@ -112,11 +112,19 @@ impl WorkspacePoolManager {
             return Ok(existing);
         }
         cache.put(workspace.clone(), pool.clone());
+        let len = cache.len();
+        drop(cache);
+        record_pool_gauge("workspace", len);
         Ok(pool)
     }
 
     pub fn evict(&self, workspace: &WorkspaceId) {
-        self.cache.lock().pop(workspace);
+        let len = {
+            let mut cache = self.cache.lock();
+            cache.pop(workspace);
+            cache.len()
+        };
+        record_pool_gauge("workspace", len);
     }
 
     pub fn len(&self) -> usize {
@@ -126,6 +134,14 @@ impl WorkspacePoolManager {
     pub fn is_empty(&self) -> bool {
         self.cache.lock().is_empty()
     }
+}
+
+/// Emit `rustbase_db_pools_open{scope}` as a gauge. Called after every
+/// mutation; `set()` sidesteps the put-evict-replace edge cases on
+/// `LruCache::put` (we don't know whether a put displaced the LRU
+/// entry without checking len before and after).
+fn record_pool_gauge(scope: &'static str, len: usize) {
+    metrics::gauge!("rustbase_db_pools_open", "scope" => scope).set(len as f64);
 }
 
 /// LRU-bounded cache of app-scoped SQLite pools.
@@ -157,31 +173,43 @@ impl AppPoolManager {
             return Ok(existing);
         }
         cache.put(key, pool.clone());
+        let len = cache.len();
+        drop(cache);
+        record_pool_gauge("app", len);
         Ok(pool)
     }
 
     pub fn evict(&self, workspace: &WorkspaceId, app: &AppId) {
         let key = (workspace.clone(), app.clone());
-        self.cache.lock().pop(&key);
+        let len = {
+            let mut cache = self.cache.lock();
+            cache.pop(&key);
+            cache.len()
+        };
+        record_pool_gauge("app", len);
     }
 
     /// Drop every cached pool whose key starts with `workspace`. Used when a
     /// workspace is being cascade-deleted.
     pub fn evict_realm(&self, workspace: &WorkspaceId) {
-        let mut cache = self.cache.lock();
-        let keys: Vec<_> = cache
-            .iter()
-            .filter_map(|(k, _)| {
-                if &k.0 == workspace {
-                    Some(k.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-        for k in keys {
-            cache.pop(&k);
-        }
+        let len = {
+            let mut cache = self.cache.lock();
+            let keys: Vec<_> = cache
+                .iter()
+                .filter_map(|(k, _)| {
+                    if &k.0 == workspace {
+                        Some(k.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for k in keys {
+                cache.pop(&k);
+            }
+            cache.len()
+        };
+        record_pool_gauge("app", len);
     }
 
     pub fn len(&self) -> usize {

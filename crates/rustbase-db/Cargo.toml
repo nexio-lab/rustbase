@@ -19,6 +19,7 @@ dashmap.workspace = true
 lru.workspace = true
 parking_lot.workspace = true
 tracing.workspace = true
+metrics.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 async-trait.workspace = true

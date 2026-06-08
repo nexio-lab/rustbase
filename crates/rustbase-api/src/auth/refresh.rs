@@ -72,6 +72,16 @@ pub async fn master_admin_refresh(
     headers: HeaderMap,
     body: Option<Json<RefreshRequest>>,
 ) -> Result<Response, ApiError> {
+    let result = master_admin_refresh_inner(state, headers, body).await;
+    record_refresh_outcome("master", result.is_ok());
+    result
+}
+
+async fn master_admin_refresh_inner(
+    state: AppState,
+    headers: HeaderMap,
+    body: Option<Json<RefreshRequest>>,
+) -> Result<Response, ApiError> {
     let req = body.map(|j| j.0).unwrap_or_default();
     let presented =
         pick_refresh_token(&headers, &req).ok_or(ApiError::Core(CoreError::Unauthorized))?;
@@ -107,9 +117,33 @@ pub async fn master_admin_refresh(
     Ok(with_session_cookies(&state, body))
 }
 
+/// Emit `rustbase_auth_refresh_total{kind, outcome}` exactly once per
+/// handler call. The `Result::is_ok` covers every collapsed-into-401
+/// reason — no presented token, unknown token, rotation race — since
+/// from an operator's perspective they're all "refresh failed".
+fn record_refresh_outcome(kind: &'static str, success: bool) {
+    metrics::counter!(
+        "rustbase_auth_refresh_total",
+        "kind"    => kind,
+        "outcome" => if success { "success" } else { "failed" },
+    )
+    .increment(1);
+}
+
 pub async fn user_refresh(
     State(state): State<AppState>,
     Path(workspace): Path<String>,
+    headers: HeaderMap,
+    body: Option<Json<RefreshRequest>>,
+) -> Result<Response, ApiError> {
+    let result = user_refresh_inner(state, workspace, headers, body).await;
+    record_refresh_outcome("user", result.is_ok());
+    result
+}
+
+async fn user_refresh_inner(
+    state: AppState,
+    workspace: String,
     headers: HeaderMap,
     body: Option<Json<RefreshRequest>>,
 ) -> Result<Response, ApiError> {
@@ -155,6 +189,17 @@ pub async fn user_refresh(
 pub async fn workspace_admin_refresh(
     State(state): State<AppState>,
     Path(workspace): Path<String>,
+    headers: HeaderMap,
+    body: Option<Json<RefreshRequest>>,
+) -> Result<Response, ApiError> {
+    let result = workspace_admin_refresh_inner(state, workspace, headers, body).await;
+    record_refresh_outcome("workspace_admin", result.is_ok());
+    result
+}
+
+async fn workspace_admin_refresh_inner(
+    state: AppState,
+    workspace: String,
     headers: HeaderMap,
     body: Option<Json<RefreshRequest>>,
 ) -> Result<Response, ApiError> {

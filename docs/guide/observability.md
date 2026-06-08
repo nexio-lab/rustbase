@@ -24,18 +24,61 @@ This is intentional: silently exposing metrics on a misconfigured deployment wou
 
 ### What's exported
 
+**HTTP**
+
 ```
 # TYPE rustbase_http_requests_total counter
 rustbase_http_requests_total{method="GET",route="/api/workspaces/{workspace}/apps/{app}/collections/{coll}/records",status="200"} 1432
 
 # TYPE rustbase_http_request_duration_seconds histogram
 rustbase_http_request_duration_seconds_bucket{method="GET",route="/healthz",status="200",le="0.005"} 12
-rustbase_http_request_duration_seconds_bucket{method="GET",route="/healthz",status="200",le="0.01"}  12
 …
 
 # TYPE rustbase_build_info gauge
 rustbase_build_info{version="0.1.1"} 1
 ```
+
+**Auth**
+
+```
+# TYPE rustbase_auth_logins_total counter
+# {kind=master|workspace, outcome=success|failed|locked}
+rustbase_auth_logins_total{kind="master",outcome="success"} 12
+rustbase_auth_logins_total{kind="workspace",outcome="failed"} 4
+rustbase_auth_logins_total{kind="workspace",outcome="locked"} 1
+
+# TYPE rustbase_auth_refresh_total counter
+# {kind=master|user|workspace_admin, outcome=success|failed}
+rustbase_auth_refresh_total{kind="user",outcome="success"} 87
+rustbase_auth_refresh_total{kind="user",outcome="failed"} 2
+```
+
+A burst of `outcome="failed"` followed by `outcome="locked"` is the lockout policy at work; an `outcome="failed"` rate-of-change spike with no `locked` follow-up is a brute-force probe spread across distinct usernames. Refresh failures clustered around the access-token TTL are usually clients that lost their refresh token between rotations.
+
+**Database pools**
+
+```
+# TYPE rustbase_db_pools_open gauge
+# {scope=workspace|app}
+rustbase_db_pools_open{scope="workspace"} 8
+rustbase_db_pools_open{scope="app"} 14
+```
+
+Bounded by `workspace_pool_cap` and `app_pool_cap` in the config (defaults 32 and 64). A gauge sitting at the cap means the LRU is evicting on every new tenant access — bump the cap if your access pattern doesn't have warm-set locality.
+
+**Realtime**
+
+```
+# TYPE rustbase_realtime_channels_open gauge
+rustbase_realtime_channels_open 17
+
+# TYPE rustbase_realtime_events_published_total counter
+# {outcome=delivered|no_subscribers}
+rustbase_realtime_events_published_total{outcome="delivered"} 421
+rustbase_realtime_events_published_total{outcome="no_subscribers"} 89
+```
+
+A high `no_subscribers` rate means the server is doing publishing work nothing observes — typically harmless, but worth checking your hook `$app.realtime.publish` calls against actual client subscriptions if you've optimised hot paths.
 
 Notes:
 
@@ -93,4 +136,4 @@ The same key names are used across crates so cross-crate correlation works witho
 
 ## What's not (yet) exported
 
-Phase 10.1 covers HTTP-level metrics and structured tracing. A future pass will add domain-level counters: DB pool occupancy, auth-event counters (logins succeeded / failed by reason), realtime broker subscription counts, hook invocation counts and durations.
+The first wave covered HTTP and the second wave covers auth, DB pools, and the realtime broker (above). Still on the list: hook invocation counts and durations, file upload bytes by app, and mailer dispatch counts. Those will land alongside the next pass on hook + storage instrumentation.

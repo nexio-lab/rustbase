@@ -68,6 +68,7 @@ impl RealtimeBroker {
         }
         let (tx, rx) = broadcast::channel(self.capacity);
         self.inner.insert(key.clone(), tx);
+        record_channels_gauge(self.inner.len());
         rx
     }
 
@@ -85,13 +86,26 @@ impl RealtimeBroker {
         };
         if drop_channel {
             self.inner.remove(key);
+            record_channels_gauge(self.inner.len());
         }
+        metrics::counter!(
+            "rustbase_realtime_events_published_total",
+            "outcome" => if delivered > 0 { "delivered" } else { "no_subscribers" },
+        )
+        .increment(1);
         delivered
     }
 
     pub fn channel_count(&self) -> usize {
         self.inner.len()
     }
+}
+
+/// Emit `rustbase_realtime_channels_open` (gauge). One series only;
+/// labelled metrics with per-collection cardinality would explode on
+/// a busy multi-tenant deployment.
+fn record_channels_gauge(channels: usize) {
+    metrics::gauge!("rustbase_realtime_channels_open").set(channels as f64);
 }
 
 #[cfg(test)]
