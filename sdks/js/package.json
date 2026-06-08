@@ -1,0 +1,46 @@
+{
+  "name": "@rustbase/client",
+  "version": "0.1.1",
+  "description": "Official JavaScript / TypeScript client for RustBase.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pjonaszik/rustbase",
+    "directory": "sdks/js"
+  },
+  "homepage": "https://pjonaszik.github.io/rustbase/",
+  "keywords": [
+    "rustbase",
+    "baas",
+    "backend",
+    "sdk",
+    "client",
+    "typescript"
+  ],
+  "engines": {
+    "node": ">=20",
+    "bun": ">=1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

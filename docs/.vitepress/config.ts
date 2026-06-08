@@ -60,6 +60,12 @@ export default defineConfig({
 					]
 				},
 				{
+					text: 'Client SDKs',
+					items: [
+						{ text: 'JavaScript / TypeScript', link: '/guide/sdk-js' }
+					]
+				},
+				{
 					text: 'Operate',
 					items: [
 						{ text: 'Configuration', link: '/guide/configuration' },

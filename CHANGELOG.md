@@ -8,6 +8,25 @@ versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **JavaScript / TypeScript SDK (`@rustbase/client`).** New
+  `sdks/js/` package implementing an idiomatic, fully-typed
+  client around the OpenAPI-documented surface. Owns a single
+  in-memory `Session = { accessToken, refreshToken, user }` with
+  an `onSessionChange` hook for caller-controlled persistence; a
+  401 on any authenticated call triggers ONE transparent refresh
+  + replay before surfacing the original error. Fluent API:
+  `rb.auth.{ register, login, completeMfa, requestVerification,
+  confirmVerification, logout }`, `rb.app(id).collection(slug)
+  .{ list, get, create, update, delete }`, and
+  `rb.app(id).files.{ upload, serveUrl }`. Every non-2xx
+  response throws a typed `RustBaseError(status, code, message,
+  body?)`; transport-layer failures get `code: 'network'`,
+  `status: 0`. Vitest covers URL building, login both branches
+  (tokens + MFA), the 401-refresh-replay loop, error mapping,
+  logout-clears-session-even-on-server-failure, and the
+  multipart upload contract — 9 tests, all green. New CI job
+  `sdk-js (build + test)` runs `bun run build` (tsc → dist) and
+  `bun run test` on every push.
 - **OpenAPI 3.1 spec for the SDK-facing API.** New
   `docs/reference/openapi.yaml` covers health, end-user auth
   (`userRegister`, `userLogin`, `userLoginTotp`, `userRefresh`,

@@ -151,3 +151,25 @@ jobs:
 
           kill $PID 2>/dev/null || true
           echo "dashboard smoke OK"
+
+  sdk-js:
+    name: sdk-js (build + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install deps
+        working-directory: sdks/js
+        run: bun install --frozen-lockfile
+
+      - name: Type-check + build
+        working-directory: sdks/js
+        run: bun run build
+
+      - name: Tests (vitest, mocked fetch)
+        working-directory: sdks/js
+        run: bun run test
+
