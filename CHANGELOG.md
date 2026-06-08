@@ -8,6 +8,19 @@ versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Cookbook section in the docs.** Six recipe pages that solve
+  concrete app-builder problems on top of the existing guide:
+  end-to-end sign-up + verification + login + refresh + revoke
+  (with the HttpOnly-cookie pattern for browser clients);
+  `?filter=` + `?sort=` + pagination grammar with the gotchas that
+  fall out of running the same AST in SQL / hooks / dashboard;
+  multipart file upload + `file` field + serve URL + S3 cutover;
+  realtime WebSocket with server-side filter (and SSE alternative);
+  custom HTTP route from a JS hook with the `$app` surface +
+  sandbox limits explained; OAuth login with Google as the
+  worked example (dashboard preset + PKCE flow + variations for
+  GitHub / OIDC). Nav gets a top-level **Cookbook** entry; sidebar
+  groups the recipes under their domains. Build clean.
 - **Prometheus `/metrics` endpoint.** New `[observability]` config
   section toggles a global `metrics_exporter_prometheus` recorder
   and mounts `GET /metrics` on the main HTTP listener. Every HTTP

@@ -27,6 +27,7 @@ export default defineConfig({
 		logo: '/logo.svg',
 		nav: [
 			{ text: 'Guide', link: '/guide/getting-started' },
+			{ text: 'Cookbook', link: '/cookbook/' },
 			{ text: 'Reference', link: '/reference/rest-api' },
 			{ text: 'Concepts', link: '/concepts/mental-model' },
 			{
@@ -65,6 +66,20 @@ export default defineConfig({
 						{ text: 'Deployment', link: '/guide/deployment' },
 						{ text: 'Backups (Litestream)', link: '/guide/backups' },
 						{ text: 'Observability', link: '/guide/observability' }
+					]
+				}
+			],
+			'/cookbook/': [
+				{
+					text: 'Cookbook',
+					items: [
+						{ text: 'Overview', link: '/cookbook/' },
+						{ text: 'End-to-end sign-up flow', link: '/cookbook/auth-flow' },
+						{ text: 'Filter and paginate records', link: '/cookbook/filter-paginate' },
+						{ text: 'Upload and attach a file', link: '/cookbook/files' },
+						{ text: 'Realtime with server-side filter', link: '/cookbook/realtime' },
+						{ text: 'Add a custom HTTP route', link: '/cookbook/custom-route' },
+						{ text: 'OAuth login (Google)', link: '/cookbook/oauth-google' }
 					]
 				}
 			],
