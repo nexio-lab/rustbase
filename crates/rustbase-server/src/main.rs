@@ -192,7 +192,8 @@ async fn main() -> Result<()> {
 
     let dashboard_routes: Router<()> = Router::new()
         .route("/_/", get(dashboard::index))
-        .route("/_/{*path}", get(dashboard::asset));
+        .route("/_/{*path}", get(dashboard::asset))
+        .route("/openapi.yaml", get(openapi_spec));
     let mut app = build_router(state)
         .merge(dashboard_routes)
         // `/_/setup`, `/_/auth/admin/login`, `/_/auth/refresh` are
@@ -283,6 +284,19 @@ async fn main() -> Result<()> {
     )
     .await?;
     Ok(())
+}
+
+/// `GET /openapi.yaml` — embedded OpenAPI 3.1 spec. Authored by hand
+/// under `docs/reference/openapi.yaml`, covering the SDK-facing slice
+/// of the API (auth, records, files). Public on the listener; no
+/// secrets in the document.
+async fn openapi_spec() -> axum::response::Response {
+    use axum::response::IntoResponse;
+    (
+        [("Content-Type", "application/yaml; charset=utf-8")],
+        include_str!("../../../docs/reference/openapi.yaml"),
+    )
+        .into_response()
 }
 
 /// Per-request 405 fallback. GET requests under `/_/` get the dashboard

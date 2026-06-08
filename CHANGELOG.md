@@ -8,6 +8,21 @@ versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **OpenAPI 3.1 spec for the SDK-facing API.** New
+  `docs/reference/openapi.yaml` covers health, end-user auth
+  (`userRegister`, `userLogin`, `userLoginTotp`, `userRefresh`,
+  `userLogout`, `verificationRequest`, `verificationConfirm`),
+  records CRUD (`listRecords`, `createRecord`, `getRecord`,
+  `updateRecord`, `deleteRecord`), and files (`uploadFile`,
+  `serveFile`). 13 paths, 14 schemas, bearer-JWT security scheme.
+  The binary embeds the YAML via `include_str!` and serves it at
+  `GET /openapi.yaml` (public — no secrets in the document) so
+  client codegen has a single source of truth. New docs page
+  `reference/openapi.md` explains scope, authoring, and codegen.
+  Admin / dashboard routes intentionally NOT in this slice yet;
+  they will move in as utoipa annotations land across
+  `rustbase-api`. Until then this file is the canonical SDK
+  input.
 - **Cookbook section in the docs.** Six recipe pages that solve
   concrete app-builder problems on top of the existing guide:
   end-to-end sign-up + verification + login + refresh + revoke

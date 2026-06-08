@@ -1,0 +1,632 @@
+openapi: 3.1.0
+
+info:
+  title: RustBase
+  version: 0.1.1
+  summary: Multi-tenant Backend-as-a-Service in Rust.
+  description: |
+    The SDK-facing slice of the RustBase REST API: health, end-user
+    auth (register / verify / login / refresh / logout / OTP),
+    records CRUD, and files. Admin routes
+    (`/api/workspaces/{workspace}/admins`, `/_/auth/admin/login`,
+    schema PATCH, etc.) are NOT in this spec yet — they will move in
+    as the utoipa annotations land across `rustbase-api`. This file
+    is the canonical input for the JS / TS / Dart SDKs.
+  license:
+    name: MIT OR Apache-2.0
+    url: https://github.com/pjonaszik/rustbase/blob/main/LICENSE-MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local dev server
+  - url: https://{host}
+    description: Self-hosted deployment
+    variables:
+      host:
+        default: rustbase.example.com
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Server
+    description: Health + introspection.
+  - name: Auth
+    description: End-user authentication. Tokens are bound to (workspace, user) and work against every app in the workspace.
+  - name: Records
+    description: CRUD on collection records, filter + paginate.
+  - name: Files
+    description: Multipart upload + retrieval via the storage backend.
+
+paths:
+
+  /healthz:
+    get:
+      operationId: getHealth
+      tags: [Server]
+      summary: Liveness + setup state.
+      security: []
+      responses:
+        "200":
+          description: Always 200, even when the setup wizard hasn't run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthResponse" }
+
+  /openapi.yaml:
+    get:
+      operationId: getOpenApiSpec
+      tags: [Server]
+      summary: This spec, served by the binary.
+      security: []
+      responses:
+        "200":
+          description: OpenAPI 3.1 YAML.
+          content:
+            application/yaml: {}
+
+  /api/workspaces/{workspace}/auth/users/register:
+    post:
+      operationId: userRegister
+      tags: [Auth]
+      summary: Self-service end-user registration.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/workspace"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterRequest" }
+      responses:
+        "201":
+          description: User created. The user is NOT verified — call the verification flow next.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RegisterResponse" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "409":
+          description: A user with this email already exists.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+
+  /api/workspaces/{workspace}/auth/users/login:
+    post:
+      operationId: userLogin
+      tags: [Auth]
+      summary: Exchange email + password for access + refresh tokens.
+      description: |
+        Returns one of two shapes — full tokens when the user has no
+        TOTP enrolled, or an `mfa_token` challenge if TOTP is on.
+        Clients disambiguate on the `mfa_required` discriminator.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/workspace"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Either tokens or an MFA challenge.
+          headers:
+            Set-Cookie:
+              description: |
+                When the request carries `X-Rb-Cookie-Auth: 1`, the
+                response also sets `rb_at` (HttpOnly) and `rb_rt`
+                (HttpOnly) cookies in addition to the JSON body.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserLoginResponse" }
+        "401":
+          description: Bad email/password.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+        "429":
+          description: Account is locked out after too many failed attempts. Surfaces `Retry-After` in seconds.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+
+  /api/workspaces/{workspace}/auth/users/login/totp:
+    post:
+      operationId: userLoginTotp
+      tags: [Auth]
+      summary: Complete a TOTP-gated login.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/workspace"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mfa_token, code]
+              properties:
+                mfa_token:
+                  type: string
+                  description: From the prior `userLogin` response.
+                code:
+                  type: string
+                  description: Current TOTP code from the authenticator app.
+                  pattern: "^[0-9]{6}$"
+      responses:
+        "200":
+          description: Tokens issued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserTokens" }
+        "401":
+          description: Bad code or expired challenge.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+
+  /api/workspaces/{workspace}/auth/refresh:
+    post:
+      operationId: userRefresh
+      tags: [Auth]
+      summary: Rotate the refresh token for a new access token.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/workspace"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
+      responses:
+        "200":
+          description: New token pair. The old refresh token is INVALIDATED.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RefreshResponse" }
+        "401":
+          description: Refresh token unknown or already rotated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+
+  /api/workspaces/{workspace}/auth/logout:
+    post:
+      operationId: userLogout
+      tags: [Auth]
+      summary: Revoke the current session.
+      parameters:
+        - $ref: "#/components/parameters/workspace"
+      responses:
+        "204":
+          description: |
+            The user's `(workspace, user_id)` lands in the in-memory
+            revocation set; outstanding access tokens are rejected
+            until they expire naturally. The refresh token is deleted.
+
+  /api/workspaces/{workspace}/auth/verification/request:
+    post:
+      operationId: verificationRequest
+      tags: [Auth]
+      summary: Send a verification OTP to the user's email.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/workspace"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "204":
+          description: Email dispatched (or queued for the LogMailer in dev).
+
+  /api/workspaces/{workspace}/auth/verification/confirm:
+    post:
+      operationId: verificationConfirm
+      tags: [Auth]
+      summary: Confirm the OTP and flip the user to verified.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/workspace"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code]
+              properties:
+                email: { type: string, format: email }
+                code:
+                  type: string
+                  pattern: "^[0-9]{6}$"
+      responses:
+        "204":
+          description: User is now verified.
+        "401":
+          description: Bad or expired code.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+
+  /api/workspaces/{workspace}/apps/{app}/collections/{coll}/records:
+    get:
+      operationId: listRecords
+      tags: [Records]
+      summary: List records in a collection.
+      parameters:
+        - $ref: "#/components/parameters/workspace"
+        - $ref: "#/components/parameters/app"
+        - $ref: "#/components/parameters/coll"
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: per_page
+          schema: { type: integer, minimum: 1, maximum: 200, default: 30 }
+        - in: query
+          name: filter
+          description: Filter expression — see /reference/filters.
+          schema: { type: string }
+        - in: query
+          name: sort
+          description: |
+            Comma-separated field names. Prefix with `-` for descending
+            (e.g. `sort=-updated_at,title`).
+          schema: { type: string }
+      responses:
+        "200":
+          description: Filtered + paginated page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecordListResponse" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+    post:
+      operationId: createRecord
+      tags: [Records]
+      summary: Insert a record.
+      parameters:
+        - $ref: "#/components/parameters/workspace"
+        - $ref: "#/components/parameters/app"
+        - $ref: "#/components/parameters/coll"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              description: |
+                Field name → value. Validated against the collection
+                schema; required fields rejected if absent, unknown
+                fields rejected on strict collections.
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Record" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+
+  /api/workspaces/{workspace}/apps/{app}/collections/{coll}/records/{id}:
+    get:
+      operationId: getRecord
+      tags: [Records]
+      summary: Fetch a single record by ID.
+      parameters:
+        - $ref: "#/components/parameters/workspace"
+        - $ref: "#/components/parameters/app"
+        - $ref: "#/components/parameters/coll"
+        - $ref: "#/components/parameters/recordId"
+      responses:
+        "200":
+          description: The record.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Record" }
+        "404":
+          description: Not found OR hidden by the access rule.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+    patch:
+      operationId: updateRecord
+      tags: [Records]
+      summary: Partial update.
+      parameters:
+        - $ref: "#/components/parameters/workspace"
+        - $ref: "#/components/parameters/app"
+        - $ref: "#/components/parameters/coll"
+        - $ref: "#/components/parameters/recordId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Updated record.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Record" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteRecord
+      tags: [Records]
+      summary: Hard-delete a record.
+      parameters:
+        - $ref: "#/components/parameters/workspace"
+        - $ref: "#/components/parameters/app"
+        - $ref: "#/components/parameters/coll"
+        - $ref: "#/components/parameters/recordId"
+      responses:
+        "204":
+          description: Deleted.
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/workspaces/{workspace}/apps/{app}/files:
+    post:
+      operationId: uploadFile
+      tags: [Files]
+      summary: Multipart upload — returns a file ID to attach to a record.
+      parameters:
+        - $ref: "#/components/parameters/workspace"
+        - $ref: "#/components/parameters/app"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "201":
+          description: Uploaded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FileMeta" }
+        "413":
+          description: |
+            Body exceeded `http.max_body_bytes` (default 8 MiB) or the
+            field's per-schema `max_size`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+        "415":
+          description: MIME type not in the field's allowlist.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+
+  /api/workspaces/{workspace}/apps/{app}/files/{id}/serve:
+    get:
+      operationId: serveFile
+      tags: [Files]
+      summary: Stream the binary back.
+      parameters:
+        - $ref: "#/components/parameters/workspace"
+        - $ref: "#/components/parameters/app"
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: File body. Content-Type is the upload's MIME type.
+          content:
+            "*/*":
+              schema:
+                type: string
+                format: binary
+        "404": { $ref: "#/components/responses/NotFound" }
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        RS256 JWT carrying (`workspace_id`, optional `app_id`, `user_id`
+        or `admin_id`, `role`). 15-minute TTL by default. Pair with
+        the refresh token from the same login response to extend.
+
+  parameters:
+    workspace:
+      in: path
+      name: workspace
+      required: true
+      schema: { type: string }
+      description: Workspace slug.
+    app:
+      in: path
+      name: app
+      required: true
+      schema: { type: string }
+      description: App slug.
+    coll:
+      in: path
+      name: coll
+      required: true
+      schema: { type: string }
+      description: Collection slug.
+    recordId:
+      in: path
+      name: id
+      required: true
+      schema: { type: string }
+      description: Record ID (ULID).
+
+  responses:
+    ValidationError:
+      description: Bad request payload — see message for the offending field.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorBody" }
+    NotFound:
+      description: Resource not found (or hidden by an access rule).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorBody" }
+
+  schemas:
+
+    ErrorBody:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable error code — see /reference/errors.
+        message:
+          type: string
+
+    HealthResponse:
+      type: object
+      required: [status, initialized]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        initialized:
+          type: boolean
+          description: |
+            False until the master admin has set a password via
+            `POST /_/setup`. While false, every other route returns
+            503.
+
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password:
+          type: string
+          minLength: 8
+          format: password
+
+    RegisterResponse:
+      type: object
+      required: [id, email, verified]
+      properties:
+        id: { type: string }
+        email: { type: string, format: email }
+        verified: { type: boolean }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, format: password }
+
+    UserPublic:
+      type: object
+      required: [id, email, verified]
+      properties:
+        id: { type: string }
+        email: { type: string, format: email }
+        verified: { type: boolean }
+
+    UserTokens:
+      type: object
+      required: [access_token, refresh_token, user]
+      properties:
+        access_token:
+          type: string
+          description: RS256 JWT, 15-minute TTL.
+        refresh_token:
+          type: string
+          description: Opaque random string, 30-day TTL. Single-use — rotated on every refresh.
+        user: { $ref: "#/components/schemas/UserPublic" }
+
+    UserMfaChallenge:
+      type: object
+      required: [mfa_required, mfa_token]
+      properties:
+        mfa_required:
+          type: boolean
+          enum: [true]
+          description: Discriminator. Always `true` when present.
+        mfa_token:
+          type: string
+          description: Short-lived (~5 min) token to pair with the TOTP code on `userLoginTotp`.
+
+    UserLoginResponse:
+      oneOf:
+        - $ref: "#/components/schemas/UserTokens"
+        - $ref: "#/components/schemas/UserMfaChallenge"
+
+    RefreshRequest:
+      type: object
+      properties:
+        refresh_token:
+          type: string
+          description: |
+            Optional in the body — the dashboard reads it from the
+            `rb_rt` cookie instead. Browser clients SHOULD prefer the
+            cookie path; native clients pass it here.
+
+    RefreshResponse:
+      type: object
+      required: [access_token, refresh_token]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+
+    Record:
+      type: object
+      required: [id, collection, fields, created_at, updated_at]
+      properties:
+        id: { type: string }
+        collection: { type: string }
+        fields:
+          type: object
+          additionalProperties: true
+          description: Field name → value. Shape matches the collection schema.
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    RecordListResponse:
+      type: object
+      required: [items, page, per_page, total_items, total_pages]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Record" }
+        page: { type: integer }
+        per_page: { type: integer }
+        total_items: { type: integer, format: int64 }
+        total_pages: { type: integer, format: int64 }
+
+    FileMeta:
+      type: object
+      required: [id, mime, size, url]
+      properties:
+        id: { type: string }
+        mime: { type: string }
+        size:
+          type: integer
+          format: int64
+          description: Bytes.
+        url:
+          type: string
+          description: Public-facing serve URL — `GET /api/workspaces/{workspace}/apps/{app}/files/{id}/serve`.
+        sha256:
+          type: string
+          description: SHA-256 of the binary, hex-encoded.

@@ -88,6 +88,7 @@ export default defineConfig({
 					text: 'Reference',
 					items: [
 						{ text: 'REST API', link: '/reference/rest-api' },
+						{ text: 'OpenAPI spec', link: '/reference/openapi' },
 						{ text: 'Filter syntax', link: '/reference/filters' },
 						{ text: 'Error codes', link: '/reference/errors' },
 						{ text: '$app API (hooks)', link: '/reference/hooks-api' }
