@@ -39,6 +39,13 @@ await notes.delete(note.id);
 // Files.
 const file = await rb.app('mobile').files.upload(blob);
 await notes.update(note.id, { cover: file.id });
+
+// Realtime.
+const sub = notes.subscribe({ filter: 'pinned = true' });
+sub.on('record_created', (r)  => console.log('+', r));
+sub.on('record_updated', (r)  => console.log('~', r));
+sub.on('record_deleted', (id) => console.log('-', id));
+// later: sub.close();
 ```
 
 ## Sessions

@@ -42,7 +42,7 @@ use serde::Deserialize;
 use std::convert::Infallible;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
-use crate::auth::PrincipalAuth;
+use crate::auth::{PrincipalAuth, principal_from_token};
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -51,6 +51,20 @@ use crate::state::AppState;
 pub struct EventsQuery {
     #[serde(default)]
     pub filter: Option<String>,
+}
+
+/// WS-only query: same `filter` as SSE, plus an optional access token
+/// fallback. The browser `WebSocket` constructor can't set
+/// `Authorization: Bearer ...`, so the client SDK passes it as
+/// `?token=<jwt>` instead — the handler honours it only after the
+/// header + cookie paths come back empty. Tokens-in-URLs end up in
+/// access logs; the SDK avoids the leak in regular fetch paths.
+#[derive(Debug, Deserialize, Default)]
+pub struct EventsQueryWs {
+    #[serde(default)]
+    pub filter: Option<String>,
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 pub async fn record_events(
@@ -77,16 +91,33 @@ pub async fn record_events(
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
-/// `GET …/events/ws`. Same auth + filter shape as the SSE endpoint;
+/// `GET …/events/ws`. Same filter shape + the SSE endpoint;
 /// the protocol after upgrade is one server→client JSON frame per
 /// event, matching the SSE `data` payload byte-for-byte.
+///
+/// Auth resolution differs from SSE: header → cookie → `?token=`
+/// query. The query fallback exists because the browser
+/// `WebSocket` constructor can't set request headers, so the SDK
+/// passes the token in the URL on connect.
 pub async fn record_events_ws(
-    auth: PrincipalAuth,
     State(state): State<AppState>,
     Path((workspace, app, coll)): Path<(String, String, String)>,
-    Query(q): Query<EventsQuery>,
+    Query(q): Query<EventsQueryWs>,
+    headers: axum::http::HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Result<axum::response::Response, ApiError> {
+    let token = headers
+        .get("authorization")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer ").map(str::to_string))
+        .or_else(|| {
+            crate::auth::cookies::read_cookie(&headers, crate::auth::cookies::ACCESS_COOKIE)
+        })
+        .or(q.token);
+    let auth = match token {
+        Some(t) => principal_from_token(&state, &t)?,
+        None => return Err(ApiError::Core(CoreError::Unauthorized)),
+    };
     let filter =
         authorize_subscribe(&auth, &state, &workspace, &app, &coll, q.filter.as_deref()).await?;
     let key = SubscriptionKey::new(&workspace, &app, &coll);

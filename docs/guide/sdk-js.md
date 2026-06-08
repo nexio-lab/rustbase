@@ -111,7 +111,31 @@ try {
 
 Codes mirror the server's `ErrorBody.code` — see [Error codes](/reference/errors). Transport-layer failures (DNS, ECONNRESET, CORS) get `code: 'network'` with `status: 0`.
 
+## Realtime
+
+```ts
+const notes = rb.app('mobile').collection('notes');
+const sub   = notes.subscribe({ filter: 'pinned = true' });
+
+sub.on('open',   ()         => console.log('connected'));
+sub.on('close',  (info)     => console.log('closed', info.code, info.willReconnect));
+sub.on('error',  (err)      => console.error(err));
+
+sub.on('record_created', (record) => insert(record));
+sub.on('record_updated', (record) => replace(record));
+sub.on('record_deleted', (id)     => evict(id));
+
+// Later:
+sub.close();
+```
+
+What happens under the hood:
+
+- The WebSocket URL rewrites the SDK's `baseUrl` from `http(s)` to `ws(s)` and appends `?token=<accessToken>&filter=…`. The browser `WebSocket` constructor can't set a `Authorization` header — the server accepts the token via query for this endpoint only.
+- The wrapper **reconnects with jittered exponential backoff** on every close (500 ms → 1 s → 2 s → … capped at 30 s, plus up to 500 ms jitter). The wait-loop stops only when you call `sub.close()`.
+- On policy-violation closes (codes `1008`, `4001`, `4003`), the wrapper **calls `auth.refresh()` first** so the next connect carries a fresh token. Refresh failure surfaces via `onSessionChange(null)` and the next reconnect attempt errors with `code: 'no_session'`.
+- Events that arrive between disconnect and reconnect are LOST — the broker keeps no history. On reconnect, issue a fresh `GET …/records` to backfill.
+
 ## What's not (yet) in the SDK
 
-- Realtime — open a `WebSocket` directly against `…/events?filter=…&token=<at>` for now. A wrapper that re-authenticates on token expiry will land alongside the next pass.
 - Admin operations (workspace / app / collection CRUD, schema PATCH, OAuth provider config, audit, hierarchical policies). The dashboard handles these today; the SDK will follow as the OpenAPI spec grows.

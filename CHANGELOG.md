@@ -8,6 +8,40 @@ versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Realtime wrapper in `@rustbase/client` + WebSocket `?token=`
+  fallback on the server.**
+  - **Server**: `record_events_ws` now resolves the access token in
+    the order `Authorization` header → `rb_at` cookie → `?token=`
+    query. The query fallback exists for browser clients — the
+    `WebSocket` constructor can't set request headers. A new
+    `principal_from_token` helper in `crates/rustbase-api/src/auth/extract.rs`
+    decodes a raw token into `PrincipalAuth`, bypassing the axum
+    extractor chain. SSE behaviour unchanged.
+  - **SDK**: new `Subscription` class returned by
+    `rb.app(id).collection(slug).subscribe({ filter? })`. Owns one
+    `WebSocket` plus a reconnect loop with jittered exponential
+    backoff (500 ms → 30 s cap, ±500 ms jitter). On policy-violation
+    closes (1008 / 4001 / 4003) it calls `auth.refresh()` BEFORE
+    the next connect so a rotated refresh token doesn't break the
+    stream silently. Listeners:
+    `open / close / error / record_created / record_updated /
+    record_deleted`. `close()` is idempotent and stops the
+    reconnect loop. `auth.refresh()` is now a public method —
+    thin wrapper around the existing one-shot refresh used by the
+    HTTP layer.
+  - Pure dispatcher (`dispatchRealtimeEvent`) is exported for
+    tests so the event routing contract is unit-locked without a
+    real socket.
+  - Tests: 9 new specs (URL building http→ws + https→wss + token
+    + filter; lifecycle open / message / close; reconnect
+    scheduling on abnormal close; explicit-close stops reconnect;
+    unknown event kinds silently ignored for forward-compat).
+    SDK suite total: 18 / 18 green.
+  - Docs: `guide/sdk-js.md` grows a Realtime section, cookbook
+    `realtime.md` adds an SDK-shortcut block, OpenAPI gains a
+    `subscribeRecordsWs` operation under Records with the
+    `filter` + `token` query parameters and the 101/401
+    responses.
 - **Domain-level Prometheus metrics.** Second wave of
   observability counters + gauges on top of the HTTP layer from
   10.1. Five new metric families, all bounded cardinality:

@@ -173,3 +173,23 @@ impl FromRequestParts<AppState> for PrincipalAuth {
         })
     }
 }
+
+/// Decode a token into `PrincipalAuth` directly, bypassing axum's
+/// extractor chain. Used by the WebSocket handler — the browser
+/// `WebSocket` constructor can't set request headers, so the SDK
+/// passes the token as a `?token=` query string instead and the
+/// handler resolves it here.
+pub fn principal_from_token(state: &AppState, token: &str) -> Result<PrincipalAuth, ApiError> {
+    let claims = state.jwt.verify(token)?;
+    let key = match &claims.workspace {
+        Some(r) => SubjectKey::scoped(r, &claims.sub),
+        None => SubjectKey::master(&claims.sub),
+    };
+    if state.revocations.is_revoked(&key, claims.iat) {
+        return Err(ApiError::Core(CoreError::Unauthorized));
+    }
+    Ok(PrincipalAuth {
+        subject_id: claims.sub.clone(),
+        claims,
+    })
+}

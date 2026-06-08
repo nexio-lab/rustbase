@@ -107,6 +107,43 @@ export type FileMeta = {
 	sha256?: string;
 };
 
+/**
+ * Wire shape of the events delivered over the realtime WebSocket.
+ * Mirrors the server's `#[serde(tag = "kind", rename_all =
+ * "snake_case")] RealtimeEvent` enum.
+ */
+export type RealtimeEvent =
+	| { kind: 'record_created'; record: RecordRow }
+	| { kind: 'record_updated'; record: RecordRow }
+	| { kind: 'record_deleted'; id: string };
+
+export type SubscriptionListeners = {
+	/** Fired once on every successful connect (including reconnects). */
+	open?: () => void;
+	/**
+	 * Fired on every disconnect. The wrapper will reconnect automatically
+	 * unless `close()` was called on the subscription.
+	 */
+	close?: (info: { code: number; reason: string; willReconnect: boolean }) => void;
+	/** Generic error channel — parse failures, missing session, etc. */
+	error?: (err: Error) => void;
+	record_created?: (record: RecordRow) => void;
+	record_updated?: (record: RecordRow) => void;
+	record_deleted?: (id: string) => void;
+};
+
+export type SubscribeOptions = {
+	filter?: string;
+	/**
+	 * Optional override for the WebSocket constructor — defaults to
+	 * `globalThis.WebSocket`. Set this in tests or in non-browser
+	 * environments without a global WebSocket.
+	 */
+	WebSocketImpl?: typeof WebSocket;
+	/** Optional override for `setTimeout`, for tests. */
+	setTimeout?: (cb: () => void, ms: number) => unknown;
+};
+
 // ---------- Errors ----------
 
 /**
@@ -244,6 +281,16 @@ export class RustBase {
 	}
 
 	/**
+	 * Public-but-not-typed-as-public: lets `auth.refresh()` call the
+	 * internal one-shot refresh. Returns true on success, false on
+	 * failure (caller sees the session change via
+	 * `onSessionChange(null)`).
+	 */
+	async refreshFromOutside(): Promise<boolean> {
+		return this.refreshOnce();
+	}
+
+	/**
 	 * Internal: one-shot refresh attempt. Returns true on success
 	 * (session updated) or false on failure. Failure does NOT throw —
 	 * the caller surfaces the original 401 to keep the trace
@@ -284,6 +331,26 @@ export class RustBase {
 			for (const [k, v] of Object.entries(query)) {
 				if (v === undefined) continue;
 				params.set(k, String(v));
+			}
+			const qs = params.toString();
+			if (qs) url += `?${qs}`;
+		}
+		return url;
+	}
+
+	/**
+	 * Build a WebSocket URL by rewriting the scheme (`http` → `ws`,
+	 * `https` → `wss`) on top of the configured base. Used by the
+	 * realtime subscription.
+	 */
+	wsUrl(path: string, query?: Record<string, string | undefined>): string {
+		const wsBase = this.baseUrl.replace(/^http/, 'ws');
+		let url = `${wsBase}${path}`;
+		if (query) {
+			const params = new URLSearchParams();
+			for (const [k, v] of Object.entries(query)) {
+				if (v === undefined) continue;
+				params.set(k, v);
 			}
 			const qs = params.toString();
 			if (qs) url += `?${qs}`;
@@ -375,6 +442,19 @@ class AuthApi {
 			this.client.setSession(null);
 		}
 	}
+
+	/**
+	 * Rotate the refresh token explicitly. The regular request loop
+	 * already refreshes on 401, but the realtime wrapper needs to be
+	 * able to refresh BEFORE reconnecting after an auth-related close
+	 * — by then no HTTP request has surfaced the 401 yet. Returns
+	 * `true` on success (a new session is now in place), `false`
+	 * otherwise (the session is cleared and `onSessionChange(null)`
+	 * has fired).
+	 */
+	async refresh(): Promise<boolean> {
+		return this.client.refreshFromOutside();
+	}
 }
 
 export class AppHandle {
@@ -437,6 +517,197 @@ export class CollectionHandle {
 			'DELETE',
 			`${this.base}/records/${encodeURIComponent(id)}`,
 		);
+	}
+
+	/**
+	 * Open a realtime subscription against this collection's WS
+	 * endpoint. Returns a `Subscription` you call `.on(event, fn)`
+	 * on, and `.close()` to tear down.
+	 *
+	 *     const sub = notes.subscribe({ filter: 'pinned = true' });
+	 *     sub.on('record_created', (r) => …);
+	 *     sub.on('record_updated', (r) => …);
+	 *     sub.on('record_deleted', (id) => …);
+	 *     // later:
+	 *     sub.close();
+	 *
+	 * The wrapper reconnects automatically with jittered exponential
+	 * backoff on close, and proactively refreshes the access token
+	 * before reconnect if the server closes with a policy-violation
+	 * code (1008 / 4001 / 4003).
+	 */
+	subscribe(opts: SubscribeOptions = {}): Subscription {
+		return new Subscription(this.client, this.app, this.slug, opts);
+	}
+}
+
+/**
+ * Realtime subscription handle. Owns one WebSocket at a time, plus
+ * the reconnect loop. Built by `CollectionHandle.subscribe`.
+ */
+export class Subscription {
+	private ws: WebSocket | null = null;
+	private listeners: SubscriptionListeners = {};
+	private explicitClose = false;
+	private retryCount = 0;
+	private readonly WebSocketImpl: typeof WebSocket;
+	private readonly setTimeoutImpl: (cb: () => void, ms: number) => unknown;
+
+	constructor(
+		private readonly client: RustBase,
+		private readonly app: string,
+		private readonly slug: string,
+		opts: SubscribeOptions = {},
+	) {
+		this.filter = opts.filter;
+		this.WebSocketImpl =
+			opts.WebSocketImpl ?? (globalThis.WebSocket as typeof WebSocket | undefined)!;
+		this.setTimeoutImpl = opts.setTimeout ?? ((cb, ms) => setTimeout(cb, ms));
+		if (!this.WebSocketImpl) {
+			throw new RustBaseError(
+				0,
+				'no_websocket',
+				'no WebSocket constructor available — pass `WebSocketImpl` in subscribe options',
+			);
+		}
+		this.connect();
+	}
+
+	private readonly filter: string | undefined;
+
+	/** Register a listener for one event type. Replaces any prior handler. */
+	on<K extends keyof SubscriptionListeners>(
+		event: K,
+		handler: SubscriptionListeners[K],
+	): this {
+		this.listeners[event] = handler;
+		return this;
+	}
+
+	/**
+	 * Close the subscription and stop the reconnect loop. Idempotent.
+	 */
+	close(): void {
+		this.explicitClose = true;
+		if (this.ws) {
+			const w = this.ws;
+			this.ws = null;
+			try {
+				w.close();
+			} catch {
+				// already closing / closed — ignore.
+			}
+		}
+	}
+
+	/**
+	 * Build the WS URL for the current session. Exposed for tests so
+	 * the URL contract can be locked without booting a real socket.
+	 */
+	buildUrl(token: string): string {
+		const path = `/api/workspaces/${this.client.workspace}/apps/${this.app}/collections/${this.slug}/events/ws`;
+		return this.client.wsUrl(path, {
+			token,
+			filter: this.filter,
+		});
+	}
+
+	private connect(): void {
+		if (this.explicitClose) return;
+		const session = this.client.currentSession;
+		if (!session) {
+			this.listeners.error?.(
+				new RustBaseError(401, 'no_session', 'no active session to open a subscription'),
+			);
+			return;
+		}
+
+		const url = this.buildUrl(session.accessToken);
+		let ws: WebSocket;
+		try {
+			ws = new this.WebSocketImpl(url);
+		} catch (e) {
+			this.listeners.error?.(e instanceof Error ? e : new Error(String(e)));
+			this.scheduleReconnect(1006);
+			return;
+		}
+		this.ws = ws;
+
+		ws.addEventListener('open', () => {
+			this.retryCount = 0;
+			this.listeners.open?.();
+		});
+
+		ws.addEventListener('message', (ev: MessageEvent) => {
+			try {
+				const parsed = JSON.parse(String(ev.data)) as RealtimeEvent;
+				dispatchRealtimeEvent(parsed, this.listeners);
+			} catch (e) {
+				this.listeners.error?.(e instanceof Error ? e : new Error(String(e)));
+			}
+		});
+
+		ws.addEventListener('close', (ev: CloseEvent) => {
+			this.ws = null;
+			const code = ev.code;
+			const reason = ev.reason;
+			this.listeners.close?.({
+				code,
+				reason,
+				willReconnect: !this.explicitClose,
+			});
+			if (!this.explicitClose) this.scheduleReconnect(code);
+		});
+
+		// WS `error` events carry no useful info in browsers; let
+		// `close` drive the reconnect and only surface here for
+		// debug visibility.
+		ws.addEventListener('error', () => {
+			this.listeners.error?.(new RustBaseError(0, 'ws_error', 'WebSocket error'));
+		});
+	}
+
+	private scheduleReconnect(closeCode: number): void {
+		if (this.explicitClose) return;
+		this.retryCount += 1;
+
+		const refreshFirst = closeCode === 1008 || closeCode === 4001 || closeCode === 4003;
+		// Exponential backoff: 500ms, 1s, 2s, ..., capped at 30s, +
+		// up to 500ms jitter so a fleet of clients doesn't all
+		// reconnect on the same tick after a server restart.
+		const base = Math.min(30_000, 500 * Math.pow(2, this.retryCount - 1));
+		const delay = base + Math.floor(Math.random() * 500);
+
+		this.setTimeoutImpl(() => {
+			if (this.explicitClose) return;
+			if (refreshFirst) {
+				this.client.auth.refresh().finally(() => this.connect());
+			} else {
+				this.connect();
+			}
+		}, delay);
+	}
+}
+
+/**
+ * Pure event dispatcher — exposed for tests. Routes a parsed
+ * `RealtimeEvent` to the matching listener; ignores unknown kinds
+ * so a future server-side addition doesn't crash older SDKs.
+ */
+export function dispatchRealtimeEvent(
+	event: RealtimeEvent,
+	listeners: SubscriptionListeners,
+): void {
+	switch (event.kind) {
+		case 'record_created':
+			listeners.record_created?.(event.record);
+			return;
+		case 'record_updated':
+			listeners.record_updated?.(event.record);
+			return;
+		case 'record_deleted':
+			listeners.record_deleted?.(event.id);
+			return;
 	}
 }
 

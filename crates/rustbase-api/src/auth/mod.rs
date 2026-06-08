@@ -21,7 +21,7 @@ pub mod register;
 pub mod totp;
 pub mod verify_email;
 
-pub use extract::{AdminAuth, PrincipalAuth};
+pub use extract::{AdminAuth, PrincipalAuth, principal_from_token};
 pub use login::{master_admin_login, user_login, workspace_admin_login};
 pub use refresh::{master_admin_refresh, user_refresh, workspace_admin_refresh};
 pub use register::user_register;

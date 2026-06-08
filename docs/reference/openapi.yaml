@@ -374,6 +374,43 @@ paths:
           description: Deleted.
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/workspaces/{workspace}/apps/{app}/collections/{coll}/events/ws:
+    get:
+      operationId: subscribeRecordsWs
+      tags: [Records]
+      summary: Realtime WebSocket subscription on a collection.
+      description: |
+        HTTP/1.1 Upgrade to WebSocket. After upgrade the server pushes
+        one JSON frame per matching record event (`record_created`,
+        `record_updated`, `record_deleted`); the client never sends
+        application data.
+
+        Auth resolution order: `Authorization: Bearer …` header →
+        `rb_at` cookie → `?token=` query. The query fallback exists
+        because the browser `WebSocket` constructor can't set request
+        headers.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/workspace"
+        - $ref: "#/components/parameters/app"
+        - $ref: "#/components/parameters/coll"
+        - in: query
+          name: filter
+          description: Server-side filter — same grammar as `listRecords`.
+          schema: { type: string }
+        - in: query
+          name: token
+          description: Access token (RS256 JWT) when the client can't set headers.
+          schema: { type: string }
+      responses:
+        "101":
+          description: Switching Protocols — WebSocket open.
+        "401":
+          description: Missing or invalid token.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+
   /api/workspaces/{workspace}/apps/{app}/files:
     post:
       operationId: uploadFile

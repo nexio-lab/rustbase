@@ -74,6 +74,24 @@ curl -N -H "authorization: Bearer $AT" \
 
 Same filter syntax, same access-rule behaviour. SSE responses set `text/event-stream` and `data:` framed events. Browsers' `EventSource` reconnects automatically with exponential backoff and forwards the `Last-Event-ID` header on retry — useful for at-least-once delivery if you wire it up.
 
+## Skip the boilerplate — use the SDK
+
+The JS / TS SDK ships a `subscribe()` wrapper that handles the reconnect loop and refreshes the access token on policy-violation closes:
+
+```ts
+import { RustBase } from '@rustbase/client';
+
+const rb  = new RustBase({ baseUrl, workspace: 'acme' });
+await rb.auth.login({ email, password });
+
+const sub = rb.app('mobile').collection('notes').subscribe({ filter: 'pinned = true' });
+sub.on('record_created', (r)  => insert(r));
+sub.on('record_updated', (r)  => replace(r));
+sub.on('record_deleted', (id) => evict(id));
+```
+
+See [Guide → JS / TS SDK](/guide/sdk-js#realtime) for the contract.
+
 ## Variations
 
 - **Single-record subscription** — `?record=01HXY…` instead of a filter. The broker keys by `(workspace, app, collection, record_id)` and skips the AST evaluation entirely. Right shape when you want to watch one form's row.
