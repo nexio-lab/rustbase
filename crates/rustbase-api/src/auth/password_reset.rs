@@ -112,7 +112,14 @@ pub async fn request(
         format!("Reset your password for {workspace}"),
         body,
     );
-    if let Err(e) = state.mailer.send(msg).await {
+    let send_result = state.mailer.send(msg).await;
+    metrics::counter!(
+        "rustbase_mailer_dispatches_total",
+        "kind"    => "password_reset",
+        "outcome" => if send_result.is_ok() { "success" } else { "failed" },
+    )
+    .increment(1);
+    if let Err(e) = send_result {
         tracing::error!(
             error = %e, workspace = %workspace, user_id = %user.id,
             "mailer dropped reset email"

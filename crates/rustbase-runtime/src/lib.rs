@@ -578,6 +578,7 @@ impl AppHooks {
             request_lit = json_quote(&request_json),
         );
         let _cpu = self.arm_cpu();
+        let started = std::time::Instant::now();
         let res = self
             .ctx
             .with(move |ctx| {
@@ -588,6 +589,20 @@ impl AppHooks {
                 Ok::<_, RuntimeError>(())
             })
             .await;
+        let elapsed = started.elapsed().as_secs_f64();
+        let outcome = if res.is_ok() { "success" } else { "error" };
+        let event_str = event.as_str();
+        metrics::counter!(
+            "rustbase_hook_dispatches_total",
+            "event"   => event_str,
+            "outcome" => outcome,
+        )
+        .increment(1);
+        metrics::histogram!(
+            "rustbase_hook_dispatch_duration_seconds",
+            "event" => event_str,
+        )
+        .record(elapsed);
         res.map_err(|e| self.classify(e))?;
         Ok(())
     }

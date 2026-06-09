@@ -8,6 +8,38 @@ versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Observability — third wave: hooks, files, mailer.** Completes
+  the domain-level metric surface promised by phase 10.
+  - `rustbase_hook_dispatches_total{event, outcome}` — counter
+    on the hook engine's `dispatch` path. `event` covers the
+    full `HookEvent` enum (`after_create`, `before_update`,
+    `user_after_login`, etc.); `outcome` is `success` | `error`
+    (CPU/memory bail or bridge-side serialisation failure).
+    Per-handler JS exceptions stay in `__rb_record_error` and
+    do NOT bump the counter.
+  - `rustbase_hook_dispatch_duration_seconds{event}` — histogram
+    sharing the duration buckets configured for the HTTP layer;
+    measures the entire dispatch including payload + request
+    serialisation.
+  - `rustbase_file_uploads_total` + `rustbase_file_upload_bytes_total`
+    — two no-label counters on `files::upload`. Operators get
+    throughput in MB/s by differencing the bytes counter against
+    `rustbase_http_request_duration_seconds{route=".../files"}`.
+  - `rustbase_mailer_dispatches_total{kind, outcome}` — counter
+    at every `state.mailer.send(...)` call site (verify_email,
+    otp_login, password_reset). Hook-driven sends via
+    `$app.mailer.send` flow through `QuotedMailer` and are NOT
+    counted here — they show up in the parent hook-dispatch
+    counter via the calling JS handler.
+  - `metrics` workspace dep landed on `rustbase-runtime`
+    (`rustbase-api` already had it from phase 10.1).
+  - End-to-end smoke against a fresh binary verified the file
+    counters (`rustbase_file_uploads_total 1`,
+    `rustbase_file_upload_bytes_total 11`) after one upload.
+  - Docs (`guide/observability.md`) gains a section per family.
+    "What's not (yet) exported" closes out: every promised
+    family is now live; per-tenant breakdowns remain off by
+    design (cardinality).
 - **Realtime wrapper in `@rustbase/client` + WebSocket `?token=`
   fallback on the server.**
   - **Server**: `record_events_ws` now resolves the access token in

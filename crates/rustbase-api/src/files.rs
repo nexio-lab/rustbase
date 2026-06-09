@@ -64,15 +64,19 @@ pub async fn upload(
         .and_then(|v| v.to_str().ok())
         .map(str::to_string);
 
-    let meta = insert_file(&app_pool, &filename, mime.as_deref(), body.len() as i64).await?;
+    let size = body.len();
+    let meta = insert_file(&app_pool, &filename, mime.as_deref(), size as i64).await?;
     state
         .storage
         .put(&storage_key(&workspace, &app, &meta.id), body.to_vec())
         .await
         .map_err(|e| ApiError::Core(CoreError::Internal(format!("storage put: {e}"))))?;
 
+    metrics::counter!("rustbase_file_uploads_total").increment(1);
+    metrics::counter!("rustbase_file_upload_bytes_total").increment(size as u64);
+
     tracing::info!(
-        workspace = %workspace, app = %app, file = %meta.id, size = body.len(),
+        workspace = %workspace, app = %app, file = %meta.id, size,
         "file uploaded"
     );
     Ok((StatusCode::CREATED, Json(meta)))

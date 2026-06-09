@@ -103,11 +103,14 @@ pub async fn request(
         format!("Verify your email for {workspace}"),
         body,
     );
-    state
-        .mailer
-        .send(msg)
-        .await
-        .map_err(|e| ApiError::Core(CoreError::Internal(format!("mailer: {e}"))))?;
+    let send_result = state.mailer.send(msg).await;
+    metrics::counter!(
+        "rustbase_mailer_dispatches_total",
+        "kind"    => "verify_email",
+        "outcome" => if send_result.is_ok() { "success" } else { "failed" },
+    )
+    .increment(1);
+    send_result.map_err(|e| ApiError::Core(CoreError::Internal(format!("mailer: {e}"))))?;
 
     tracing::info!(
         workspace = %workspace,

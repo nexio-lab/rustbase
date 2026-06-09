@@ -2841,6 +2841,7 @@ dependencies = [
  "chrono",
  "cron",
  "dashmap",
+ "metrics",
  "parking_lot",
  "rquickjs",
  "rustbase-core",

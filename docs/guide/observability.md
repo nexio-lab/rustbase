@@ -80,6 +80,46 @@ rustbase_realtime_events_published_total{outcome="no_subscribers"} 89
 
 A high `no_subscribers` rate means the server is doing publishing work nothing observes — typically harmless, but worth checking your hook `$app.realtime.publish` calls against actual client subscriptions if you've optimised hot paths.
 
+**Hooks**
+
+```
+# TYPE rustbase_hook_dispatches_total counter
+# {event=after_create|after_update|after_delete|before_create|...|user_after_login|...,
+#  outcome=success|error}
+rustbase_hook_dispatches_total{event="after_create",outcome="success"} 42
+rustbase_hook_dispatches_total{event="after_update",outcome="error"}    1
+
+# TYPE rustbase_hook_dispatch_duration_seconds histogram
+# {event=...}
+rustbase_hook_dispatch_duration_seconds_bucket{event="after_create",le="0.001"} 12
+…
+```
+
+One dispatch = one call to the runtime, which may run multiple registered handlers in series. The histogram measures the whole dispatch (including JS-side serialization of the payload + `$app.request`). The counter's `error` outcome covers BOTH a fatal CPU/memory bail and a serialisation failure in the bridge; per-handler JS exceptions stay in `__rb_record_error`'s structured log and don't bump the counter.
+
+**Files**
+
+```
+# TYPE rustbase_file_uploads_total counter
+rustbase_file_uploads_total 18
+
+# TYPE rustbase_file_upload_bytes_total counter
+rustbase_file_upload_bytes_total 12582912
+```
+
+Two counters, no labels. Operators reading these alongside `rustbase_http_request_duration_seconds{route=".../files",status="201"}` get throughput in MB/s by differencing the bytes counter against the duration histogram.
+
+**Mailer**
+
+```
+# TYPE rustbase_mailer_dispatches_total counter
+# {kind=verify_email|otp_login|password_reset, outcome=success|failed}
+rustbase_mailer_dispatches_total{kind="otp_login",outcome="success"} 73
+rustbase_mailer_dispatches_total{kind="verify_email",outcome="failed"} 2
+```
+
+Only the three system-driven mailers are counted (verification, OTP login, password reset). Hook-driven sends via `$app.mailer.send` flow through `QuotedMailer` and aren't broken out here — they show up in the parent hook-dispatch counter via the calling JS handler.
+
 Notes:
 
 - The `route` label uses **axum's `MatchedPath`** — the template (`/api/workspaces/{workspace}/...`), not the literal URI. Cardinality stays bounded regardless of how many workspaces/apps/collections you operate.
@@ -136,4 +176,4 @@ The same key names are used across crates so cross-crate correlation works witho
 
 ## What's not (yet) exported
 
-The first wave covered HTTP and the second wave covers auth, DB pools, and the realtime broker (above). Still on the list: hook invocation counts and durations, file upload bytes by app, and mailer dispatch counts. Those will land alongside the next pass on hook + storage instrumentation.
+All the families listed above are live. Per-workspace / per-app breakdowns are intentionally OFF — they would explode cardinality on a busy multi-tenant deployment. Operators who need per-tenant attribution should derive it from the structured tracing log via their aggregator.
