@@ -108,7 +108,7 @@ swc_ecma_ast = "24"
 swc_ecma_codegen = "27"
 swc_ecma_parser = { version = "40", features = ["typescript"] }
 swc_ecma_transforms_base = "43"
-swc_ecma_transforms_typescript = "48"
+swc_ecma_transforms_typescript = "49"
 swc_ecma_visit = "24"
 
 # observability
