@@ -181,15 +181,16 @@ describe('Subscription lifecycle', () => {
 		expect(scheduledDelay).toBe(-1);
 	});
 
-	it('errors when constructed without an active session', () => {
+	it('[garde-existant] opens no socket without an active session', () => {
 		const rb = new RustBase({
 			baseUrl: 'http://h',
 			workspace: 'acme',
 			fetch: vi.fn() as unknown as typeof fetch,
 		});
+		const ws = new FakeWebSocket();
 		const onError = vi.fn();
 		new Subscription(rb, 'mobile', 'notes', {
-			WebSocketImpl: makeImpl(new FakeWebSocket()),
+			WebSocketImpl: makeImpl(ws),
 			setTimeout: () => 0,
 		}).on('error', onError);
 		// The Subscription constructor invokes `connect()`
@@ -199,6 +200,8 @@ describe('Subscription lifecycle', () => {
 		// the witness.
 		// We'd want to register the listener before connect() in a
 		// real app; see the README.
+		expect(ws.openedCount).toBe(0);
+		expect(onError).not.toHaveBeenCalled();
 	});
 });
 
