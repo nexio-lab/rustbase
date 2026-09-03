@@ -231,7 +231,7 @@ pub async fn login_totp(
 
     // Subject mirrors the password step (workspace-scoped) so the
     // password + TOTP failure budgets are shared.
-    let subject = format!("workspace:{workspace}:user:{}", &user.email);
+    let subject = format!("workspace:{workspace}:user:{}", user.email);
     state
         .login_attempts
         .check(&subject, &state.lockout_policy)?;

@@ -144,7 +144,7 @@ pub async fn login(
     // burst against `alice@x` counts toward the same budget as
     // password attempts. Subject is now workspace-scoped to match the
     // shared identity pool.
-    let subject = format!("workspace:{workspace}:user:{}", &req.email);
+    let subject = format!("workspace:{workspace}:user:{}", req.email);
     state
         .login_attempts
         .check(&subject, &state.lockout_policy)?;
