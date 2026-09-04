@@ -16,6 +16,12 @@ pub enum DbError {
     #[error("invalid identifier: {0}")]
     InvalidIdentifier(String),
 
+    /// A stored row breaks an invariant this layer relies on. Not a
+    /// user error and not a transport failure: the data on disk is
+    /// shaped in a way no code path here can produce.
+    #[error("storage invariant violated: {0}")]
+    Invariant(String),
+
     #[error("migration {migration} failed: {source}")]
     Migration {
         migration: String,
@@ -33,6 +39,9 @@ impl From<DbError> for CoreError {
             DbError::Core(c) => c,
             DbError::InvalidIdentifier(name) => {
                 CoreError::Validation(format!("invalid identifier: {name}"))
+            }
+            DbError::Invariant(msg) => {
+                CoreError::Internal(format!("storage invariant violated: {msg}"))
             }
             DbError::Sqlx(s) => CoreError::Internal(format!("database error: {s}")),
             DbError::Io(i) => CoreError::Internal(format!("io error: {i}")),

@@ -103,7 +103,8 @@ pub async fn enroll(
     let totp = build_totp(&secret_b32, &workspace, &user.email)?;
     let otpauth_url = totp.get_url();
 
-    user_totp::enroll(&pool, &user.id, &secret_b32).await?;
+    let stored = secret_for_storage(&state, &secret_b32)?;
+    user_totp::enroll(&pool, &user.id, &stored).await?;
     tracing::info!(workspace = %workspace, user_id = %user.id, "TOTP enrolment started");
 
     Ok(Json(EnrollResponse {
@@ -133,7 +134,8 @@ pub async fn confirm(
         .await?
         .ok_or(ApiError::Core(CoreError::Unauthorized))?;
 
-    let totp = build_totp(&row.secret_b32, &workspace, &user.email)?;
+    let secret_b32 = secret_from_storage(&state, &row)?;
+    let totp = build_totp(&secret_b32, &workspace, &user.email)?;
     if !check_code(&totp, &body.code)? {
         return Err(ApiError::Core(CoreError::Unauthorized));
     }
@@ -167,7 +169,8 @@ pub async fn disable(
         .await?
         .ok_or(ApiError::Core(CoreError::Unauthorized))?;
 
-    let totp = build_totp(&row.secret_b32, &workspace, &user.email)?;
+    let secret_b32 = secret_from_storage(&state, &row)?;
+    let totp = build_totp(&secret_b32, &workspace, &user.email)?;
     if !check_code(&totp, &body.code)? {
         return Err(ApiError::Core(CoreError::Unauthorized));
     }
@@ -236,7 +239,8 @@ pub async fn login_totp(
         .login_attempts
         .check(&subject, &state.lockout_policy)?;
 
-    let totp = build_totp(&row.secret_b32, &workspace, &user.email)?;
+    let secret_b32 = secret_from_storage(&state, &row)?;
+    let totp = build_totp(&secret_b32, &workspace, &user.email)?;
     if !check_code(&totp, &body.code)? {
         let err = match state
             .login_attempts
@@ -361,6 +365,51 @@ pub async fn user_id_for_email_with_totp(
     };
     let enabled = is_user_totp_enabled(pool, &u.id).await?;
     Ok(Some((u.id, enabled)))
+}
+
+/// Wrap a freshly generated secret for storage. Encrypted when a KEK
+/// is configured, clear otherwise — enrolment is never refused for
+/// want of a key, because 2FA that exists beats 2FA that is
+/// unavailable, and whoever can read the file already holds the
+/// password hashes.
+fn secret_for_storage(
+    state: &AppState,
+    secret_b32: &str,
+) -> Result<user_totp::StoredSecret, ApiError> {
+    match state.oauth_kek.as_ref() {
+        Some(kek) => {
+            let ct = rustbase_auth::encrypt(secret_b32.as_bytes(), kek).map_err(|e| {
+                ApiError::Core(CoreError::Internal(format!("encrypt totp secret: {e}")))
+            })?;
+            Ok(user_totp::StoredSecret::Encrypted(ct))
+        }
+        None => Ok(user_totp::StoredSecret::Clear(secret_b32.to_string())),
+    }
+}
+
+/// Recover the base32 secret from a stored row. A row written under a
+/// key that is now missing is an error, never a silent fall back to
+/// treating the ciphertext as a secret — that would rebuild the very
+/// weakness this exists to remove.
+fn secret_from_storage(state: &AppState, row: &user_totp::UserTotp) -> Result<String, ApiError> {
+    match &row.secret {
+        user_totp::StoredSecret::Clear(s) => Ok(s.clone()),
+        user_totp::StoredSecret::Encrypted(ct) => {
+            let kek = state.oauth_kek.as_ref().as_ref().ok_or_else(|| {
+                ApiError::Core(CoreError::Unavailable(
+                    "this TOTP secret is encrypted but RUSTBASE_KEK is not set; \
+                     restore the key that enrolled it"
+                        .into(),
+                ))
+            })?;
+            let plain = rustbase_auth::decrypt(ct, kek).map_err(|e| {
+                ApiError::Core(CoreError::Internal(format!("decrypt totp secret: {e}")))
+            })?;
+            String::from_utf8(plain).map_err(|e| {
+                ApiError::Core(CoreError::Internal(format!("totp secret not utf-8: {e}")))
+            })
+        }
+    }
 }
 
 fn build_totp(secret_b32: &str, workspace: &str, account: &str) -> Result<TOTP, ApiError> {

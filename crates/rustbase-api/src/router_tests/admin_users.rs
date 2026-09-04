@@ -242,9 +242,13 @@ pub(super) async fn admin_reset_totp_clears_pending_enrolment() {
         .unwrap()
         .unwrap();
     // Plant a pending TOTP enrolment so we have something to clear.
-    rustbase_db::user_totp::enroll(&pool, &alice.id, "ABCDEF234567")
-        .await
-        .unwrap();
+    rustbase_db::user_totp::enroll(
+        &pool,
+        &alice.id,
+        &rustbase_db::user_totp::StoredSecret::Clear("ABCDEF234567".into()),
+    )
+    .await
+    .unwrap();
     assert!(
         rustbase_db::user_totp::find(&pool, &alice.id)
             .await

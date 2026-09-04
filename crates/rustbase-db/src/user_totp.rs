@@ -12,15 +12,25 @@
 //! - `disable`          removes the row outright. Re-enrolment goes
 //!   through `enroll` again, which means a fresh secret + QR scan.
 
-use crate::error::Result;
+use crate::error::{DbError, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::FromRow)]
+/// How the TOTP secret sits on disk. Unlike the one-shot tokens this
+/// cannot be a digest: validating a code needs the secret back, so it
+/// is either encrypted under the KEK or, when no key is configured,
+/// kept in clear and marked as such. Nothing downstream has to guess.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StoredSecret {
+    Clear(String),
+    Encrypted(Vec<u8>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserTotp {
     pub user_id: String,
-    pub secret_b32: String,
+    pub secret: StoredSecret,
     pub enrolled_at: DateTime<Utc>,
     pub confirmed_at: Option<DateTime<Utc>>,
     pub enabled: bool,
@@ -29,41 +39,77 @@ pub struct UserTotp {
 /// Create or replace the user's pending TOTP enrolment. Any prior
 /// row (pending or enabled) is overwritten — re-enrolment forces a
 /// new secret + QR scan, which is the desired UX.
-pub async fn enroll(pool: &SqlitePool, user_id: &str, secret_b32: &str) -> Result<UserTotp> {
+pub async fn enroll(pool: &SqlitePool, user_id: &str, secret: &StoredSecret) -> Result<UserTotp> {
     let now = Utc::now();
+    let (clear, enc) = match secret {
+        StoredSecret::Clear(s) => (Some(s.clone()), None),
+        StoredSecret::Encrypted(b) => (None, Some(b.clone())),
+    };
     sqlx::query(
-        "INSERT INTO _user_totp (user_id, secret_b32, enrolled_at, confirmed_at, enabled) \
-         VALUES (?, ?, ?, NULL, 0) \
+        "INSERT INTO _user_totp (user_id, secret_b32, secret_enc, enrolled_at, confirmed_at, enabled) \
+         VALUES (?, ?, ?, ?, NULL, 0) \
          ON CONFLICT(user_id) DO UPDATE SET \
              secret_b32 = excluded.secret_b32, \
+             secret_enc = excluded.secret_enc, \
              enrolled_at = excluded.enrolled_at, \
              confirmed_at = NULL, \
              enabled = 0",
     )
     .bind(user_id)
-    .bind(secret_b32)
+    .bind(clear)
+    .bind(enc)
     .bind(now)
     .execute(pool)
     .await?;
     Ok(UserTotp {
         user_id: user_id.into(),
-        secret_b32: secret_b32.into(),
+        secret: secret.clone(),
         enrolled_at: now,
         confirmed_at: None,
         enabled: false,
     })
 }
 
+type TotpRow = (
+    String,
+    Option<String>,
+    Option<Vec<u8>>,
+    DateTime<Utc>,
+    Option<DateTime<Utc>>,
+    bool,
+);
+
 pub async fn find(pool: &SqlitePool, user_id: &str) -> Result<Option<UserTotp>> {
-    let row: Option<UserTotp> = sqlx::query_as(
-        "SELECT user_id, secret_b32, enrolled_at, confirmed_at, \
+    let row: Option<TotpRow> = sqlx::query_as(
+        "SELECT user_id, secret_b32, secret_enc, enrolled_at, confirmed_at, \
                 CAST(enabled AS BOOLEAN) AS enabled \
          FROM _user_totp WHERE user_id = ?",
     )
     .bind(user_id)
     .fetch_optional(pool)
     .await?;
-    Ok(row)
+    let Some((user_id, clear, enc, enrolled_at, confirmed_at, enabled)) = row else {
+        return Ok(None);
+    };
+    // The schema's CHECK keeps exactly one of the two populated, so a
+    // row that satisfies neither means the table was written around
+    // this module. Say so rather than inventing a secret.
+    let secret = match (clear, enc) {
+        (Some(s), None) => StoredSecret::Clear(s),
+        (None, Some(b)) => StoredSecret::Encrypted(b),
+        _ => {
+            return Err(DbError::Invariant(format!(
+                "_user_totp row for {user_id} holds neither exactly one secret nor the other"
+            )));
+        }
+    };
+    Ok(Some(UserTotp {
+        user_id,
+        secret,
+        enrolled_at,
+        confirmed_at,
+        enabled,
+    }))
 }
 
 /// Flip a pending enrolment to enabled. Returns the number of rows
@@ -106,18 +152,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_encrypted_secret_leaves_no_clear_copy_behind() {
+        let (pool, user_id) = fresh().await;
+        enroll(&pool, &user_id, &StoredSecret::Encrypted(vec![1, 2, 3, 4]))
+            .await
+            .unwrap();
+
+        let (clear, enc): (Option<String>, Option<Vec<u8>>) =
+            sqlx::query_as("SELECT secret_b32, secret_enc FROM _user_totp")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            clear, None,
+            "a clear copy was kept alongside the ciphertext"
+        );
+        assert_eq!(enc, Some(vec![1, 2, 3, 4]));
+
+        let row = find(&pool, &user_id).await.unwrap().unwrap();
+        assert_eq!(row.secret, StoredSecret::Encrypted(vec![1, 2, 3, 4]));
+    }
+
+    /// Without a key-encryption key the secret is stored in clear
+    /// rather than enrolment being refused: 2FA that exists beats 2FA
+    /// that is unavailable. The row says so, so nothing downstream
+    /// has to guess.
+    #[tokio::test]
+    async fn a_clear_secret_is_stored_as_such_and_reads_back_marked() {
+        let (pool, user_id) = fresh().await;
+        enroll(&pool, &user_id, &StoredSecret::Clear("ABCDEF234567".into()))
+            .await
+            .unwrap();
+
+        let (clear, enc): (Option<String>, Option<Vec<u8>>) =
+            sqlx::query_as("SELECT secret_b32, secret_enc FROM _user_totp")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(clear.as_deref(), Some("ABCDEF234567"));
+        assert_eq!(enc, None);
+
+        let row = find(&pool, &user_id).await.unwrap().unwrap();
+        assert_eq!(row.secret, StoredSecret::Clear("ABCDEF234567".into()));
+    }
+
+    #[tokio::test]
     async fn enroll_creates_pending_row() {
         let (pool, uid) = fresh().await;
-        let row = enroll(&pool, &uid, "ABCDEF234567").await.unwrap();
+        let row = enroll(&pool, &uid, &StoredSecret::Clear("ABCDEF234567".into()))
+            .await
+            .unwrap();
         assert!(!row.enabled);
         assert!(row.confirmed_at.is_none());
-        assert_eq!(row.secret_b32, "ABCDEF234567");
+        assert_eq!(row.secret, StoredSecret::Clear("ABCDEF234567".into()));
     }
 
     #[tokio::test]
     async fn confirm_flips_enabled_and_sets_confirmed_at() {
         let (pool, uid) = fresh().await;
-        enroll(&pool, &uid, "SECRET").await.unwrap();
+        enroll(&pool, &uid, &StoredSecret::Clear("SECRET".into()))
+            .await
+            .unwrap();
         let n = confirm_enabled(&pool, &uid).await.unwrap();
         assert_eq!(n, 1);
         let row = find(&pool, &uid).await.unwrap().unwrap();
@@ -128,7 +223,9 @@ mod tests {
     #[tokio::test]
     async fn confirm_is_idempotent_on_already_enabled() {
         let (pool, uid) = fresh().await;
-        enroll(&pool, &uid, "SECRET").await.unwrap();
+        enroll(&pool, &uid, &StoredSecret::Clear("SECRET".into()))
+            .await
+            .unwrap();
         confirm_enabled(&pool, &uid).await.unwrap();
         // Second confirm doesn't change anything (clause `enabled = 0`).
         assert_eq!(confirm_enabled(&pool, &uid).await.unwrap(), 0);
@@ -137,12 +234,16 @@ mod tests {
     #[tokio::test]
     async fn enroll_again_resets_to_pending() {
         let (pool, uid) = fresh().await;
-        enroll(&pool, &uid, "FIRST").await.unwrap();
+        enroll(&pool, &uid, &StoredSecret::Clear("FIRST".into()))
+            .await
+            .unwrap();
         confirm_enabled(&pool, &uid).await.unwrap();
         // Re-enroll with a new secret -> pending again.
-        let row = enroll(&pool, &uid, "SECOND").await.unwrap();
+        let row = enroll(&pool, &uid, &StoredSecret::Clear("SECOND".into()))
+            .await
+            .unwrap();
         assert!(!row.enabled);
-        assert_eq!(row.secret_b32, "SECOND");
+        assert_eq!(row.secret, StoredSecret::Clear("SECOND".into()));
         let fetched = find(&pool, &uid).await.unwrap().unwrap();
         assert!(!fetched.enabled);
         assert!(fetched.confirmed_at.is_none());
@@ -151,7 +252,9 @@ mod tests {
     #[tokio::test]
     async fn disable_removes_the_row() {
         let (pool, uid) = fresh().await;
-        enroll(&pool, &uid, "SECRET").await.unwrap();
+        enroll(&pool, &uid, &StoredSecret::Clear("SECRET".into()))
+            .await
+            .unwrap();
         let n = disable(&pool, &uid).await.unwrap();
         assert_eq!(n, 1);
         assert!(find(&pool, &uid).await.unwrap().is_none());

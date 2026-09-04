@@ -49,6 +49,66 @@ pub(super) fn current_totp_code(secret_b32: &str) -> String {
     totp.generate_current().unwrap()
 }
 
+/// With a key configured, enrolment must leave no readable secret on
+/// disk — and the enrolled user must still be able to log in with it,
+/// which is what proves the round trip rather than just the absence.
+#[tokio::test]
+pub(super) async fn an_enrolled_secret_is_encrypted_at_rest_and_still_validates() {
+    let (state, _dir, _, user_tok) = state_with_collection_and_user().await;
+    assert!(
+        state.oauth_kek.is_some(),
+        "fixture must carry a KEK for this to mean anything"
+    );
+
+    let app = build_router(state.clone());
+    let resp = app
+        .oneshot(req_with_auth(
+            "POST",
+            "/api/workspaces/acme/auth/totp/enroll",
+            Some(&user_tok),
+            Some(&serde_json::json!({})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let secret_b32 = json_body(resp).await["secret_b32"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let pool = state
+        .workspaces
+        .pool_for(&rustbase_core::WorkspaceId::from("acme".to_string()))
+        .await
+        .unwrap();
+    let (clear, enc): (Option<String>, Option<Vec<u8>>) =
+        sqlx::query_as("SELECT secret_b32, secret_enc FROM _user_totp")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(clear, None, "the secret was stored in clear despite a KEK");
+    let ct = enc.expect("no ciphertext stored");
+    assert!(
+        !String::from_utf8_lossy(&ct).contains(&secret_b32),
+        "the ciphertext still contains the secret verbatim"
+    );
+
+    // The confirm step decrypts and checks a live code: if the round
+    // trip were broken, this would fail.
+    let code = current_totp_code(&secret_b32);
+    let app = build_router(state.clone());
+    let resp = app
+        .oneshot(req_with_auth(
+            "POST",
+            "/api/workspaces/acme/auth/totp/confirm",
+            Some(&user_tok),
+            Some(&serde_json::json!({ "code": code })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "decryption round trip broke");
+}
+
 #[tokio::test]
 pub(super) async fn totp_enroll_returns_secret_and_otpauth_url() {
     let (state, _dir, _, user_tok) = state_with_collection_and_user().await;

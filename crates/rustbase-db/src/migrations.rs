@@ -399,6 +399,35 @@ pub const WORKSPACE_MIGRATIONS: &[Migration] = &[
         ALTER TABLE _oauth_states RENAME COLUMN state TO state_hash;
         "#,
     ),
+    Migration::new(
+        "20260904_000003_totp_secret_at_rest",
+        MigrationScope::Workspace,
+        r#"
+        -- The TOTP secret can now be held encrypted under the KEK.
+        -- It is NOT hashed: validating a code requires the secret
+        -- itself, so it has to be recoverable.
+        --
+        -- Enrolment is never refused for want of a key: 2FA that
+        -- exists beats 2FA that is unavailable, and an attacker able
+        -- to read this file already holds the password hashes. The
+        -- row therefore records which protection applies, and the
+        -- CHECK makes "exactly one of the two" a property of the
+        -- schema rather than a convention.
+        CREATE TABLE _user_totp_new (
+            user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            secret_b32 TEXT,
+            secret_enc BLOB,
+            enrolled_at TEXT NOT NULL,
+            confirmed_at TEXT,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            CHECK ((secret_b32 IS NULL) <> (secret_enc IS NULL))
+        );
+        INSERT INTO _user_totp_new (user_id, secret_b32, secret_enc, enrolled_at, confirmed_at, enabled)
+            SELECT user_id, secret_b32, NULL, enrolled_at, confirmed_at, enabled FROM _user_totp;
+        DROP TABLE _user_totp;
+        ALTER TABLE _user_totp_new RENAME TO _user_totp;
+        "#,
+    ),
 ];
 
 pub const APP_MIGRATIONS: &[Migration] = &[
