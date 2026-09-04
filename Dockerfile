@@ -16,6 +16,11 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
 COPY ui/package.json ui/bun.lock ui/
 COPY ui/ ./ui/
+# `rustbase-server` embeds the OpenAPI spec with `include_str!`, so the
+# file has to exist at compile time. Without it the release build fails
+# here and only here — `cargo build` on a checkout never notices,
+# because the whole repository is present.
+COPY docs/reference/ ./docs/reference/
 
 # Build dashboard first so the include_dir! find it at compile time.
 RUN cd ui && bun install --frozen-lockfile && bun run build
@@ -33,6 +38,13 @@ RUN apt-get update \
  && useradd --create-home --uid 10001 rustbase
 
 COPY --from=builder /app/target/release/rustbase /usr/local/bin/rustbase
+
+# Create the data directory owned by the runtime user BEFORE declaring
+# it a volume. Docker materialises a VOLUME mountpoint as root when it
+# does not already exist in the image, and the server then cannot
+# create its SQLite files as uid 10001 — it exits on "unable to open
+# database file" the first time anyone runs the image plainly.
+RUN mkdir -p /home/rustbase/data && chown -R rustbase:rustbase /home/rustbase
 
 USER rustbase
 WORKDIR /home/rustbase
