@@ -241,9 +241,10 @@ pub async fn master_admin_login(
     );
     let access_token = state.jwt.issue(&claims)?;
 
-    let refresh = insert_refresh_token(
+    let issued = new_refresh_token();
+    insert_refresh_token(
         state.system.pool(),
-        &new_refresh_token(),
+        &issued,
         SubjectKind::MasterAdmin,
         &admin.id,
         default_refresh_ttl(),
@@ -265,7 +266,7 @@ pub async fn master_admin_login(
 
     let body = MasterLoginResponse {
         access_token: access_token.clone(),
-        refresh_token: refresh.token.clone(),
+        refresh_token: issued.clone(),
         admin: MasterAdminPublic {
             id: admin.id,
             username: admin.username,
@@ -273,12 +274,7 @@ pub async fn master_admin_login(
             name: admin.name,
         },
     };
-    Ok(with_session_cookies(
-        &state,
-        body,
-        &access_token,
-        &refresh.token,
-    ))
+    Ok(with_session_cookies(&state, body, &access_token, &issued))
 }
 
 pub async fn workspace_admin_login(
@@ -333,9 +329,10 @@ pub async fn workspace_admin_login(
     );
     let access_token = state.jwt.issue(&claims)?;
 
-    let refresh = insert_refresh_token(
+    let issued = new_refresh_token();
+    insert_refresh_token(
         &pool,
-        &new_refresh_token(),
+        &issued,
         SubjectKind::WorkspaceAdmin,
         &admin.id,
         default_refresh_ttl(),
@@ -357,19 +354,14 @@ pub async fn workspace_admin_login(
 
     let body = LoginResponse {
         access_token: access_token.clone(),
-        refresh_token: refresh.token.clone(),
+        refresh_token: issued.clone(),
         admin: AdminPublic {
             id: admin.id,
             email: admin.email,
             name: admin.name,
         },
     };
-    Ok(with_session_cookies(
-        &state,
-        body,
-        &access_token,
-        &refresh.token,
-    ))
+    Ok(with_session_cookies(&state, body, &access_token, &issued))
 }
 
 pub async fn user_login(
@@ -496,8 +488,8 @@ pub async fn user_login(
 
     // Bump users.last_login + insert the refresh row in one txn so the
     // happy path costs one fsync instead of two.
-    let refresh =
-        commit_user_login(&pool, &user.id, &new_refresh_token(), default_refresh_ttl()).await?;
+    let issued = new_refresh_token();
+    commit_user_login(&pool, &user.id, &issued, default_refresh_ttl()).await?;
 
     tracing::info!(workspace = %workspace, user_id = %user.id, "user login");
     record_audit(
@@ -533,17 +525,12 @@ pub async fn user_login(
 
     let body = UserLoginResponse::Tokens {
         access_token: access_token.clone(),
-        refresh_token: refresh.token.clone(),
+        refresh_token: issued.clone(),
         user: UserPublic {
             id: user.id,
             email: user.email,
             verified: user.verified,
         },
     };
-    Ok(with_session_cookies(
-        &state,
-        body,
-        &access_token,
-        &refresh.token,
-    ))
+    Ok(with_session_cookies(&state, body, &access_token, &issued))
 }

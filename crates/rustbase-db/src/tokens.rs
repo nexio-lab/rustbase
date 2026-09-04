@@ -8,7 +8,26 @@
 use crate::error::Result;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
+
+/// Hash a bearer secret for storage. Callers keep handing this module
+/// clear values; nothing but the digest ever reaches the disk, so no
+/// call site can forget to hash.
+///
+/// A bare SHA-256 is the right primitive here and a slow KDF is not:
+/// the inputs are 256-bit `OsRng` draws, so there is no guessable
+/// space to stretch. Salting is likewise absent by design, because
+/// lookup is by digest and a per-row salt would force a table scan.
+pub fn hash_token(token: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubjectKind {
@@ -31,7 +50,10 @@ impl SubjectKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::FromRow)]
 pub struct RefreshToken {
-    pub token: String,
+    /// SHA-256 digest of the token. The clear value exists only in the
+    /// response that hands it to the client; it is never persisted and
+    /// never read back.
+    pub token_hash: String,
     pub subject_kind: String,
     pub subject_id: String,
     pub issued_at: DateTime<Utc>,
@@ -51,10 +73,10 @@ pub async fn insert_refresh_token(
     let issued_at = Utc::now();
     let expires_at = issued_at + ttl;
     sqlx::query(
-        "INSERT INTO _refresh_tokens (token, subject_kind, subject_id, issued_at, expires_at, revoked) \
+        "INSERT INTO _refresh_tokens (token_hash, subject_kind, subject_id, issued_at, expires_at, revoked) \
          VALUES (?, ?, ?, ?, ?, 0)",
     )
-    .bind(token)
+    .bind(hash_token(token))
     .bind(subject_kind.as_str())
     .bind(subject_id)
     .bind(issued_at)
@@ -62,7 +84,7 @@ pub async fn insert_refresh_token(
     .execute(pool)
     .await?;
     Ok(RefreshToken {
-        token: token.to_string(),
+        token_hash: hash_token(token),
         subject_kind: subject_kind.as_str().to_string(),
         subject_id: subject_id.to_string(),
         issued_at,
@@ -79,12 +101,12 @@ pub async fn find_active_refresh_token(
     expected_kind: SubjectKind,
 ) -> Result<Option<RefreshToken>> {
     let row: Option<RefreshToken> = sqlx::query_as(
-        "SELECT token, subject_kind, subject_id, issued_at, expires_at, \
+        "SELECT token_hash, subject_kind, subject_id, issued_at, expires_at, \
                 CAST(revoked AS BOOLEAN) AS revoked \
          FROM _refresh_tokens \
-         WHERE token = ? AND subject_kind = ? AND revoked = 0 AND expires_at > ?",
+         WHERE token_hash = ? AND subject_kind = ? AND revoked = 0 AND expires_at > ?",
     )
-    .bind(token)
+    .bind(hash_token(token))
     .bind(expected_kind.as_str())
     .bind(Utc::now())
     .fetch_optional(pool)
@@ -93,8 +115,8 @@ pub async fn find_active_refresh_token(
 }
 
 pub async fn revoke_refresh_token(pool: &SqlitePool, token: &str) -> Result<()> {
-    sqlx::query("UPDATE _refresh_tokens SET revoked = 1 WHERE token = ?")
-        .bind(token)
+    sqlx::query("UPDATE _refresh_tokens SET revoked = 1 WHERE token_hash = ?")
+        .bind(hash_token(token))
         .execute(pool)
         .await?;
     Ok(())
@@ -119,10 +141,10 @@ pub async fn commit_user_login(
         .execute(&mut *tx)
         .await?;
     sqlx::query(
-        "INSERT INTO _refresh_tokens (token, subject_kind, subject_id, issued_at, expires_at, revoked) \
+        "INSERT INTO _refresh_tokens (token_hash, subject_kind, subject_id, issued_at, expires_at, revoked) \
          VALUES (?, ?, ?, ?, ?, 0)",
     )
-    .bind(refresh_token)
+    .bind(hash_token(refresh_token))
     .bind(SubjectKind::User.as_str())
     .bind(user_id)
     .bind(now)
@@ -131,7 +153,7 @@ pub async fn commit_user_login(
     .await?;
     tx.commit().await?;
     Ok(RefreshToken {
-        token: refresh_token.to_string(),
+        token_hash: hash_token(refresh_token),
         subject_kind: SubjectKind::User.as_str().to_string(),
         subject_id: user_id.to_string(),
         issued_at: now,
@@ -155,15 +177,15 @@ pub async fn rotate_refresh_token(
     let issued_at = Utc::now();
     let expires_at = issued_at + ttl;
     let mut tx = pool.begin().await?;
-    sqlx::query("UPDATE _refresh_tokens SET revoked = 1 WHERE token = ?")
-        .bind(old_token)
+    sqlx::query("UPDATE _refresh_tokens SET revoked = 1 WHERE token_hash = ?")
+        .bind(hash_token(old_token))
         .execute(&mut *tx)
         .await?;
     sqlx::query(
-        "INSERT INTO _refresh_tokens (token, subject_kind, subject_id, issued_at, expires_at, revoked) \
+        "INSERT INTO _refresh_tokens (token_hash, subject_kind, subject_id, issued_at, expires_at, revoked) \
          VALUES (?, ?, ?, ?, ?, 0)",
     )
-    .bind(new_token)
+    .bind(hash_token(new_token))
     .bind(subject_kind.as_str())
     .bind(subject_id)
     .bind(issued_at)
@@ -172,7 +194,7 @@ pub async fn rotate_refresh_token(
     .await?;
     tx.commit().await?;
     Ok(RefreshToken {
-        token: new_token.to_string(),
+        token_hash: hash_token(new_token),
         subject_kind: subject_kind.as_str().to_string(),
         subject_id: subject_id.to_string(),
         issued_at,
@@ -211,6 +233,74 @@ mod tests {
             .await
             .unwrap();
         pool
+    }
+
+    #[tokio::test]
+    async fn refresh_token_never_lands_on_disk_in_clear() {
+        let pool = fresh_pool().await;
+        let plaintext = "rfsh_0123456789abcdef";
+        insert_refresh_token(
+            &pool,
+            plaintext,
+            SubjectKind::MasterAdmin,
+            "admin-1",
+            Duration::hours(1),
+        )
+        .await
+        .unwrap();
+
+        let stored: String = sqlx::query_scalar("SELECT token_hash FROM _refresh_tokens")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_ne!(stored, plaintext, "refresh token stored in clear");
+        assert_eq!(stored, hash_token(plaintext));
+
+        let found = find_active_refresh_token(&pool, plaintext, SubjectKind::MasterAdmin)
+            .await
+            .unwrap();
+        assert!(
+            found.is_some(),
+            "token must stay findable by its clear value"
+        );
+    }
+
+    #[tokio::test]
+    async fn rotate_stores_the_new_token_hashed_too() {
+        let pool = fresh_pool().await;
+        insert_refresh_token(
+            &pool,
+            "rfsh_old",
+            SubjectKind::User,
+            "u1",
+            Duration::hours(1),
+        )
+        .await
+        .unwrap();
+        rotate_refresh_token(
+            &pool,
+            "rfsh_old",
+            "rfsh_new",
+            SubjectKind::User,
+            "u1",
+            Duration::hours(1),
+        )
+        .await
+        .unwrap();
+
+        let rows: Vec<String> = sqlx::query_scalar("SELECT token_hash FROM _refresh_tokens")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert!(!rows.iter().any(|r| r == "rfsh_old" || r == "rfsh_new"));
+        assert!(rows.contains(&hash_token("rfsh_new")));
+        assert!(
+            find_active_refresh_token(&pool, "rfsh_old", SubjectKind::User)
+                .await
+                .unwrap()
+                .is_none(),
+            "rotated-out token must no longer be active"
+        );
     }
 
     #[tokio::test]
@@ -309,7 +399,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(rotated.token, "rfsh_new");
+        assert_eq!(rotated.token_hash, hash_token("rfsh_new"));
         // old token no longer active
         let old = find_active_refresh_token(&pool, "rfsh_old", SubjectKind::MasterAdmin)
             .await
@@ -336,7 +426,7 @@ mod tests {
         let row = commit_user_login(&pool, &user.id, "rfsh_new", Duration::days(30))
             .await
             .unwrap();
-        assert_eq!(row.token, "rfsh_new");
+        assert_eq!(row.token_hash, hash_token("rfsh_new"));
         assert_eq!(row.subject_kind, "user");
         assert_eq!(row.subject_id, user.id);
 

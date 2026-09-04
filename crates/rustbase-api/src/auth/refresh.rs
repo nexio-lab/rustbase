@@ -91,10 +91,11 @@ async fn master_admin_refresh_inner(
             .await?
             .ok_or(ApiError::Core(CoreError::Unauthorized))?;
 
-    let new_refresh = rotate_refresh_token(
+    let issued = new_refresh_token();
+    rotate_refresh_token(
         state.system.pool(),
-        &existing.token,
-        &new_refresh_token(),
+        &presented,
+        &issued,
         SubjectKind::MasterAdmin,
         &existing.subject_id,
         default_refresh_ttl(),
@@ -112,7 +113,7 @@ async fn master_admin_refresh_inner(
 
     let body = RefreshResponse {
         access_token,
-        refresh_token: new_refresh.token,
+        refresh_token: issued,
     };
     Ok(with_session_cookies(&state, body))
 }
@@ -159,10 +160,11 @@ async fn user_refresh_inner(
         .await?
         .ok_or(ApiError::Core(CoreError::Unauthorized))?;
 
-    let new_refresh = rotate_refresh_token(
+    let issued = new_refresh_token();
+    rotate_refresh_token(
         &pool,
-        &existing.token,
-        &new_refresh_token(),
+        &presented,
+        &issued,
         SubjectKind::User,
         &existing.subject_id,
         default_refresh_ttl(),
@@ -181,7 +183,7 @@ async fn user_refresh_inner(
 
     let body = RefreshResponse {
         access_token,
-        refresh_token: new_refresh.token,
+        refresh_token: issued,
     };
     Ok(with_session_cookies(&state, body))
 }
@@ -213,10 +215,11 @@ async fn workspace_admin_refresh_inner(
         .await?
         .ok_or(ApiError::Core(CoreError::Unauthorized))?;
 
-    let new_refresh = rotate_refresh_token(
+    let issued = new_refresh_token();
+    rotate_refresh_token(
         &pool,
-        &existing.token,
-        &new_refresh_token(),
+        &presented,
+        &issued,
         SubjectKind::WorkspaceAdmin,
         &existing.subject_id,
         default_refresh_ttl(),
@@ -234,7 +237,7 @@ async fn workspace_admin_refresh_inner(
 
     let body = RefreshResponse {
         access_token,
-        refresh_token: new_refresh.token,
+        refresh_token: issued,
     };
     Ok(with_session_cookies(&state, body))
 }

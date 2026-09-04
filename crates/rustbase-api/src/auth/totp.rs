@@ -289,8 +289,8 @@ pub async fn login_totp(
     );
     let access_token = state.jwt.issue(&claims)?;
     // last_login + refresh insert in one txn.
-    let refresh =
-        commit_user_login(&pool, &user.id, &new_refresh_token(), default_refresh_ttl()).await?;
+    let issued = new_refresh_token();
+    commit_user_login(&pool, &user.id, &issued, default_refresh_ttl()).await?;
     tracing::info!(workspace = %workspace, user_id = %user.id, "user login (TOTP second step)");
     crate::auth::audit_events::record(
         &state,
@@ -309,7 +309,7 @@ pub async fn login_totp(
 
     Ok(Json(LoginTotpResponse {
         access_token,
-        refresh_token: refresh.token,
+        refresh_token: issued,
         user: UserPublic {
             id: user.id,
             email: user.email,

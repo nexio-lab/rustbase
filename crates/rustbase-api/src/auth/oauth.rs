@@ -240,8 +240,8 @@ pub async fn callback(
     );
     let access_token = app_state.jwt.issue(&claims)?;
     // last_login + refresh insert in one txn.
-    let refresh =
-        commit_user_login(&pool, &user.id, &new_refresh_token(), default_refresh_ttl()).await?;
+    let issued = new_refresh_token();
+    commit_user_login(&pool, &user.id, &issued, default_refresh_ttl()).await?;
 
     tracing::info!(
         workspace = %workspace,
@@ -263,7 +263,7 @@ pub async fn callback(
 
     Ok(Json(CallbackResponse {
         access_token,
-        refresh_token: refresh.token,
+        refresh_token: issued,
         user: UserPublic {
             id: user.id,
             email: user.email,

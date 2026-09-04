@@ -186,6 +186,19 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
             ON _refresh_tokens(subject_kind, subject_id);
         "#,
     ),
+    Migration::new(
+        "20260904_000001_hash_refresh_tokens",
+        MigrationScope::System,
+        r#"
+        -- Refresh tokens were stored in clear: a read of this file
+        -- handed over every live session. They are digests from here
+        -- on. Existing rows cannot be converted (SQLite has no
+        -- SHA-256), so they are dropped: everyone re-authenticates
+        -- once, which is the cheap half of the trade.
+        DELETE FROM _refresh_tokens;
+        ALTER TABLE _refresh_tokens RENAME COLUMN token TO token_hash;
+        "#,
+    ),
 ];
 
 pub const WORKSPACE_MIGRATIONS: &[Migration] = &[
@@ -345,6 +358,19 @@ pub const WORKSPACE_MIGRATIONS: &[Migration] = &[
     );
     CREATE INDEX mfa_challenges_user ON _mfa_challenges(user_id, consumed_at);
     "#,
+    ),
+    Migration::new(
+        "20260904_000001_hash_refresh_tokens",
+        MigrationScope::Workspace,
+        r#"
+        -- Refresh tokens were stored in clear: a read of this file
+        -- handed over every live session. They are digests from here
+        -- on. Existing rows cannot be converted (SQLite has no
+        -- SHA-256), so they are dropped: everyone re-authenticates
+        -- once, which is the cheap half of the trade.
+        DELETE FROM _refresh_tokens;
+        ALTER TABLE _refresh_tokens RENAME COLUMN token TO token_hash;
+        "#,
     ),
 ];
 
