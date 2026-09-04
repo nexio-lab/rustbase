@@ -47,6 +47,39 @@ echo "▶ bumping Cargo.toml → version = \"$V\""
 sed -i.bak '0,/^version = "[^"]*"$/{s//version = "'"$V"'"/}' Cargo.toml
 rm -f Cargo.toml.bak
 
+# ----- has the changelog kept up with the code? -----------------------
+# Rotating `[Unreleased]` publishes whatever it happens to contain. A
+# non-empty block is no proof it is complete: a release can carry code
+# whose entries were never written, and the omission becomes permanent
+# the moment the tag is pushed — the content of a file at a tag cannot
+# be corrected without moving the tag.
+#
+# The check is deliberately not textual. It asks one question a script
+# can answer exactly: did any code land AFTER the changelog was last
+# touched? If so the changelog cannot describe it.
+#
+# Escape hatch for the honest case (a refactor worth no entry):
+#   SKIP_CHANGELOG_CHECK=1 make release V=X.Y.Z
+if [[ "${SKIP_CHANGELOG_CHECK:-0}" != "1" ]]; then
+    LAST_TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+    RANGE="${LAST_TAG:+$LAST_TAG..}HEAD"
+    CHANGELOG_COMMIT="$(git log -1 --format=%H "$RANGE" -- CHANGELOG.md || true)"
+    SINCE="${CHANGELOG_COMMIT:-$LAST_TAG}"
+    CODE_AFTER="$(git log --format='  %h %s' "${SINCE:+$SINCE..}HEAD" \
+        -- crates ui/src sdks 2>/dev/null || true)"
+    if [ -n "$CODE_AFTER" ]; then
+        echo "✗ code landed after CHANGELOG.md was last updated:" >&2
+        echo "$CODE_AFTER" >&2
+        echo >&2
+        echo "  Their entries are missing from [Unreleased], and rotating it" >&2
+        echo "  now would publish a release that documents less than it" >&2
+        echo "  contains. Write them, or re-run with" >&2
+        echo "  SKIP_CHANGELOG_CHECK=1 if none of them warrants an entry." >&2
+        exit 1
+    fi
+    echo "▶ changelog: up to date with the code since ${LAST_TAG:-the first commit}"
+fi
+
 # ----- optionally regenerate [Unreleased] from git log ---------------
 # Default: leave the hand-written `## [Unreleased]` block alone. A
 # crafted changelog that explains *why* each change happened reads much
