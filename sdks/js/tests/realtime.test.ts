@@ -246,8 +246,12 @@ class FakeWebSocket {
 		this.fire('message', ev);
 	}
 	fireClose(code: number, reason: string): void {
-		const ev = new CloseEvent('close', { code, reason });
-		this.fire('close', ev);
+		// A plain object, not `new CloseEvent(...)`: that global only
+		// exists from Node 23 on, so building one here made the suite
+		// pass or fail according to whichever Node happened to run it.
+		// The listener under test reads `code` and `reason` and nothing
+		// else, so this carries exactly what the contract needs.
+		this.fire('close', { code, reason } as unknown as Event);
 	}
 	private fire(name: string, ev: Event): void {
 		const handlers = this.listeners[name] ?? [];

@@ -144,6 +144,15 @@ rustbase-storage = { path = "crates/rustbase-storage" }
 rustbase-runtime = { path = "crates/rustbase-runtime" }
 rustbase-api = { path = "crates/rustbase-api" }
 
+# Dependencies are compiled optimised even for `cargo test`. Argon2 is
+# the reason: at its default cost it is deliberately slow, and an
+# unoptimised build makes it slower still — every login test paid a
+# full unoptimised hash, which is most of the suite's wall clock. The
+# workspace crates themselves stay unoptimised, so debug info and
+# compile times for the code under test are unchanged.
+[profile.test.package."*"]
+opt-level = 3
+
 [profile.release]
 opt-level = 3
 lto = "thin"
