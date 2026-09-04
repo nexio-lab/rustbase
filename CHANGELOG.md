@@ -7,6 +7,51 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — BREAKING
+
+- **Bearer secrets are stored as SHA-256 digests, not in clear.**
+  A read of a `.db` file used to hand over every live session, every
+  pending password-reset and email-verification link, every in-flight
+  OTP code and OAuth state nonce. Seven columns now hold digests:
+  `_refresh_tokens.token → token_hash` (system + workspace scopes),
+  `_password_resets.token`, `_email_verifications.token`,
+  `_mfa_challenges.token` → `token_hash`, `_email_otps.code →
+  code_hash`, `_oauth_states.state → state_hash`. Hashing happens
+  inside `rustbase-db`, so callers keep passing clear values and no
+  call site can forget it. A bare SHA-256 is deliberate: the inputs
+  are 256-bit `OsRng` draws, so there is no guessable space a slow
+  KDF would stretch, and lookup stays O(1) on the digest.
+
+  **Operator impact, on first boot after upgrade:**
+  - **Every session is signed out once.** Migration
+    `20260904_000001_hash_refresh_tokens` drops the existing rows —
+    SQLite has no SHA-256, so stored clear tokens cannot be converted
+    in place. Users log in again; nothing else is lost.
+  - **Password-reset and email-verification links already sent stop
+    working**, as do OTP codes and OAuth flows mid-redirect
+    (`20260904_000002_hash_one_shot_secrets`). They have to be
+    requested again. All of these expire in minutes to hours anyway,
+    so pick a quiet window and the blast radius is small.
+
+  `_oauth_states.code_verifier` is deliberately left in clear: PKCE
+  requires sending it back to the provider, so it needs reversible
+  encryption rather than a digest. Same for `_user_totp.secret_b32`.
+  Both are still pending.
+
+### Fixed — SECURITY
+
+- **`$app.fetch` no longer follows redirects out of its allowlist.**
+  The workspace host allowlist was enforced once, before the request
+  left. An authorised host answering `302` carried the hook wherever
+  the `Location` header pointed — internal services and cloud
+  metadata endpoints included — because `reqwest` follows redirects
+  by default and never re-consults the allowlist. The client is now
+  built with `redirect::Policy::none()`; the redirect is handed back
+  to the JS caller, which can re-issue it through `$app.fetch` and
+  have it checked properly. Regression-locked by a test that stands
+  up two loopback servers, one on the allowlist redirecting to one
+  that is not.
+
 ### Added
 - **Observability — third wave: hooks, files, mailer.** Completes
   the domain-level metric surface promised by phase 10.
