@@ -7,13 +7,14 @@
 //! later attempt with the same token is rejected.
 
 use crate::error::Result;
+use crate::tokens::hash_token;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::FromRow)]
 pub struct EmailVerification {
-    pub token: String,
+    pub token_hash: String,
     pub user_id: String,
     pub issued_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
@@ -32,17 +33,17 @@ pub async fn issue(
     let issued_at = Utc::now();
     let expires_at = issued_at + ttl;
     sqlx::query(
-        "INSERT INTO _email_verifications (token, user_id, issued_at, expires_at, consumed_at) \
+        "INSERT INTO _email_verifications (token_hash, user_id, issued_at, expires_at, consumed_at) \
          VALUES (?, ?, ?, ?, NULL)",
     )
-    .bind(token)
+    .bind(hash_token(token))
     .bind(user_id)
     .bind(issued_at)
     .bind(expires_at)
     .execute(pool)
     .await?;
     Ok(EmailVerification {
-        token: token.to_string(),
+        token_hash: hash_token(token),
         user_id: user_id.to_string(),
         issued_at,
         expires_at,
@@ -54,10 +55,10 @@ pub async fn issue(
 /// path before deciding to consume.
 pub async fn find(pool: &SqlitePool, token: &str) -> Result<Option<EmailVerification>> {
     let row: Option<EmailVerification> = sqlx::query_as(
-        "SELECT token, user_id, issued_at, expires_at, consumed_at \
-         FROM _email_verifications WHERE token = ?",
+        "SELECT token_hash, user_id, issued_at, expires_at, consumed_at \
+         FROM _email_verifications WHERE token_hash = ?",
     )
-    .bind(token)
+    .bind(hash_token(token))
     .fetch_optional(pool)
     .await?;
     Ok(row)
@@ -92,10 +93,10 @@ pub async fn consume(pool: &SqlitePool, token: &str) -> Result<ConsumeOutcome> {
     }
     let result = sqlx::query(
         "UPDATE _email_verifications SET consumed_at = ? \
-         WHERE token = ? AND consumed_at IS NULL",
+         WHERE token_hash = ? AND consumed_at IS NULL",
     )
     .bind(now)
-    .bind(token)
+    .bind(hash_token(token))
     .execute(pool)
     .await?;
     // If a racing call also tried to consume the same token, our
@@ -122,6 +123,21 @@ mod tests {
             .unwrap();
         let user = insert_user(&pool, "ada@x.com", "hash").await.unwrap();
         (pool, user.id)
+    }
+
+    #[tokio::test]
+    async fn verification_token_never_lands_on_disk_in_clear() {
+        let (pool, user_id) = setup().await;
+        issue(&pool, "vrfy_clear", &user_id, Duration::hours(1))
+            .await
+            .unwrap();
+        let stored: String = sqlx::query_scalar("SELECT token_hash FROM _email_verifications")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_ne!(stored, "vrfy_clear");
+        assert_eq!(stored, crate::tokens::hash_token("vrfy_clear"));
+        assert!(find(&pool, "vrfy_clear").await.unwrap().is_some());
     }
 
     #[tokio::test]

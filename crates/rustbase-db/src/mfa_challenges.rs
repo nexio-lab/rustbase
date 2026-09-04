@@ -11,13 +11,14 @@
 //! semantics as the email-verification / password-reset tables.
 
 use crate::error::Result;
+use crate::tokens::hash_token;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::FromRow)]
 pub struct MfaChallenge {
-    pub token: String,
+    pub token_hash: String,
     pub user_id: String,
     pub issued_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
@@ -33,17 +34,17 @@ pub async fn issue(
     let issued_at = Utc::now();
     let expires_at = issued_at + ttl;
     sqlx::query(
-        "INSERT INTO _mfa_challenges (token, user_id, issued_at, expires_at, consumed_at) \
+        "INSERT INTO _mfa_challenges (token_hash, user_id, issued_at, expires_at, consumed_at) \
          VALUES (?, ?, ?, ?, NULL)",
     )
-    .bind(token)
+    .bind(hash_token(token))
     .bind(user_id)
     .bind(issued_at)
     .bind(expires_at)
     .execute(pool)
     .await?;
     Ok(MfaChallenge {
-        token: token.into(),
+        token_hash: hash_token(token),
         user_id: user_id.into(),
         issued_at,
         expires_at,
@@ -61,10 +62,10 @@ pub enum ConsumeOutcome {
 
 pub async fn consume(pool: &SqlitePool, token: &str) -> Result<ConsumeOutcome> {
     let row: Option<MfaChallenge> = sqlx::query_as(
-        "SELECT token, user_id, issued_at, expires_at, consumed_at \
-         FROM _mfa_challenges WHERE token = ?",
+        "SELECT token_hash, user_id, issued_at, expires_at, consumed_at \
+         FROM _mfa_challenges WHERE token_hash = ?",
     )
-    .bind(token)
+    .bind(hash_token(token))
     .fetch_optional(pool)
     .await?;
     let Some(row) = row else {
@@ -79,10 +80,10 @@ pub async fn consume(pool: &SqlitePool, token: &str) -> Result<ConsumeOutcome> {
     }
     let updated = sqlx::query(
         "UPDATE _mfa_challenges SET consumed_at = ? \
-         WHERE token = ? AND consumed_at IS NULL",
+         WHERE token_hash = ? AND consumed_at IS NULL",
     )
     .bind(now)
-    .bind(token)
+    .bind(hash_token(token))
     .execute(pool)
     .await?;
     if updated.rows_affected() == 0 {
@@ -107,6 +108,24 @@ mod tests {
             .unwrap();
         let u = insert_user(&pool, "ada@x.com", "hash").await.unwrap();
         (pool, u.id)
+    }
+
+    #[tokio::test]
+    async fn challenge_token_never_lands_on_disk_in_clear() {
+        let (pool, user_id) = fresh().await;
+        issue(&pool, "mfa_clear", &user_id, Duration::minutes(5))
+            .await
+            .unwrap();
+        let stored: String = sqlx::query_scalar("SELECT token_hash FROM _mfa_challenges")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_ne!(stored, "mfa_clear");
+        assert_eq!(stored, crate::tokens::hash_token("mfa_clear"));
+        assert!(matches!(
+            consume(&pool, "mfa_clear").await.unwrap(),
+            ConsumeOutcome::Ok { .. }
+        ));
     }
 
     #[tokio::test]

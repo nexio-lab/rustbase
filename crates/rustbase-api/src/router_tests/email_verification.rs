@@ -30,36 +30,10 @@ use crate::router::*;
 use axum::http::StatusCode;
 use tower::ServiceExt;
 
-/// Pull the token straight from the per-app DB. Avoids needing to
-/// downcast `Arc<dyn Mailer>` from AppState to read the body of
-/// the captured LogMailer message — the row that backs the email
-/// is the same string.
-pub(super) async fn read_pending_verification_token(
-    state: &AppState,
-    workspace: &str,
-    user_email: &str,
-) -> String {
-    let pool = state
-        .workspaces
-        .pool_for(&rustbase_core::WorkspaceId::from(workspace.to_string()))
-        .await
-        .unwrap();
-    let row: (String,) = sqlx::query_as(
-        "SELECT ev.token FROM _email_verifications ev \
-         JOIN users u ON u.id = ev.user_id \
-         WHERE u.email = ? AND ev.consumed_at IS NULL \
-         ORDER BY ev.issued_at DESC LIMIT 1",
-    )
-    .bind(user_email)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    row.0
-}
-
 #[tokio::test]
 pub(super) async fn verify_email_request_then_confirm_marks_user_verified() {
-    let (state, _dir, _, user_tok) = state_with_collection_and_user().await;
+    let (mut state, _dir, _, user_tok) = state_with_collection_and_user().await;
+    let mail = install_capturing_mailer(&mut state);
 
     // Step 1: user asks for a verification email.
     let app = build_router(state.clone());
@@ -75,7 +49,7 @@ pub(super) async fn verify_email_request_then_confirm_marks_user_verified() {
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
 
     // Step 2: pull the token, confirm it.
-    let token = read_pending_verification_token(&state, "acme", "u@acme.com").await;
+    let token = mail.last_token();
     let app = build_router(state.clone());
     let resp = app
         .oneshot(req_with_auth(
@@ -121,7 +95,8 @@ pub(super) async fn verify_email_confirm_with_unknown_token_returns_404() {
 
 #[tokio::test]
 pub(super) async fn verify_email_confirm_twice_second_call_409() {
-    let (state, _dir, _, user_tok) = state_with_collection_and_user().await;
+    let (mut state, _dir, _, user_tok) = state_with_collection_and_user().await;
+    let mail = install_capturing_mailer(&mut state);
 
     // Issue and consume.
     let app = build_router(state.clone());
@@ -133,7 +108,7 @@ pub(super) async fn verify_email_confirm_twice_second_call_409() {
     ))
     .await
     .unwrap();
-    let token = read_pending_verification_token(&state, "acme", "u@acme.com").await;
+    let token = mail.last_token();
     let app = build_router(state.clone());
     app.oneshot(req_with_auth(
         "POST",

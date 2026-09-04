@@ -16,6 +16,7 @@
 //! email at any time.
 
 use crate::error::Result;
+use crate::tokens::hash_token;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
@@ -28,7 +29,7 @@ const MAX_ATTEMPTS: i64 = 5;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::FromRow)]
 pub struct EmailOtp {
     pub id: i64,
-    pub code: String,
+    pub code_hash: String,
     pub email: String,
     pub issued_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
@@ -56,10 +57,10 @@ pub async fn issue(pool: &SqlitePool, code: &str, email: &str, ttl: Duration) ->
     .await?;
 
     let row: (i64,) = sqlx::query_as(
-        "INSERT INTO _email_otps (code, email, issued_at, expires_at, consumed_at, attempts) \
+        "INSERT INTO _email_otps (code_hash, email, issued_at, expires_at, consumed_at, attempts) \
          VALUES (?, ?, ?, ?, NULL, 0) RETURNING id",
     )
-    .bind(code)
+    .bind(hash_token(code))
     .bind(email)
     .bind(issued_at)
     .bind(expires_at)
@@ -69,7 +70,7 @@ pub async fn issue(pool: &SqlitePool, code: &str, email: &str, ttl: Duration) ->
 
     Ok(EmailOtp {
         id: row.0,
-        code: code.to_string(),
+        code_hash: hash_token(code),
         email: email.to_string(),
         issued_at,
         expires_at,
@@ -82,7 +83,7 @@ pub async fn issue(pool: &SqlitePool, code: &str, email: &str, ttl: Duration) ->
 /// tests and by `consume`.
 pub async fn current(pool: &SqlitePool, email: &str) -> Result<Option<EmailOtp>> {
     let row: Option<EmailOtp> = sqlx::query_as(
-        "SELECT id, code, email, issued_at, expires_at, consumed_at, attempts \
+        "SELECT id, code_hash, email, issued_at, expires_at, consumed_at, attempts \
          FROM _email_otps \
          WHERE email = ? AND consumed_at IS NULL \
          ORDER BY issued_at DESC LIMIT 1",
@@ -127,7 +128,7 @@ pub async fn consume(pool: &SqlitePool, email: &str, code: &str) -> Result<Consu
             .await?;
         return Ok(ConsumeOutcome::Expired);
     }
-    if row.code == code {
+    if row.code_hash == hash_token(code) {
         let updated = sqlx::query(
             "UPDATE _email_otps SET consumed_at = ? \
              WHERE id = ? AND consumed_at IS NULL",
@@ -179,6 +180,24 @@ mod tests {
             .await
             .unwrap();
         pool
+    }
+
+    #[tokio::test]
+    async fn otp_code_never_lands_on_disk_in_clear() {
+        let pool = fresh().await;
+        issue(&pool, "123456", "ada@x.com", Duration::minutes(10))
+            .await
+            .unwrap();
+        let stored: String = sqlx::query_scalar("SELECT code_hash FROM _email_otps")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_ne!(stored, "123456");
+        assert_eq!(stored, crate::tokens::hash_token("123456"));
+        assert!(matches!(
+            consume(&pool, "ada@x.com", "123456").await.unwrap(),
+            ConsumeOutcome::Ok { .. }
+        ));
     }
 
     #[tokio::test]

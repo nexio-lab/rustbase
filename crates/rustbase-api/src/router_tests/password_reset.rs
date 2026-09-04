@@ -30,32 +30,10 @@ use crate::router::*;
 use axum::http::StatusCode;
 use tower::ServiceExt;
 
-pub(super) async fn read_pending_reset_token(
-    state: &AppState,
-    workspace: &str,
-    user_email: &str,
-) -> String {
-    let pool = state
-        .workspaces
-        .pool_for(&rustbase_core::WorkspaceId::from(workspace.to_string()))
-        .await
-        .unwrap();
-    let row: (String,) = sqlx::query_as(
-        "SELECT pr.token FROM _password_resets pr \
-         JOIN users u ON u.id = pr.user_id \
-         WHERE u.email = ? AND pr.consumed_at IS NULL \
-         ORDER BY pr.issued_at DESC LIMIT 1",
-    )
-    .bind(user_email)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    row.0
-}
-
 #[tokio::test]
 pub(super) async fn password_reset_request_then_confirm_changes_password() {
-    let (state, _dir, _, _) = state_with_collection_and_user().await;
+    let (mut state, _dir, _, _) = state_with_collection_and_user().await;
+    let mail = install_capturing_mailer(&mut state);
     // Original password from state_with_collection_and_user is "userpass1".
 
     // 1. Request reset.
@@ -72,7 +50,7 @@ pub(super) async fn password_reset_request_then_confirm_changes_password() {
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
 
     // 2. Pull token + confirm with new password.
-    let token = read_pending_reset_token(&state, "acme", "u@acme.com").await;
+    let token = mail.last_token();
     let app = build_router(state.clone());
     let resp = app
         .oneshot(req_with_auth(
@@ -147,7 +125,8 @@ pub(super) async fn password_reset_request_for_unknown_email_still_returns_202()
 pub(super) async fn password_reset_confirm_invalidates_siblings() {
     // Issue two tokens for the same user; consuming one must
     // make the other return 409 instead of 200.
-    let (state, _dir, _, _) = state_with_collection_and_user().await;
+    let (mut state, _dir, _, _) = state_with_collection_and_user().await;
+    let mail = install_capturing_mailer(&mut state);
     let app = build_router(state.clone());
     app.oneshot(req_with_auth(
         "POST",
@@ -157,7 +136,7 @@ pub(super) async fn password_reset_confirm_invalidates_siblings() {
     ))
     .await
     .unwrap();
-    let first = read_pending_reset_token(&state, "acme", "u@acme.com").await;
+    let first = mail.last_token();
 
     let app = build_router(state.clone());
     app.oneshot(req_with_auth(
@@ -168,7 +147,7 @@ pub(super) async fn password_reset_confirm_invalidates_siblings() {
     ))
     .await
     .unwrap();
-    let second = read_pending_reset_token(&state, "acme", "u@acme.com").await;
+    let second = mail.last_token();
     assert_ne!(first, second);
 
     // Consume the second; the first must then be dead.
@@ -199,7 +178,8 @@ pub(super) async fn password_reset_confirm_invalidates_siblings() {
 
 #[tokio::test]
 pub(super) async fn password_reset_confirm_rejects_weak_password() {
-    let (state, _dir, _, _) = state_with_collection_and_user().await;
+    let (mut state, _dir, _, _) = state_with_collection_and_user().await;
+    let mail = install_capturing_mailer(&mut state);
     let app = build_router(state.clone());
     app.oneshot(req_with_auth(
         "POST",
@@ -209,7 +189,7 @@ pub(super) async fn password_reset_confirm_rejects_weak_password() {
     ))
     .await
     .unwrap();
-    let token = read_pending_reset_token(&state, "acme", "u@acme.com").await;
+    let token = mail.last_token();
     let app = build_router(state);
     let resp = app
         .oneshot(req_with_auth(

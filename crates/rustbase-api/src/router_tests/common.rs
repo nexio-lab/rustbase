@@ -19,6 +19,67 @@ use std::sync::atomic::AtomicBool;
 use tempfile::tempdir;
 use tower::ServiceExt;
 
+/// Test mailer that keeps every message it is handed, so a spec can
+/// read a one-shot secret the way a user does: out of the email.
+/// Reaching into the database is no longer an option — those columns
+/// hold digests now.
+#[derive(Default)]
+pub(super) struct CapturingMailer {
+    sent: std::sync::Mutex<Vec<rustbase_core::EmailMessage>>,
+}
+
+impl CapturingMailer {
+    /// The one-shot token carried by the most recent message. Reset
+    /// and verification tokens are 32 random bytes rendered as hex,
+    /// alone on their own line, so that shape is what we look for —
+    /// matching on "a line without spaces" would happily return the
+    /// "Hello," greeting.
+    pub(super) fn last_token(&self) -> String {
+        let sent = self.sent.lock().unwrap();
+        let msg = sent.last().expect("no email was sent");
+        msg.text
+            .lines()
+            .map(str::trim)
+            .find(|l| l.len() == 64 && l.chars().all(|c| c.is_ascii_hexdigit()))
+            .expect("no 64-hex-char token line in the email body")
+            .to_string()
+    }
+
+    /// The one-time login code carried by the most recent message.
+    /// OTP codes are six digits, indented on their own line, so they
+    /// need a shape of their own: `last_token` looks for 64 hex
+    /// characters and would never match one.
+    pub(super) fn last_code(&self) -> String {
+        let sent = self.sent.lock().unwrap();
+        let msg = sent.last().expect("no email was sent");
+        msg.text
+            .lines()
+            .map(str::trim)
+            .find(|l| l.len() == 6 && l.chars().all(|c| c.is_ascii_digit()))
+            .expect("no 6-digit code line in the email body")
+            .to_string()
+    }
+}
+
+#[async_trait::async_trait]
+impl rustbase_core::Mailer for CapturingMailer {
+    async fn send(
+        &self,
+        msg: rustbase_core::EmailMessage,
+    ) -> Result<(), rustbase_core::MailerError> {
+        self.sent.lock().unwrap().push(msg);
+        Ok(())
+    }
+}
+
+/// Swap the state's mailer for a capturing one and hand back the
+/// handle, so the spec can read what was actually emailed.
+pub(super) fn install_capturing_mailer(state: &mut AppState) -> Arc<CapturingMailer> {
+    let mailer = Arc::new(CapturingMailer::default());
+    state.mailer = mailer.clone();
+    mailer
+}
+
 pub(super) async fn fresh_state() -> (AppState, tempfile::TempDir) {
     let dir = tempdir().unwrap();
     let system = SystemPool::open(dir.path()).await.unwrap();

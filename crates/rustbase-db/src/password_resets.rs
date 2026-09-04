@@ -7,13 +7,14 @@
 //! consume() machinery prevents replay.
 
 use crate::error::Result;
+use crate::tokens::hash_token;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::FromRow)]
 pub struct PasswordReset {
-    pub token: String,
+    pub token_hash: String,
     pub user_id: String,
     pub issued_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
@@ -31,17 +32,17 @@ pub async fn issue(
     let issued_at = Utc::now();
     let expires_at = issued_at + ttl;
     sqlx::query(
-        "INSERT INTO _password_resets (token, user_id, issued_at, expires_at, consumed_at) \
+        "INSERT INTO _password_resets (token_hash, user_id, issued_at, expires_at, consumed_at) \
          VALUES (?, ?, ?, ?, NULL)",
     )
-    .bind(token)
+    .bind(hash_token(token))
     .bind(user_id)
     .bind(issued_at)
     .bind(expires_at)
     .execute(pool)
     .await?;
     Ok(PasswordReset {
-        token: token.to_string(),
+        token_hash: hash_token(token),
         user_id: user_id.to_string(),
         issued_at,
         expires_at,
@@ -51,10 +52,10 @@ pub async fn issue(
 
 pub async fn find(pool: &SqlitePool, token: &str) -> Result<Option<PasswordReset>> {
     let row: Option<PasswordReset> = sqlx::query_as(
-        "SELECT token, user_id, issued_at, expires_at, consumed_at \
-         FROM _password_resets WHERE token = ?",
+        "SELECT token_hash, user_id, issued_at, expires_at, consumed_at \
+         FROM _password_resets WHERE token_hash = ?",
     )
-    .bind(token)
+    .bind(hash_token(token))
     .fetch_optional(pool)
     .await?;
     Ok(row)
@@ -86,10 +87,10 @@ pub async fn consume(pool: &SqlitePool, token: &str) -> Result<ConsumeOutcome> {
     }
     let result = sqlx::query(
         "UPDATE _password_resets SET consumed_at = ? \
-         WHERE token = ? AND consumed_at IS NULL",
+         WHERE token_hash = ? AND consumed_at IS NULL",
     )
     .bind(now)
-    .bind(token)
+    .bind(hash_token(token))
     .execute(pool)
     .await?;
     if result.rows_affected() == 0 {
@@ -130,6 +131,21 @@ mod tests {
             .unwrap();
         let user = insert_user(&pool, "ada@x.com", "hash").await.unwrap();
         (pool, user.id)
+    }
+
+    #[tokio::test]
+    async fn reset_token_never_lands_on_disk_in_clear() {
+        let (pool, user_id) = setup().await;
+        issue(&pool, "prst_clear", &user_id, Duration::hours(1))
+            .await
+            .unwrap();
+        let stored: String = sqlx::query_scalar("SELECT token_hash FROM _password_resets")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_ne!(stored, "prst_clear");
+        assert_eq!(stored, crate::tokens::hash_token("prst_clear"));
+        assert!(find(&pool, "prst_clear").await.unwrap().is_some());
     }
 
     #[tokio::test]

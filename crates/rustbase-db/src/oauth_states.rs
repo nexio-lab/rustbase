@@ -8,13 +8,14 @@
 //! is mostly useless by the time anyone notices.
 
 use crate::error::Result;
+use crate::tokens::hash_token;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::FromRow)]
 pub struct OAuthState {
-    pub state: String,
+    pub state_hash: String,
     pub provider: String,
     pub redirect_uri: String,
     pub issued_at: DateTime<Utc>,
@@ -39,10 +40,10 @@ pub async fn issue(
     let expires_at = issued_at + ttl;
     sqlx::query(
         "INSERT INTO _oauth_states \
-            (state, provider, redirect_uri, issued_at, expires_at, consumed_at, code_verifier) \
+            (state_hash, provider, redirect_uri, issued_at, expires_at, consumed_at, code_verifier) \
          VALUES (?, ?, ?, ?, ?, NULL, ?)",
     )
-    .bind(state)
+    .bind(hash_token(state))
     .bind(provider)
     .bind(redirect_uri)
     .bind(issued_at)
@@ -51,7 +52,7 @@ pub async fn issue(
     .execute(pool)
     .await?;
     Ok(OAuthState {
-        state: state.into(),
+        state_hash: hash_token(state),
         provider: provider.into(),
         redirect_uri: redirect_uri.into(),
         issued_at,
@@ -83,10 +84,10 @@ pub enum ConsumeOutcome {
 
 pub async fn consume(pool: &SqlitePool, state: &str, provider: &str) -> Result<ConsumeOutcome> {
     let row: Option<OAuthState> = sqlx::query_as(
-        "SELECT state, provider, redirect_uri, issued_at, expires_at, consumed_at, code_verifier \
-         FROM _oauth_states WHERE state = ?",
+        "SELECT state_hash, provider, redirect_uri, issued_at, expires_at, consumed_at, code_verifier \
+         FROM _oauth_states WHERE state_hash = ?",
     )
-    .bind(state)
+    .bind(hash_token(state))
     .fetch_optional(pool)
     .await?;
     let Some(row) = row else {
@@ -104,10 +105,10 @@ pub async fn consume(pool: &SqlitePool, state: &str, provider: &str) -> Result<C
     }
     let updated = sqlx::query(
         "UPDATE _oauth_states SET consumed_at = ? \
-         WHERE state = ? AND consumed_at IS NULL",
+         WHERE state_hash = ? AND consumed_at IS NULL",
     )
     .bind(now)
-    .bind(state)
+    .bind(hash_token(state))
     .execute(pool)
     .await?;
     if updated.rows_affected() == 0 {
@@ -131,6 +132,31 @@ mod tests {
             .await
             .unwrap();
         pool
+    }
+
+    #[tokio::test]
+    async fn state_nonce_never_lands_on_disk_in_clear() {
+        let pool = fresh().await;
+        issue(
+            &pool,
+            "st_clear",
+            "google",
+            "https://app/cb",
+            "verifier",
+            Duration::minutes(10),
+        )
+        .await
+        .unwrap();
+        let stored: String = sqlx::query_scalar("SELECT state_hash FROM _oauth_states")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_ne!(stored, "st_clear");
+        assert_eq!(stored, crate::tokens::hash_token("st_clear"));
+        assert!(matches!(
+            consume(&pool, "st_clear", "google").await.unwrap(),
+            ConsumeOutcome::Ok { .. }
+        ));
     }
 
     #[tokio::test]

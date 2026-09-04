@@ -30,28 +30,6 @@ use crate::router::*;
 use axum::http::StatusCode;
 use tower::ServiceExt;
 
-pub(super) async fn read_pending_otp_code(
-    state: &AppState,
-    workspace: &str,
-    email: &str,
-) -> String {
-    let pool = state
-        .workspaces
-        .pool_for(&rustbase_core::WorkspaceId::from(workspace.to_string()))
-        .await
-        .unwrap();
-    let row: (String,) = sqlx::query_as(
-        "SELECT code FROM _email_otps \
-         WHERE email = ? AND consumed_at IS NULL \
-         ORDER BY issued_at DESC LIMIT 1",
-    )
-    .bind(email)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    row.0
-}
-
 /// Bootstrap up to "workspace 'acme' exists" without registering any
 /// user — OTP can sign people up so we don't want the test fixture
 /// pre-creating one.
@@ -62,7 +40,8 @@ pub(super) async fn state_with_empty_realm() -> (AppState, tempfile::TempDir) {
 
 #[tokio::test]
 pub(super) async fn otp_request_then_login_signs_up_brand_new_user() {
-    let (state, _dir) = state_with_empty_realm().await;
+    let (mut state, _dir) = state_with_empty_realm().await;
+    let mail = install_capturing_mailer(&mut state);
 
     // 1. New email asks for a code.
     let app = build_router(state.clone());
@@ -78,7 +57,7 @@ pub(super) async fn otp_request_then_login_signs_up_brand_new_user() {
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
 
     // 2. Pull the code from the DB, redeem it.
-    let code = read_pending_otp_code(&state, "acme", "new@acme.com").await;
+    let code = mail.last_code();
     let app = build_router(state.clone());
     let resp = app
         .oneshot(req_with_auth(
@@ -141,7 +120,8 @@ pub(super) async fn otp_login_with_wrong_code_returns_400_with_attempts_left() {
 
 #[tokio::test]
 pub(super) async fn otp_request_invalidates_prior_pending_code() {
-    let (state, _dir) = state_with_empty_realm().await;
+    let (mut state, _dir) = state_with_empty_realm().await;
+    let mail = install_capturing_mailer(&mut state);
     let app = build_router(state.clone());
     app.oneshot(req_with_auth(
         "POST",
@@ -151,7 +131,7 @@ pub(super) async fn otp_request_invalidates_prior_pending_code() {
     ))
     .await
     .unwrap();
-    let first = read_pending_otp_code(&state, "acme", "a@acme.com").await;
+    let first = mail.last_code();
 
     let app = build_router(state.clone());
     app.oneshot(req_with_auth(
@@ -162,7 +142,7 @@ pub(super) async fn otp_request_invalidates_prior_pending_code() {
     ))
     .await
     .unwrap();
-    let second = read_pending_otp_code(&state, "acme", "a@acme.com").await;
+    let second = mail.last_code();
 
     assert_ne!(first, second, "second request must mint a fresh code");
 
@@ -216,7 +196,8 @@ pub(super) async fn otp_login_unknown_email_returns_409_no_enumeration() {
 pub(super) async fn otp_login_signs_in_existing_password_user_too() {
     // A user who registered with a password can ALSO use OTP — the
     // OTP path doesn't require password_hash to be NULL.
-    let (state, _dir, _, _) = state_with_collection_and_user().await;
+    let (mut state, _dir, _, _) = state_with_collection_and_user().await;
+    let mail = install_capturing_mailer(&mut state);
     // state_with_collection_and_user registered u@acme.com with a
     // password. Request an OTP for the SAME email:
     let app = build_router(state.clone());
@@ -228,7 +209,7 @@ pub(super) async fn otp_login_signs_in_existing_password_user_too() {
     ))
     .await
     .unwrap();
-    let code = read_pending_otp_code(&state, "acme", "u@acme.com").await;
+    let code = mail.last_code();
     let app = build_router(state.clone());
     let resp = app
         .oneshot(req_with_auth(

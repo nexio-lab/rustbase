@@ -372,6 +372,33 @@ pub const WORKSPACE_MIGRATIONS: &[Migration] = &[
         ALTER TABLE _refresh_tokens RENAME COLUMN token TO token_hash;
         "#,
     ),
+    Migration::new(
+        "20260904_000002_hash_one_shot_secrets",
+        MigrationScope::Workspace,
+        r#"
+        -- Same reasoning as the refresh tokens: these are bearer
+        -- secrets, and a read of this file handed them over. Rows in
+        -- flight are dropped rather than converted (no SHA-256 in
+        -- SQL); a pending reset or verification link simply has to be
+        -- requested again. `_oauth_states.code_verifier` stays in
+        -- clear on purpose: PKCE requires sending it back to the
+        -- provider, so it needs encryption, not a digest.
+        DELETE FROM _password_resets;
+        ALTER TABLE _password_resets RENAME COLUMN token TO token_hash;
+
+        DELETE FROM _email_verifications;
+        ALTER TABLE _email_verifications RENAME COLUMN token TO token_hash;
+
+        DELETE FROM _email_otps;
+        ALTER TABLE _email_otps RENAME COLUMN code TO code_hash;
+
+        DELETE FROM _mfa_challenges;
+        ALTER TABLE _mfa_challenges RENAME COLUMN token TO token_hash;
+
+        DELETE FROM _oauth_states;
+        ALTER TABLE _oauth_states RENAME COLUMN state TO state_hash;
+        "#,
+    ),
 ];
 
 pub const APP_MIGRATIONS: &[Migration] = &[

@@ -187,7 +187,8 @@ pub(super) async fn user_after_login_hook_does_not_see_password_hash() {
 pub(super) async fn user_after_register_and_login_both_fire_on_otp_signup() {
     // OTP signup creates a brand-new user — register + login
     // events should both fire from the same /otp/login call.
-    let (state, _dir, _tok) = state_with_app_and_collection().await;
+    let (mut state, _dir, _tok) = state_with_app_and_collection().await;
+    let mail = install_capturing_mailer(&mut state);
     plant_hook_in_app(
         &state,
         "acme",
@@ -208,22 +209,7 @@ pub(super) async fn user_after_register_and_login_both_fire_on_otp_signup() {
     ))
     .await
     .unwrap();
-    let code = {
-        let pool = state
-            .workspaces
-            .pool_for(&rustbase_core::WorkspaceId::from("acme".to_string()))
-            .await
-            .unwrap();
-        let row: (String,) = sqlx::query_as(
-            "SELECT code FROM _email_otps WHERE email = ? AND consumed_at IS NULL \
-             ORDER BY issued_at DESC LIMIT 1",
-        )
-        .bind("fresh@acme.com")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        row.0
-    };
+    let code = mail.last_code();
 
     let app = build_router(state.clone());
     let resp = app
