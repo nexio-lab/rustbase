@@ -33,12 +33,82 @@ versioning follows [Semantic Versioning](https://semver.org/).
     requested again. All of these expire in minutes to hours anyway,
     so pick a quiet window and the blast radius is small.
 
-  `_oauth_states.code_verifier` is deliberately left in clear: PKCE
-  requires sending it back to the provider, so it needs reversible
-  encryption rather than a digest. Same for `_user_totp.secret_b32`.
-  Both are still pending.
+  `_oauth_states.code_verifier` is the one secret deliberately left
+  in clear: PKCE requires sending it back to the provider, so it
+  needs reversible encryption rather than a digest. Still pending —
+  its lifetime is the few minutes between `/authorize` and
+  `/callback`. `_user_totp.secret_b32` had the same shape and is
+  handled below.
+
+- **`RUSTBASE_KEK` moves the key-encryption key out of the data
+  directory.** The key that encrypts at-rest secrets used to be
+  generated on first boot and filed in `system.db._secrets`, i.e. the
+  same file as the ciphertext it protects: anyone able to read the
+  data directory held both halves. The key is now read from
+  `RUSTBASE_KEK` (32 hex bytes — `openssl rand -hex 32`).
+
+  **Operator impact:**
+  - **Existing installs keep working.** With the variable unset, the
+    stored key is still used and every boot logs a warning saying why
+    that is not enough. Set `RUSTBASE_KEK` to the current key to
+    silence it, or rotate.
+  - **A fresh install still boots without the variable** — most
+    deployments never configure OAuth. What is refused is *storing* a
+    secret: `PUT .../oauth/providers/{provider}` with a
+    `client_secret` returns `503` naming the variable, rather than
+    encrypting under a key filed beside the ciphertext.
+  - A secret written under a key that is later missing is an error,
+    never a silent fall back to clear.
+
+- **TOTP secrets are encrypted at rest when a key is configured.**
+  `_user_totp` is rebuilt with `secret_b32` (clear) and `secret_enc`
+  (AES-GCM under the KEK) plus a `CHECK` making "exactly one of the
+  two" a property of the schema rather than a convention. Existing
+  rows migrate as clear.
+
+  Enrolment is deliberately **not** refused when no key is
+  configured: 2FA that exists beats 2FA that is unavailable, and
+  whoever can read the file already holds the password hashes.
+  Without a key the secret is stored in clear and the row says so.
+  Reading a row marked encrypted while the key is missing is an
+  error.
+
+  Unlike the tokens above this cannot be a digest — validating a code
+  needs the secret back.
 
 ### Fixed — SECURITY
+
+- **`$app.fetch` bodies are capped at 8 MiB.** The response was
+  accumulated on the Rust side before any of it reached JS, so the
+  hook's 64 MiB QuickJS heap bounded nothing: an authorised host
+  answering with gigabytes took the process down with it. The read
+  now streams and stops at the ceiling. `Content-Length` is ignored
+  on purpose — it is upstream-supplied and can lie or be absent.
+
+- **`$app.fetch` fails shut when its HTTP client cannot be built.**
+  The previous fallback quietly substituted a default `reqwest`
+  client — one that follows redirects and carries no timeout — so a
+  construction failure silently undid both guarantees the configured
+  client exists to provide.
+
+- **File downloads are always attachments.** Uploads were served back
+  with the MIME type the uploader declared, from the API's own origin
+  — the one carrying the `rb_at` cookie. An uploaded `text/html` file
+  therefore ran as first-party script; `nosniff` is no defence, since
+  the type is asserted rather than guessed. Every download now
+  carries `Content-Disposition: attachment`, with the filename quoted
+  and stripped of anything that could inject header parameters. The
+  `Content-Type` is unchanged.
+
+- **The rate limiter can key on the forwarded client address.** It
+  keyed on the peer address only, so behind the reverse proxy the
+  deployment guide recommends, every request looked like it came from
+  the proxy: the entire traffic shared one bucket, one client could
+  exhaust it for everyone, and per-client brute-force limiting did
+  not exist. New `trust_proxy_headers` under `[rate_limit]`,
+  **off by default** — trusting `X-Forwarded-For` on a directly
+  exposed server would let any caller mint a fresh identity per
+  request and escape the limiter entirely.
 
 - **`$app.fetch` no longer follows redirects out of its allowlist.**
   The workspace host allowlist was enforced once, before the request
