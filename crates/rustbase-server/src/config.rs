@@ -159,6 +159,16 @@ pub struct RateLimitConfig {
     /// throttles.
     #[serde(default = "default_rate_limit_burst")]
     pub burst: u32,
+    /// Key the limiter on `X-Forwarded-For` / `X-Real-IP` /
+    /// `Forwarded` rather than the peer address.
+    ///
+    /// Turn this on ONLY when a proxy you control sits in front and
+    /// overwrites those headers. Directly exposed, it lets any caller
+    /// forge a new identity per request and bypass the limiter. Left
+    /// off behind a proxy, every request looks like it comes from the
+    /// proxy, so the whole traffic shares one bucket.
+    #[serde(default)]
+    pub trust_proxy_headers: bool,
 }
 
 impl Default for RateLimitConfig {
@@ -167,6 +177,7 @@ impl Default for RateLimitConfig {
             enabled: default_rate_limit_enabled(),
             per_second: default_rate_limit_per_second(),
             burst: default_rate_limit_burst(),
+            trust_proxy_headers: false,
         }
     }
 }

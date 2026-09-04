@@ -35,6 +35,61 @@ use axum::{
 };
 use tower::ServiceExt;
 
+/// An uploaded file is served back from the API's own origin, the one
+/// that carries the `rb_at` cookie. Handing back `text/html` inline
+/// would let an uploaded page run as first-party script; `nosniff`
+/// does not help, since the type is declared rather than guessed.
+/// Every download therefore comes back as an attachment.
+#[tokio::test]
+pub(super) async fn download_is_always_an_attachment_never_inline() {
+    let (state, _dir, _, workspace_admin_id) = state_with_workspace_and_admin().await;
+    let tok = workspace_token(&state, "acme", &workspace_admin_id);
+
+    let app = build_router(state.clone());
+    app.oneshot(req_with_auth(
+        "POST",
+        "/api/workspaces/acme/apps",
+        Some(&tok),
+        Some(&serde_json::json!({"id":"mobile","name":"M"})),
+    ))
+    .await
+    .unwrap();
+
+    let app = build_router(state.clone());
+    let req = Request::builder()
+        .uri("/api/workspaces/acme/apps/mobile/files")
+        .method("POST")
+        .header("authorization", format!("Bearer {tok}"))
+        .header("content-type", "text/html")
+        .header("x-filename", "payload.html")
+        .body(Body::from(b"<script>alert(1)</script>".to_vec()))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let id = json_body(resp).await["id"].as_str().unwrap().to_string();
+
+    let app = build_router(state.clone());
+    let resp = app
+        .oneshot(req_with_auth(
+            "GET",
+            &format!("/api/workspaces/acme/apps/mobile/files/{id}"),
+            Some(&tok),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let disposition = resp
+        .headers()
+        .get("content-disposition")
+        .map(|v| v.to_str().unwrap().to_string())
+        .expect("download must carry a Content-Disposition");
+    assert!(
+        disposition.starts_with("attachment"),
+        "html upload served inline; got: {disposition}"
+    );
+}
+
 #[tokio::test]
 pub(super) async fn file_upload_then_download_round_trip() {
     let (state, _dir, _, workspace_admin_id) = state_with_workspace_and_admin().await;

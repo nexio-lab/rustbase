@@ -124,6 +124,19 @@ pub async fn download(
         .parse()
         .unwrap_or_else(|_| header::HeaderValue::from_static("file"));
     resp.headers_mut().insert("x-filename", filename);
+    // Never inline. Uploads are served from the API's own origin, the
+    // one holding the session cookie, and the stored MIME type is
+    // whatever the uploader declared — `text/html` included. `nosniff`
+    // is no defence here: the type is asserted, not sniffed. Forcing
+    // an attachment keeps a stored document from ever executing as
+    // first-party script.
+    let disposition = quoted_attachment(&meta.filename);
+    resp.headers_mut().insert(
+        header::CONTENT_DISPOSITION,
+        disposition
+            .parse()
+            .unwrap_or_else(|_| header::HeaderValue::from_static("attachment")),
+    );
     Ok(resp)
 }
 
@@ -180,6 +193,23 @@ fn storage_key(workspace: &str, app: &str, file_id: &str) -> String {
     format!("workspaces/{workspace}/apps/{app}/storage/{file_id}")
 }
 
+/// `Content-Disposition` value for a stored file. The filename is
+/// quoted and any character that could break out of the quoted string
+/// is dropped, so a crafted upload name cannot inject header
+/// parameters.
+fn quoted_attachment(filename: &str) -> String {
+    let safe: String = filename
+        .chars()
+        .filter(|c| !matches!(c, '"' | '\\' | '\r' | '\n') && !c.is_control())
+        .take(200)
+        .collect();
+    if safe.is_empty() {
+        "attachment".to_string()
+    } else {
+        format!("attachment; filename=\"{safe}\"")
+    }
+}
+
 async fn open_app_pool(
     state: &AppState,
     workspace: &str,
@@ -200,4 +230,29 @@ async fn open_app_pool(
     })?;
     let app_id = AppId::from(app.to_string());
     Ok(state.apps.pool_for(&workspace_id, &app_id).await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_crafted_filename_cannot_inject_header_parameters() {
+        let hostile = "in\"; filename*=utf-8''evil.html\r\nX-Injected: 1";
+        let value = quoted_attachment(hostile);
+        assert!(value.starts_with("attachment; filename=\""));
+        assert!(!value.contains('\r'), "CR survived: {value}");
+        assert!(!value.contains('\n'), "LF survived: {value}");
+        assert_eq!(
+            value.matches('"').count(),
+            2,
+            "quotes are unbalanced, the filename escaped its own field: {value}"
+        );
+    }
+
+    #[test]
+    fn a_filename_with_nothing_usable_left_still_yields_a_valid_header() {
+        assert_eq!(quoted_attachment("\"\"\""), "attachment");
+        assert_eq!(quoted_attachment(""), "attachment");
+    }
 }

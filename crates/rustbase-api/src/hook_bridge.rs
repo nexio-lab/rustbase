@@ -215,6 +215,13 @@ impl AuditBridge for ApiAuditBridge {
     }
 }
 
+/// Ceiling on a single `$app.fetch` response body. The hook's own
+/// 64 MiB QuickJS heap does not cover this: the bytes pile up on the
+/// Rust side before any of them reach JS. Generous for an API call,
+/// small enough that a hostile or broken upstream cannot exhaust the
+/// process.
+const MAX_FETCH_BODY_BYTES: usize = 8 * 1024 * 1024;
+
 /// HTTP-fetch bridge for `$app.fetch(url, init)`.
 ///
 /// Holds a shared `reqwest::Client` so connection-pooling persists
@@ -223,7 +230,10 @@ impl AuditBridge for ApiAuditBridge {
 /// `RuntimeError::Forbidden` before any network IO happens. Empty
 /// allowlist = `$app.fetch` is effectively disabled.
 pub struct ApiFetchBridge {
-    client: reqwest::Client,
+    /// `None` when the HTTP client could not be built. `request`
+    /// then fails shut rather than falling back to a default client,
+    /// which would follow redirects and carry no timeout.
+    client: Option<reqwest::Client>,
     allowed_hosts: Vec<String>,
 }
 
@@ -244,7 +254,7 @@ impl ApiFetchBridge {
             .timeout(Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::none())
             .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .ok();
         Arc::new(Self {
             client,
             allowed_hosts,
@@ -271,16 +281,20 @@ impl FetchBridge for ApiFetchBridge {
                 req.url
             )));
         }
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| RuntimeError::Internal("fetch: HTTP client unavailable".to_string()))?;
         let method = reqwest::Method::from_bytes(req.method.as_bytes())
             .map_err(|e| RuntimeError::Internal(format!("bad method: {e}")))?;
-        let mut builder = self.client.request(method, &req.url);
+        let mut builder = client.request(method, &req.url);
         for (k, v) in &req.headers {
             builder = builder.header(k, v);
         }
         if !req.body.is_empty() {
             builder = builder.body(req.body);
         }
-        let client = self.client.clone();
+        let client = client.clone();
         let request = builder
             .build()
             .map_err(|e| RuntimeError::Internal(format!("build request: {e}")))?;
@@ -297,10 +311,28 @@ impl FetchBridge for ApiFetchBridge {
                 v.to_str().unwrap_or("").to_string(),
             );
         }
+        // Read in chunks and stop at the ceiling. `Content-Length` is
+        // not consulted: it is upstream-supplied and a body can
+        // exceed, or simply omit, it.
         let body_bytes = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async move { resp.bytes().await })
+            tokio::runtime::Handle::current().block_on(async move {
+                let mut acc: Vec<u8> = Vec::new();
+                let mut resp = resp;
+                while let Some(chunk) = resp.chunk().await? {
+                    if acc.len() + chunk.len() > MAX_FETCH_BODY_BYTES {
+                        return Ok(None);
+                    }
+                    acc.extend_from_slice(&chunk);
+                }
+                Ok::<Option<Vec<u8>>, reqwest::Error>(Some(acc))
+            })
         })
-        .map_err(|e| RuntimeError::Internal(format!("read body: {e}")))?;
+        .map_err(|e| RuntimeError::Internal(format!("read body: {e}")))?
+        .ok_or_else(|| {
+            RuntimeError::Internal(format!(
+                "fetch: response body too large (over {MAX_FETCH_BODY_BYTES} bytes)"
+            ))
+        })?;
         let body = String::from_utf8_lossy(&body_bytes).to_string();
         Ok(FetchResponse {
             status,
@@ -369,6 +401,68 @@ mod tests {
         assert_eq!(
             resp.status, 307,
             "the redirect itself should be handed back to the hook"
+        );
+    }
+
+    /// If the HTTP client could not be built, `$app.fetch` must fail
+    /// shut. The previous fallback quietly handed back a default
+    /// client — one that follows redirects and has no timeout — so a
+    /// construction failure silently undid both guarantees the
+    /// configured client exists to provide.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_bridge_without_a_client_refuses_instead_of_fetching() {
+        let (port, _srv) =
+            serve(Router::new().route("/x", get(|| async { "REACHED-ANYWAY".into_response() })))
+                .await;
+
+        let bridge = ApiFetchBridge {
+            client: None,
+            allowed_hosts: vec!["127.0.0.1".to_string()],
+        };
+        let err = bridge
+            .request(FetchRequest {
+                method: "GET".into(),
+                url: format!("http://127.0.0.1:{port}/x"),
+                headers: BTreeMap::new(),
+                body: Vec::new(),
+            })
+            .expect_err("a bridge with no client must not reach the network");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("unavailable"),
+            "expected an explicit unavailability, got: {msg}"
+        );
+    }
+
+    /// The hook's 64 MiB QuickJS heap does not bound this: the body is
+    /// accumulated on the Rust side first. An authorised host that
+    /// answers with gigabytes would take the whole server down with
+    /// it, so the read stops at the cap and fails loudly.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_oversized_response_body_is_refused_rather_than_buffered() {
+        let oversized = "x".repeat(MAX_FETCH_BODY_BYTES + 1024);
+        let (port, _srv) = serve(Router::new().route(
+            "/big",
+            get(move || {
+                let oversized = oversized.clone();
+                async move { oversized.into_response() }
+            }),
+        ))
+        .await;
+
+        let bridge = ApiFetchBridge::new(vec!["127.0.0.1".to_string()]);
+        let err = bridge
+            .request(FetchRequest {
+                method: "GET".into(),
+                url: format!("http://127.0.0.1:{port}/big"),
+                headers: BTreeMap::new(),
+                body: Vec::new(),
+            })
+            .expect_err("an over-cap body must not be returned to the hook");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("too large"),
+            "expected a size refusal, got: {msg}"
         );
     }
 }

@@ -45,6 +45,19 @@ max_age_secs = 600
 enabled = true
 per_second = 50
 burst = 100
+# Key the limiter on the client address forwarded by a proxy
+# (`X-Forwarded-For`, `X-Real-IP`, `Forwarded`) instead of the address
+# RustBase sees on the socket.
+#
+# Turn this on ONLY when a proxy you control sits in front and
+# overwrites those headers. Exposed directly, it lets any caller mint a
+# fresh identity per request and slip past the limiter entirely.
+#
+# Leave it off behind a proxy and the opposite bites: every request
+# carries the proxy's own address, so all your traffic shares a single
+# bucket — one noisy client throttles everyone, and per-client
+# brute-force limiting stops working.
+trust_proxy_headers = false
 
 # Per-subject auth lockout. After `max_failures` rejected credential
 # attempts inside `window_secs`, the subject (master admin / realm
