@@ -85,13 +85,18 @@ async fn main() -> Result<()> {
     // OAuth client_secret encryption key. Generated once at first boot
     // and persisted; loaded as-is on subsequent boots so existing
     // ciphertexts in oauth_providers stay decryptable.
-    let fresh_kek = rustbase_auth::fresh_kek();
-    let kek_bytes = get_or_init_secret(system.pool(), "oauth_kek", &fresh_kek).await?;
-    let oauth_kek: [u8; 32] = kek_bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("oauth_kek persisted at wrong length"))?;
-    let oauth_kek = Arc::new(oauth_kek);
+    let stored_kek = rustbase_db::secrets::get_secret(system.pool(), "oauth_kek").await?;
+    let kek =
+        rustbase_auth::resolve_kek(std::env::var("RUSTBASE_KEK").ok().as_deref(), stored_kek)?;
+    if matches!(kek, rustbase_auth::KekSource::FromDatabaseLegacy(_)) {
+        tracing::warn!(
+            "kek: RUSTBASE_KEK is unset, falling back to the key stored in \
+             system.db. That key sits in the same file as the secrets it \
+             encrypts, so anyone who can read the data directory holds both. \
+             Set RUSTBASE_KEK to the current key to silence this, or rotate."
+        );
+    }
+    let oauth_kek = Arc::new(kek.key());
 
     // Optional: generate litestream.yml at boot when replication is enabled.
     if cfg.litestream.enabled {
@@ -243,14 +248,24 @@ async fn main() -> Result<()> {
             rustbase_api::middleware::rate_limit::RateLimitConfig {
                 per_second: cfg.rate_limit.per_second,
                 burst: cfg.rate_limit.burst,
+                trust_proxy_headers: cfg.rate_limit.trust_proxy_headers,
             },
         ) {
             Some(layer) => {
-                app = app.layer(layer);
+                use rustbase_api::middleware::rate_limit::RateLimitLayers;
+                app = match layer {
+                    RateLimitLayers::PeerIp(l) => app.layer(l),
+                    RateLimitLayers::ForwardedIp(l) => app.layer(l),
+                };
                 tracing::info!(
                     per_second = cfg.rate_limit.per_second,
                     burst = cfg.rate_limit.burst,
-                    "rate-limit: enabled (per-IP)"
+                    keyed_on = if cfg.rate_limit.trust_proxy_headers {
+                        "forwarded-ip"
+                    } else {
+                        "peer-ip"
+                    },
+                    "rate-limit: enabled"
                 );
             }
             None => {

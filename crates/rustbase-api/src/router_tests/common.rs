@@ -108,7 +108,7 @@ pub(super) async fn fresh_state() -> (AppState, tempfile::TempDir) {
         data_dir: Arc::new(data_dir),
         initialized: Arc::new(AtomicBool::new(false)),
         mailer: Arc::new(crate::mailer::LogMailer::new()),
-        oauth_kek: Arc::new(rustbase_auth::fresh_kek()),
+        oauth_kek: Arc::new(Some(rustbase_auth::fresh_kek())),
         storage,
         login_attempts: crate::security::LoginAttempts::new(),
         lockout_policy: crate::security::LockoutPolicy::default(),

@@ -30,6 +30,13 @@ pub enum CoreError {
     #[error("conflict: {0}")]
     Conflict(String),
 
+    /// A prerequisite the operator has to supply is missing, so the
+    /// request cannot be served — and would not be servable by
+    /// retrying. Distinct from `Internal`: nothing is broken, the
+    /// deployment is simply incomplete.
+    #[error("unavailable: {0}")]
+    Unavailable(String),
+
     /// Rate limit or account lockout. The wrapped value is the number of
     /// seconds the client should wait before retrying; surfaced as the
     /// `Retry-After` HTTP header at the API boundary.

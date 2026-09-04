@@ -45,6 +45,34 @@ pub(super) fn provider_body() -> serde_json::Value {
     })
 }
 
+/// Without a key-encryption key there is nowhere safe to put a
+/// client secret. Generating one into the data directory is the very
+/// defect `RUSTBASE_KEK` exists to remove, so the write is refused
+/// and the operator is told which variable to set.
+#[tokio::test]
+pub(super) async fn storing_a_client_secret_without_a_kek_is_refused() {
+    let (mut state, _dir, _, workspace_admin_id) = state_with_workspace_and_admin().await;
+    state.oauth_kek = std::sync::Arc::new(None);
+    let tok = workspace_token(&state, "acme", &workspace_admin_id);
+
+    let app = build_router(state);
+    let resp = app
+        .oneshot(req_with_auth(
+            "PUT",
+            "/api/workspaces/acme/auth/oauth/providers/google",
+            Some(&tok),
+            Some(&provider_body()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = json_body(resp).await.to_string();
+    assert!(
+        body.contains("RUSTBASE_KEK"),
+        "the operator is not told what to set: {body}"
+    );
+}
+
 #[tokio::test]
 pub(super) async fn oauth_admin_put_then_get_returns_provider_without_secret() {
     let (state, _dir, master_id, _realm_admin_id) = state_with_workspace_and_admin().await;
@@ -123,7 +151,7 @@ pub(super) async fn oauth_admin_stored_secret_is_encrypted_at_rest() {
         "raw row leaks plaintext: {as_str:?}"
     );
     // Sanity: KEK-aware decrypt round-trips.
-    let pt = rustbase_auth::decrypt(&ct, state.oauth_kek.as_ref()).unwrap();
+    let pt = rustbase_auth::decrypt(&ct, state.oauth_kek.as_ref().as_ref().unwrap()).unwrap();
     assert_eq!(pt, b"shh-very-secret");
 }
 
@@ -376,7 +404,7 @@ pub(super) async fn oauth_admin_put_without_secret_preserves_existing_ciphertext
             .fetch_one(&pool)
             .await
             .unwrap();
-    let pt = rustbase_auth::decrypt(&ct, state.oauth_kek.as_ref()).unwrap();
+    let pt = rustbase_auth::decrypt(&ct, state.oauth_kek.as_ref().as_ref().unwrap()).unwrap();
     assert_eq!(pt, b"shh-very-secret");
     // And the new client_id stuck.
     let app = build_router(state);

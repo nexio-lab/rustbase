@@ -40,12 +40,17 @@ pub struct AppState {
     /// Outbound mail. In tests this is a `LogMailer` that captures
     /// messages in memory; in production it's an SMTP-backed impl.
     pub mailer: Arc<dyn Mailer>,
-    /// 32-byte KEK that encrypts at-rest secrets stored across the
-    /// system / workspace / app DBs — currently the OAuth provider
-    /// `client_secret`. Persisted in `system.db._secrets.oauth_kek`
-    /// (generated once on first boot, then re-loaded). Stored as an
-    /// `Arc<[u8; 32]>` so handlers can clone the slice cheaply.
-    pub oauth_kek: Arc<[u8; 32]>,
+    /// 32-byte KEK that encrypts at-rest secrets — currently the
+    /// OAuth provider `client_secret`. Read from `RUSTBASE_KEK`, or
+    /// from `system.db._secrets.oauth_kek` on installs that predate
+    /// the variable.
+    ///
+    /// `None` when neither exists. The server still boots — most
+    /// deployments never configure OAuth — but storing a secret is
+    /// then refused: minting a key into the data directory would put
+    /// it in the same file as the ciphertext, which protects nothing
+    /// against whoever can read those files.
+    pub oauth_kek: Arc<Option<[u8; 32]>>,
     /// File storage backend. Either a local directory rooted at
     /// `data_dir` or an S3-compatible bucket — picked by config at
     /// boot. Handlers use it with scoped keys of the form

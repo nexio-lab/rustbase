@@ -54,6 +54,7 @@ impl IntoResponse for ApiError {
                 CoreError::Validation(_) => (StatusCode::BAD_REQUEST, "validation"),
                 CoreError::PolicyViolation { .. } => (StatusCode::CONFLICT, "policy_violation"),
                 CoreError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
+                CoreError::Unavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
                 CoreError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
                 CoreError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
                 CoreError::TooManyRequests { retry_after_secs } => {

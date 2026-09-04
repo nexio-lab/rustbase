@@ -167,7 +167,14 @@ pub async fn callback(
         }))?;
 
     // Decrypt the at-rest client_secret with the server-wide KEK.
-    let client_secret_bytes = rustbase_auth::decrypt(&cfg.secret_enc, app_state.oauth_kek.as_ref())
+    let kek = app_state.oauth_kek.as_ref().as_ref().ok_or_else(|| {
+        ApiError::Core(CoreError::Unavailable(
+            "no key-encryption key: set RUSTBASE_KEK to the value this \
+             provider's secret was encrypted with"
+                .into(),
+        ))
+    })?;
+    let client_secret_bytes = rustbase_auth::decrypt(&cfg.secret_enc, kek)
         .map_err(|e| ApiError::Core(CoreError::Internal(format!("decrypt client_secret: {e}"))))?;
     let client_secret = String::from_utf8(client_secret_bytes)
         .map_err(|e| ApiError::Core(CoreError::Internal(format!("client_secret utf8: {e}"))))?;

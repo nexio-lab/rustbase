@@ -106,7 +106,15 @@ pub async fn put(
 
     let secret_enc = match body.client_secret.as_deref().filter(|s| !s.is_empty()) {
         Some(plain) => {
-            rustbase_auth::encrypt(plain.as_bytes(), state.oauth_kek.as_ref()).map_err(|e| {
+            let kek = state.oauth_kek.as_ref().as_ref().ok_or_else(|| {
+                ApiError::Core(CoreError::Unavailable(
+                    "no key-encryption key: set RUSTBASE_KEK (32 hex bytes, \
+                     e.g. `openssl rand -hex 32`) before storing an OAuth \
+                     client secret"
+                        .into(),
+                ))
+            })?;
+            rustbase_auth::encrypt(plain.as_bytes(), kek).map_err(|e| {
                 ApiError::Core(CoreError::Internal(format!("encrypt client_secret: {e}")))
             })?
         }

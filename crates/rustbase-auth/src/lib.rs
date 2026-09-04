@@ -18,5 +18,5 @@ pub use error::{AuthError, Result};
 pub use jwt::{Jwks, JwksKey, JwtIssuer, RsaSigningKey, generate_rsa_with_pkcs8};
 pub use password::{hash_password, verify_password};
 pub use revocation::{RevocationSet, SubjectKey};
-pub use secret_box::{SecretBoxError, decrypt, encrypt, fresh_kek};
+pub use secret_box::{KekSource, SecretBoxError, decrypt, encrypt, fresh_kek, resolve_kek};
 pub use token::{Claims, SigningKey, TokenRole, build_claims, decode_token, encode_token};

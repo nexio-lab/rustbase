@@ -31,6 +31,8 @@ pub enum SecretBoxError {
     EncryptFailed,
     #[error("aes-gcm decrypt failed: wrong key or tampered ciphertext")]
     DecryptFailed,
+    #[error("{0}")]
+    BadKey(String),
 }
 
 const NONCE_LEN: usize = 12;
@@ -76,9 +78,125 @@ pub fn fresh_kek() -> [u8; KEY_LEN] {
     k
 }
 
+/// Where the key-encryption key came from. The caller needs to know:
+/// a legacy key is a nag, an environment key is the healthy state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KekSource {
+    /// Read from `RUSTBASE_KEK`. Lives outside the data directory,
+    /// which is the point.
+    FromEnv([u8; KEY_LEN]),
+    /// Read from `system.db._secrets`, i.e. the same file as the
+    /// ciphertext it protects. Kept working so existing installs are
+    /// not stranded; the caller should warn on every boot.
+    FromDatabaseLegacy([u8; KEY_LEN]),
+    /// No key anywhere: fresh install, variable unset. The server
+    /// still boots — most deployments never touch OAuth — but any
+    /// attempt to store an encrypted secret must be refused rather
+    /// than served by a key generated into the data directory.
+    Absent,
+}
+
+impl KekSource {
+    pub fn key(&self) -> Option<[u8; KEY_LEN]> {
+        match self {
+            KekSource::FromEnv(k) | KekSource::FromDatabaseLegacy(k) => Some(*k),
+            KekSource::Absent => None,
+        }
+    }
+}
+
+/// Decide which key-encryption key to use, given the environment
+/// variable and whatever is already persisted.
+///
+/// Kept free of IO so the four cases can be exercised directly. The
+/// refusal in the last case is deliberate: generating a key and
+/// filing it beside the data it protects is the defect this exists to
+/// remove, and doing it silently on a fresh install would carry the
+/// defect forward forever.
+pub fn resolve_kek(
+    env_value: Option<&str>,
+    stored: Option<Vec<u8>>,
+) -> Result<KekSource, SecretBoxError> {
+    if let Some(raw) = env_value {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            return Err(SecretBoxError::BadKey(
+                "RUSTBASE_KEK is set but empty; unset it or give it 32 hex-encoded bytes".into(),
+            ));
+        }
+        let bytes = decode_hex_key(raw)?;
+        return Ok(KekSource::FromEnv(bytes));
+    }
+    if let Some(stored) = stored {
+        let bytes: [u8; KEY_LEN] = stored.as_slice().try_into().map_err(|_| {
+            SecretBoxError::BadKey("stored key-encryption key has the wrong length".into())
+        })?;
+        return Ok(KekSource::FromDatabaseLegacy(bytes));
+    }
+    Ok(KekSource::Absent)
+}
+
+fn decode_hex_key(raw: &str) -> Result<[u8; KEY_LEN], SecretBoxError> {
+    if raw.len() != KEY_LEN * 2 {
+        return Err(SecretBoxError::BadKey(format!(
+            "RUSTBASE_KEK must be {} hex characters ({} bytes), got {}",
+            KEY_LEN * 2,
+            KEY_LEN,
+            raw.len()
+        )));
+    }
+    let mut out = [0u8; KEY_LEN];
+    for (i, slot) in out.iter_mut().enumerate() {
+        *slot = u8::from_str_radix(&raw[i * 2..i * 2 + 2], 16)
+            .map_err(|_| SecretBoxError::BadKey("RUSTBASE_KEK is not valid hex".into()))?;
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn hex32(byte: u8) -> String {
+        (0..32).map(|_| format!("{byte:02x}")).collect()
+    }
+
+    /// `RUSTBASE_KEK` wins whenever it is set: it is the whole point
+    /// of the variable, keeping the key off the disk that holds the
+    /// ciphertext.
+    #[test]
+    fn the_environment_key_takes_precedence_over_the_stored_one() {
+        let stored = vec![0xAAu8; KEY_LEN];
+        let got = resolve_kek(Some(&hex32(0xBB)), Some(stored)).unwrap();
+        assert_eq!(got, KekSource::FromEnv([0xBB; KEY_LEN]));
+    }
+
+    /// An existing install already has ciphertext under the stored
+    /// key. Refusing to boot would strand it, so the stored key keeps
+    /// working — the caller is expected to say so loudly.
+    #[test]
+    fn an_existing_install_without_the_variable_keeps_its_stored_key() {
+        let stored = vec![0xAAu8; KEY_LEN];
+        let got = resolve_kek(None, Some(stored)).unwrap();
+        assert_eq!(got, KekSource::FromDatabaseLegacy([0xAA; KEY_LEN]));
+    }
+
+    /// A fresh install still boots — most deployments never touch
+    /// OAuth — but it must not silently generate a key and file it
+    /// next to what it protects. No key is reported as no key; the
+    /// refusal belongs at the point a secret would be stored.
+    #[test]
+    fn a_fresh_install_without_the_variable_reports_no_key() {
+        assert_eq!(resolve_kek(None, None).unwrap(), KekSource::Absent);
+        assert_eq!(resolve_kek(None, None).unwrap().key(), None);
+    }
+
+    #[test]
+    fn a_malformed_environment_key_is_refused_not_silently_ignored() {
+        assert!(resolve_kek(Some("nonsense"), None).is_err());
+        assert!(resolve_kek(Some(&hex32(0xBB)[..40]), None).is_err());
+        assert!(resolve_kek(Some(""), Some(vec![0xAA; KEY_LEN])).is_err());
+    }
 
     #[test]
     fn encrypt_then_decrypt_round_trips() {

@@ -101,7 +101,8 @@ pub(super) async fn seed_provider(
         .pool_for(&rustbase_core::WorkspaceId::from(workspace.to_string()))
         .await
         .unwrap();
-    let secret_enc = rustbase_auth::encrypt(b"test-secret", state.oauth_kek.as_ref()).unwrap();
+    let secret_enc =
+        rustbase_auth::encrypt(b"test-secret", state.oauth_kek.as_ref().as_ref().unwrap()).unwrap();
     rustbase_db::oauth_providers::upsert_provider(
         &pool,
         &rustbase_db::oauth_providers::OAuthProvider {
