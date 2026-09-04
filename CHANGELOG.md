@@ -7,6 +7,10 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+(nothing yet)
+
+## [0.2.0] — 2026-09-04
+
 ### Changed — BREAKING
 
 - **Bearer secrets are stored as SHA-256 digests, not in clear.**
