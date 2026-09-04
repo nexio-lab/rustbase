@@ -116,7 +116,7 @@ pub async fn authorize(
         &nonce,
         &provider,
         &q.redirect_uri,
-        &code_verifier,
+        &verifier_for_storage(&state, &code_verifier)?,
         Duration::minutes(STATE_TTL_MINUTES),
     )
     .await?;
@@ -185,7 +185,7 @@ pub async fn callback(
         &client_secret,
         &body.code,
         &redirect_uri,
-        code_verifier.as_deref(),
+        Some(verifier_from_storage(&app_state, &code_verifier)?.as_str()),
     )
     .await?;
     // Fetch the userinfo blob with the access token. Extract the
@@ -442,6 +442,53 @@ fn fresh_state_nonce() -> String {
 /// PKCE `code_verifier` (RFC 7636 §4.1). 32 OS-random bytes encoded
 /// as base64url-no-pad — yields a 43-character verifier (the upper
 /// bound the spec recommends; allowed range is 43..=128).
+/// PKCE verifiers get the same treatment as TOTP secrets: encrypted
+/// when a KEK is configured, clear and marked otherwise. They cannot
+/// be digests — `/callback` has to replay the verifier to the
+/// provider — and refusing sign-in for want of a key would take OAuth
+/// down entirely, which is a worse trade than a secret that lives for
+/// the few minutes between the two legs.
+fn verifier_for_storage(
+    state: &AppState,
+    verifier: &str,
+) -> Result<rustbase_db::secret_at_rest::StoredSecret, ApiError> {
+    use rustbase_db::secret_at_rest::StoredSecret;
+    match state.oauth_kek.as_ref() {
+        Some(kek) => {
+            let ct = rustbase_auth::encrypt(verifier.as_bytes(), kek).map_err(|e| {
+                ApiError::Core(CoreError::Internal(format!("encrypt code_verifier: {e}")))
+            })?;
+            Ok(StoredSecret::Encrypted(ct))
+        }
+        None => Ok(StoredSecret::Clear(verifier.to_string())),
+    }
+}
+
+fn verifier_from_storage(
+    state: &AppState,
+    stored: &rustbase_db::secret_at_rest::StoredSecret,
+) -> Result<String, ApiError> {
+    use rustbase_db::secret_at_rest::StoredSecret;
+    match stored {
+        StoredSecret::Clear(s) => Ok(s.clone()),
+        StoredSecret::Encrypted(ct) => {
+            let kek = state.oauth_kek.as_ref().as_ref().ok_or_else(|| {
+                ApiError::Core(CoreError::Unavailable(
+                    "this OAuth flow's PKCE verifier is encrypted but RUSTBASE_KEK is \
+                     not set; restore the key that started it"
+                        .into(),
+                ))
+            })?;
+            let plain = rustbase_auth::decrypt(ct, kek).map_err(|e| {
+                ApiError::Core(CoreError::Internal(format!("decrypt code_verifier: {e}")))
+            })?;
+            String::from_utf8(plain).map_err(|e| {
+                ApiError::Core(CoreError::Internal(format!("code_verifier not utf-8: {e}")))
+            })
+        }
+    }
+}
+
 fn fresh_code_verifier() -> String {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);

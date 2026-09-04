@@ -1,6 +1,10 @@
 target/
 data/
 docs/
+# `rustbase-server` embeds docs/reference/openapi.yaml with
+# `include_str!`, so that one file has to survive the exclusion above
+# or the release build fails at compile time.
+!docs/reference/
 .github/
 .git/
 .gitignore

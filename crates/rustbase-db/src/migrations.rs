@@ -428,6 +428,35 @@ pub const WORKSPACE_MIGRATIONS: &[Migration] = &[
         ALTER TABLE _user_totp_new RENAME TO _user_totp;
         "#,
     ),
+    Migration::new(
+        "20260904_000004_pkce_verifier_at_rest",
+        MigrationScope::Workspace,
+        r#"
+        -- Last secret held in clear. Like the TOTP secret it cannot
+        -- be a digest: PKCE requires replaying the verifier to the
+        -- provider at /callback, so it has to come back.
+        --
+        -- Rows in flight are dropped rather than migrated: a state
+        -- nonce lives the few minutes between /authorize and
+        -- /callback, so the worst case is one sign-in that has to be
+        -- started again.
+        DELETE FROM _oauth_states;
+        CREATE TABLE _oauth_states_new (
+            state_hash TEXT PRIMARY KEY,
+            provider TEXT NOT NULL,
+            redirect_uri TEXT NOT NULL,
+            issued_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            consumed_at TEXT,
+            code_verifier TEXT,
+            code_verifier_enc BLOB,
+            CHECK ((code_verifier IS NULL) <> (code_verifier_enc IS NULL))
+        );
+        DROP TABLE _oauth_states;
+        ALTER TABLE _oauth_states_new RENAME TO _oauth_states;
+        CREATE INDEX oauth_states_provider ON _oauth_states(provider, consumed_at);
+        "#,
+    ),
 ];
 
 pub const APP_MIGRATIONS: &[Migration] = &[

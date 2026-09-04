@@ -30,6 +30,7 @@ pub mod policies;
 pub mod policy_engine;
 pub mod pool;
 pub mod records;
+pub mod secret_at_rest;
 pub mod secrets;
 pub mod tokens;
 pub mod user_totp;

@@ -7,7 +7,8 @@
 //! upstream consent screen, short enough that a leaked state nonce
 //! is mostly useless by the time anyone notices.
 
-use crate::error::Result;
+use crate::error::{DbError, Result};
+use crate::secret_at_rest::StoredSecret;
 use crate::tokens::hash_token;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -25,7 +26,7 @@ pub struct OAuthState {
     /// replayed to the token endpoint at `/callback`. Optional only
     /// for legacy rows that predate the 0.2 PKCE pack — new flows
     /// always populate it.
-    pub code_verifier: Option<String>,
+    pub code_verifier: StoredSecret,
 }
 
 pub async fn issue(
@@ -33,22 +34,25 @@ pub async fn issue(
     state: &str,
     provider: &str,
     redirect_uri: &str,
-    code_verifier: &str,
+    code_verifier: &StoredSecret,
     ttl: Duration,
 ) -> Result<OAuthState> {
     let issued_at = Utc::now();
     let expires_at = issued_at + ttl;
+    let (clear_cv, enc_cv) = code_verifier.columns();
     sqlx::query(
         "INSERT INTO _oauth_states \
-            (state_hash, provider, redirect_uri, issued_at, expires_at, consumed_at, code_verifier) \
-         VALUES (?, ?, ?, ?, ?, NULL, ?)",
+            (state_hash, provider, redirect_uri, issued_at, expires_at, consumed_at, \
+             code_verifier, code_verifier_enc) \
+         VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
     )
     .bind(hash_token(state))
     .bind(provider)
     .bind(redirect_uri)
     .bind(issued_at)
     .bind(expires_at)
-    .bind(code_verifier)
+    .bind(clear_cv)
+    .bind(enc_cv)
     .execute(pool)
     .await?;
     Ok(OAuthState {
@@ -58,7 +62,7 @@ pub async fn issue(
         issued_at,
         expires_at,
         consumed_at: None,
-        code_verifier: Some(code_verifier.into()),
+        code_verifier: code_verifier.clone(),
     })
 }
 
@@ -69,7 +73,7 @@ pub enum ConsumeOutcome {
     /// provider's `/token` endpoint when present.
     Ok {
         redirect_uri: String,
-        code_verifier: Option<String>,
+        code_verifier: StoredSecret,
     },
     /// State unknown — either was never issued, or is from a forged
     /// callback. Reject the request.
@@ -82,16 +86,44 @@ pub enum ConsumeOutcome {
     ProviderMismatch,
 }
 
+type StateRow = (
+    String,
+    String,
+    String,
+    DateTime<Utc>,
+    DateTime<Utc>,
+    Option<DateTime<Utc>>,
+    Option<String>,
+    Option<Vec<u8>>,
+);
+
 pub async fn consume(pool: &SqlitePool, state: &str, provider: &str) -> Result<ConsumeOutcome> {
-    let row: Option<OAuthState> = sqlx::query_as(
-        "SELECT state_hash, provider, redirect_uri, issued_at, expires_at, consumed_at, code_verifier \
+    let found: Option<StateRow> = sqlx::query_as(
+        "SELECT state_hash, provider, redirect_uri, issued_at, expires_at, consumed_at, \
+                code_verifier, code_verifier_enc \
          FROM _oauth_states WHERE state_hash = ?",
     )
     .bind(hash_token(state))
     .fetch_optional(pool)
     .await?;
-    let Some(row) = row else {
+    let Some((state_hash, prov, redirect_uri, issued_at, expires_at, consumed_at, cv, cv_enc)) =
+        found
+    else {
         return Ok(ConsumeOutcome::Unknown);
+    };
+    let code_verifier = StoredSecret::from_columns(cv, cv_enc).ok_or_else(|| {
+        DbError::Invariant(format!(
+            "_oauth_states row {state_hash} holds neither exactly one verifier nor the other"
+        ))
+    })?;
+    let row = OAuthState {
+        state_hash,
+        provider: prov,
+        redirect_uri,
+        issued_at,
+        expires_at,
+        consumed_at,
+        code_verifier,
     };
     if row.provider != provider {
         return Ok(ConsumeOutcome::ProviderMismatch);
@@ -134,6 +166,43 @@ mod tests {
         pool
     }
 
+    /// The verifier is the last secret that has to survive a round
+    /// trip rather than be compared, so it is encrypted rather than
+    /// hashed. Encrypted, the clear column must stay empty — a copy
+    /// left behind would defeat the whole point.
+    #[tokio::test]
+    async fn an_encrypted_verifier_leaves_no_clear_copy_behind() {
+        let pool = fresh().await;
+        issue(
+            &pool,
+            "st",
+            "google",
+            "https://app/cb",
+            &StoredSecret::Encrypted(vec![9, 9, 9]),
+            Duration::minutes(10),
+        )
+        .await
+        .unwrap();
+
+        let (clear, enc): (Option<String>, Option<Vec<u8>>) =
+            sqlx::query_as("SELECT code_verifier, code_verifier_enc FROM _oauth_states")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            clear, None,
+            "a clear verifier was kept next to the ciphertext"
+        );
+        assert_eq!(enc, Some(vec![9, 9, 9]));
+
+        match consume(&pool, "st", "google").await.unwrap() {
+            ConsumeOutcome::Ok { code_verifier, .. } => {
+                assert_eq!(code_verifier, StoredSecret::Encrypted(vec![9, 9, 9]));
+            }
+            other => panic!("expected Ok, got {other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn state_nonce_never_lands_on_disk_in_clear() {
         let pool = fresh().await;
@@ -142,7 +211,7 @@ mod tests {
             "st_clear",
             "google",
             "https://app/cb",
-            "verifier",
+            &StoredSecret::Clear("verifier".into()),
             Duration::minutes(10),
         )
         .await
@@ -167,7 +236,7 @@ mod tests {
             "s-1",
             "google",
             "https://app/cb",
-            "verifier-1",
+            &StoredSecret::Clear("verifier-1".into()),
             Duration::minutes(5),
         )
         .await
@@ -178,7 +247,7 @@ mod tests {
                 code_verifier,
             } => {
                 assert_eq!(redirect_uri, "https://app/cb");
-                assert_eq!(code_verifier.as_deref(), Some("verifier-1"));
+                assert_eq!(code_verifier, StoredSecret::Clear("verifier-1".into()));
             }
             other => panic!("expected Ok, got {other:?}"),
         }
@@ -192,7 +261,7 @@ mod tests {
             "s-2",
             "google",
             "https://app/cb",
-            "v",
+            &StoredSecret::Clear("v".into()),
             Duration::minutes(5),
         )
         .await
@@ -212,7 +281,7 @@ mod tests {
             "s-3",
             "google",
             "https://app/cb",
-            "v",
+            &StoredSecret::Clear("v".into()),
             Duration::minutes(5),
         )
         .await
@@ -236,7 +305,7 @@ mod tests {
             "s-4",
             "google",
             "https://app/cb",
-            "v",
+            &StoredSecret::Clear("v".into()),
             Duration::seconds(-1),
         )
         .await
