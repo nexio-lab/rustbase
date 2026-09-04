@@ -14,7 +14,8 @@
 //! managed by `rustbase-db::files`.
 
 use object_store::{
-    ObjectStore, PutPayload, aws::AmazonS3Builder, local::LocalFileSystem, path::Path as ObjectPath,
+    ObjectStore, ObjectStoreExt, PutPayload, aws::AmazonS3Builder, local::LocalFileSystem,
+    path::Path as ObjectPath,
 };
 use serde::Deserialize;
 use std::path::Path;
