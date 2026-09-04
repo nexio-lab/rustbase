@@ -232,9 +232,17 @@ impl ApiFetchBridge {
     /// `reqwest::Client` is built with a 30 s default timeout so a
     /// stuck upstream doesn't hold the JS interpreter hostage past
     /// the hook's CPU budget.
+    ///
+    /// Redirects are NOT followed. The allowlist is enforced once,
+    /// before the request leaves; a 302 from an authorised host would
+    /// otherwise carry the hook to an address nobody vetted, which is
+    /// the whole allowlist defeated by one `Location` header. The
+    /// redirect is handed back to the JS caller instead, which can
+    /// re-issue it through `$app.fetch` and get it checked properly.
     pub fn new(allowed_hosts: Vec<String>) -> Arc<Self> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
         Arc::new(Self {
@@ -299,5 +307,68 @@ impl FetchBridge for ApiFetchBridge {
             headers,
             body,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{Router, response::IntoResponse, routing::get};
+
+    /// Boot a throw-away HTTP server on a random loopback port and
+    /// hand back its port plus a shutdown-on-drop handle.
+    async fn serve(router: Router) -> (u16, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, router).await;
+        });
+        (port, handle)
+    }
+
+    /// The allowlist is checked once, before the request goes out. If
+    /// an allowed host answers with a redirect to a host that is NOT
+    /// on the list, following it would take the hook somewhere the
+    /// operator never authorised — cloud metadata endpoints being the
+    /// obvious prize. The bridge must hand the redirect back instead.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_redirect_off_the_allowlist_is_not_followed() {
+        let (secret_port, _secret) = serve(Router::new().route(
+            "/secret",
+            get(|| async { "OFF-ALLOWLIST-BODY".into_response() }),
+        ))
+        .await;
+
+        let target = format!("http://localhost:{secret_port}/secret");
+        let (hop_port, _hop) = serve(Router::new().route(
+            "/hop",
+            get(move || {
+                let target = target.clone();
+                async move { axum::response::Redirect::temporary(&target).into_response() }
+            }),
+        ))
+        .await;
+
+        // Only the hop host is authorised. `localhost` is a different
+        // host string and is deliberately absent from the list.
+        let bridge = ApiFetchBridge::new(vec!["127.0.0.1".to_string()]);
+        let resp = bridge
+            .request(FetchRequest {
+                method: "GET".into(),
+                url: format!("http://127.0.0.1:{hop_port}/hop"),
+                headers: BTreeMap::new(),
+                body: Vec::new(),
+            })
+            .unwrap();
+
+        assert!(
+            !resp.body.contains("OFF-ALLOWLIST-BODY"),
+            "bridge followed a redirect off the allowlist; body: {}",
+            resp.body
+        );
+        assert_eq!(
+            resp.status, 307,
+            "the redirect itself should be handed back to the hook"
+        );
     }
 }
