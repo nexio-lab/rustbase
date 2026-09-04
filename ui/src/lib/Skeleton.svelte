@@ -19,10 +19,7 @@
 
 <div class={cls} role="status" aria-busy="true" aria-live="polite">
 	{#each stripes as _, i}
-		<div
-			class="{rowClass} animate-pulse"
-			style="opacity: {1 - i / (rows + 2)};"
-		></div>
+		<div class="{rowClass} animate-pulse" style="opacity: {1 - i / (rows + 2)};"></div>
 	{/each}
 	<span class="sr-only">Loading…</span>
 </div>

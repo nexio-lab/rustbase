@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Skeleton from '$lib/Skeleton.svelte';
-	import { goto } from "$lib/nav";
+	import { goto } from '$lib/nav';
 	import { api, ApiError, type Workspace } from '$lib/api';
 
 	// State the page owns directly: the list of workspaces + the
@@ -150,10 +150,7 @@
 			</thead>
 			<tbody class="divide-y divide-slate-200 bg-white">
 				{#each workspaces as workspace}
-					<tr
-						class="cursor-pointer hover:bg-slate-50"
-						onclick={() => openRealm(workspace)}
-					>
+					<tr class="cursor-pointer hover:bg-slate-50" onclick={() => openRealm(workspace)}>
 						<td class="px-4 py-2.5 font-mono text-slate-900">{workspace.id}</td>
 						<td class="px-4 py-2.5 text-slate-700">{workspace.name}</td>
 						<td class="px-4 py-2.5 text-slate-500">

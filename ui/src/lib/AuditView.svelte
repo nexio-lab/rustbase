@@ -91,7 +91,8 @@
 	<div>
 		<h1 class="text-2xl font-semibold tracking-tight text-slate-900">Audit log</h1>
 		<p class="mt-1 text-sm text-slate-500">
-			{total} entr{total === 1 ? 'y' : 'ies'} for <code>{scopeLabel}</code>{#if appliedAction || appliedActor}
+			{total} entr{total === 1 ? 'y' : 'ies'} for
+			<code>{scopeLabel}</code>{#if appliedAction || appliedActor}
 				· filtered{/if}
 		</p>
 	</div>
@@ -123,9 +124,7 @@
 {:else if items.length === 0}
 	<div class="card text-center text-slate-500">
 		<p>No audit entries{appliedAction || appliedActor ? ' match this filter' : ' yet'}.</p>
-		<p class="mt-1 text-xs">
-			Policy changes, admin actions, and cascade clamps all land here.
-		</p>
+		<p class="mt-1 text-xs">Policy changes, admin actions, and cascade clamps all land here.</p>
 	</div>
 {:else}
 	<div class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
@@ -159,10 +158,7 @@
 							{e.actor ?? 'system'}
 						</td>
 						<td class="px-4 py-2 text-right">
-							<button
-								class="text-xs text-orange-600 hover:underline"
-								onclick={() => toggle(e.id)}
-							>
+							<button class="text-xs text-orange-600 hover:underline" onclick={() => toggle(e.id)}>
 								{expanded[e.id] ? 'Hide' : 'Details'}
 							</button>
 						</td>
@@ -170,7 +166,8 @@
 					{#if expanded[e.id]}
 						<tr class="bg-slate-50">
 							<td colspan="5" class="px-4 py-2">
-								<pre class="overflow-x-auto whitespace-pre-wrap break-all rounded bg-slate-900 p-3 font-mono text-xs text-slate-100">{JSON.stringify(
+								<pre
+									class="overflow-x-auto whitespace-pre-wrap break-all rounded bg-slate-900 p-3 font-mono text-xs text-slate-100">{JSON.stringify(
 										e.details,
 										null,
 										2
@@ -186,10 +183,8 @@
 	<div class="mt-3 flex items-center justify-between text-sm text-slate-600">
 		<span>Page {curPage} of {totalPages}</span>
 		<div class="flex gap-2">
-			<button
-				class="btn-secondary"
-				onclick={() => gotoPage(curPage - 1)}
-				disabled={curPage <= 1}>← Prev</button
+			<button class="btn-secondary" onclick={() => gotoPage(curPage - 1)} disabled={curPage <= 1}
+				>← Prev</button
 			>
 			<button
 				class="btn-secondary"

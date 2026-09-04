@@ -10,8 +10,8 @@
 	} from '$lib/api';
 	import Breadcrumbs from '$lib/Breadcrumbs.svelte';
 
-	const workspace = $derived(page.params.workspace);
-	const app = $derived(page.params.app);
+	const workspace = $derived(page.params.workspace!);
+	const app = $derived(page.params.app!);
 	const apiBase = $derived(`/api/workspaces/${workspace}/apps/${app}/hooks`);
 
 	let files = $state<HookFile[]>([]);
@@ -72,10 +72,9 @@
 		saving = true;
 		saveError = null;
 		try {
-			const resp = await api.put<PutHookResponse>(
-				`${apiBase}/${encodeURIComponent(selected)}`,
-				{ source }
-			);
+			const resp = await api.put<PutHookResponse>(`${apiBase}/${encodeURIComponent(selected)}`, {
+				source
+			});
 			originalSource = resp.file.source;
 			reloadOutcome = resp.reload;
 			// Refresh the size/mtime in the sidebar.
@@ -130,10 +129,7 @@
 		// from opening a name we can't actually save back to.
 		createError = null;
 		try {
-			await api.put<PutHookResponse>(
-				`${apiBase}/${encodeURIComponent(trimmed)}`,
-				{ source: '' }
-			);
+			await api.put<PutHookResponse>(`${apiBase}/${encodeURIComponent(trimmed)}`, { source: '' });
 			creating = false;
 			await loadList();
 			await openFile(trimmed);
@@ -184,19 +180,20 @@
 	]}
 />
 
-
 <div class="mb-4">
 	<h1 class="text-2xl font-semibold tracking-tight text-slate-900">Hooks</h1>
 	<p class="mt-1 text-sm text-slate-500">
-		JS/TS source files run inside the embedded QuickJS sandbox. Save to write the file and
-		trigger a reload; compile errors surface below the editor.
+		JS/TS source files run inside the embedded QuickJS sandbox. Save to write the file and trigger a
+		reload; compile errors surface below the editor.
 	</p>
 </div>
 
 <div class="grid grid-cols-1 gap-4 md:grid-cols-[16rem_1fr]">
 	<!-- file list -->
 	<aside class="rounded-lg border border-slate-200 bg-white shadow-sm">
-		<div class="flex items-center justify-between border-b border-slate-200 px-3 py-2 text-xs uppercase tracking-wider text-slate-500">
+		<div
+			class="flex items-center justify-between border-b border-slate-200 px-3 py-2 text-xs uppercase tracking-wider text-slate-500"
+		>
 			<span>Files</span>
 			{#if !creating}
 				<button class="text-orange-600 hover:underline" onclick={openCreate}>+ New</button>
@@ -274,9 +271,7 @@
 					{/if}
 				</div>
 				<div class="flex gap-2">
-					<button class="btn-secondary text-xs" onclick={reload} disabled={saving}>
-						Reload
-					</button>
+					<button class="btn-secondary text-xs" onclick={reload} disabled={saving}> Reload </button>
 					{#if confirmingDelete}
 						<button class="btn-secondary text-xs" onclick={() => (confirmingDelete = false)}>
 							Cancel
@@ -312,7 +307,7 @@
 					bind:value={source}
 					spellcheck="false"
 					autocapitalize="off"
-					autocorrect="off"
+					{...{ autocorrect: 'off' }}
 				></textarea>
 			{/if}
 

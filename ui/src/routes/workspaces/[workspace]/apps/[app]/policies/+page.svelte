@@ -3,8 +3,8 @@
 	import Breadcrumbs from '$lib/Breadcrumbs.svelte';
 	import PoliciesView from '$lib/PoliciesView.svelte';
 
-	const workspace = $derived(page.params.workspace);
-	const app = $derived(page.params.app);
+	const workspace = $derived(page.params.workspace!);
+	const app = $derived(page.params.app!);
 </script>
 
 <Breadcrumbs

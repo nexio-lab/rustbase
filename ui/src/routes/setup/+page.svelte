@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { goto } from "$lib/nav";
+	import { goto } from '$lib/nav';
 	import { api, ApiError, type MasterLoginResponse } from '$lib/api';
 	import { auth } from '$lib/auth.svelte';
 
@@ -68,9 +68,7 @@
 				disabled
 				readonly
 			/>
-			<p class="mt-1 text-xs text-slate-500">
-				Fixed at boot. Use this name to sign in afterwards.
-			</p>
+			<p class="mt-1 text-xs text-slate-500">Fixed at boot. Use this name to sign in afterwards.</p>
 		</div>
 
 		<div>
@@ -94,6 +92,8 @@
 	</form>
 
 	<p class="mt-6 text-center text-xs text-slate-500">
-		Already initialized? <a href="/login" class="font-medium text-orange-600 hover:text-orange-700">Sign in →</a>
+		Already initialized? <a href="/login" class="font-medium text-orange-600 hover:text-orange-700"
+			>Sign in →</a
+		>
 	</p>
 </div>

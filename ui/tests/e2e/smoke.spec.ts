@@ -67,9 +67,7 @@ test.describe.serial('dashboard smoke', () => {
 		//    assert we ended up on the new collection's page.
 		await appRow.click();
 		await page.waitForURL(new RegExp(`/_/workspaces/${WORKSPACE_ID}/apps/${APP_ID}$`));
-		await expect(
-			page.getByRole('heading', { name: new RegExp(`App\\s+${APP_ID}`) })
-		).toBeVisible();
+		await expect(page.getByRole('heading', { name: new RegExp(`App\\s+${APP_ID}`) })).toBeVisible();
 
 		await page.getByRole('button', { name: /New collection/ }).click();
 		await page.locator('#id').fill(COLLECTION_ID);

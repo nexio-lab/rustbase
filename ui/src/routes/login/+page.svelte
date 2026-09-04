@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { goto } from "$lib/nav";
+	import { goto } from '$lib/nav';
 	import { api, ApiError, type MasterLoginResponse } from '$lib/api';
 	import { auth } from '$lib/auth.svelte';
 
@@ -96,7 +96,9 @@
 	</form>
 
 	<p class="mt-6 text-center text-xs text-slate-500">
-		First time? <a href="/setup" class="font-medium text-orange-600 hover:text-orange-700">Set the master password →</a>
+		First time? <a href="/setup" class="font-medium text-orange-600 hover:text-orange-700"
+			>Set the master password →</a
+		>
 	</p>
 	<p class="mt-2 text-center text-xs text-slate-400">
 		<a

@@ -1,18 +1,12 @@
 <script lang="ts">
 	import Skeleton from '$lib/Skeleton.svelte';
 	import { page } from '$app/state';
-	import {
-		api,
-		ApiError,
-		type Collection,
-		type Field,
-		type FieldType
-	} from '$lib/api';
+	import { api, ApiError, type Collection, type Field, type FieldType } from '$lib/api';
 	import Breadcrumbs from '$lib/Breadcrumbs.svelte';
 
-	const workspace = $derived(page.params.workspace);
-	const app = $derived(page.params.app);
-	const coll = $derived(page.params.coll);
+	const workspace = $derived(page.params.workspace!);
+	const app = $derived(page.params.app!);
+	const coll = $derived(page.params.coll!);
 
 	// `collection` is the server's canonical snapshot. `draftFields`
 	// is the user's working copy. Add field / drop / flip required-
@@ -72,12 +66,8 @@
 	});
 
 	const savedFields = $derived(collection?.schema.fields ?? []);
-	const savedByName = $derived(
-		new Map<string, Field>(savedFields.map((f) => [f.name, f]))
-	);
-	const draftByName = $derived(
-		new Map<string, Field>(draftFields.map((f) => [f.name, f]))
-	);
+	const savedByName = $derived(new Map<string, Field>(savedFields.map((f) => [f.name, f])));
+	const draftByName = $derived(new Map<string, Field>(draftFields.map((f) => [f.name, f])));
 	const added = $derived(draftFields.filter((f) => !savedByName.has(f.name)));
 	const dropped = $derived(savedFields.filter((f) => !draftByName.has(f.name)));
 	const modified = $derived(
@@ -85,9 +75,7 @@
 			.filter((f) => savedByName.has(f.name))
 			.filter((f) => !fieldEqual(savedByName.get(f.name)!, f))
 	);
-	const hasPending = $derived(
-		added.length > 0 || dropped.length > 0 || modified.length > 0
-	);
+	const hasPending = $derived(added.length > 0 || dropped.length > 0 || modified.length > 0);
 
 	function fieldEqual(a: Field, b: Field): boolean {
 		if (a.name !== b.name || a.kind !== b.kind) return false;
@@ -273,8 +261,8 @@
 				>
 					{collection.kind}
 				</span>
-				{collection.schema.fields.length} field{collection.schema.fields.length === 1 ? '' : 's'} ·
-				updated {new Date(collection.updated_at).toLocaleString()}
+				{collection.schema.fields.length} field{collection.schema.fields.length === 1 ? '' : 's'} · updated
+				{new Date(collection.updated_at).toLocaleString()}
 			</p>
 		</div>
 		{#if !adding}
@@ -301,31 +289,26 @@
 					<span class="ml-2 text-slate-700 dark:text-slate-300">
 						{#if added.length}
 							<span class="mr-3">
-								<span class="inline-block h-2 w-2 rounded-full bg-emerald-500 align-middle"
-								></span>
+								<span class="inline-block h-2 w-2 rounded-full bg-emerald-500 align-middle"></span>
 								{added.length} added
 							</span>
 						{/if}
 						{#if modified.length}
 							<span class="mr-3">
-								<span class="inline-block h-2 w-2 rounded-full bg-amber-500 align-middle"
-								></span>
+								<span class="inline-block h-2 w-2 rounded-full bg-amber-500 align-middle"></span>
 								{modified.length} modified
 							</span>
 						{/if}
 						{#if dropped.length}
 							<span class="mr-3">
-								<span class="inline-block h-2 w-2 rounded-full bg-red-500 align-middle"
-								></span>
+								<span class="inline-block h-2 w-2 rounded-full bg-red-500 align-middle"></span>
 								{dropped.length} dropped
 							</span>
 						{/if}
 					</span>
 				</div>
 				<div class="flex gap-2">
-					<button class="btn-secondary" onclick={discardDraft} disabled={busy}>
-						Discard
-					</button>
+					<button class="btn-secondary" onclick={discardDraft} disabled={busy}> Discard </button>
 					<button class="btn-primary" onclick={applyDraft} disabled={busy}>
 						{busy ? 'Applying…' : `Apply ${dropped.length > 0 ? '(force)' : ''}`}
 					</button>
@@ -333,9 +316,9 @@
 			</div>
 			{#if dropped.length > 0}
 				<p class="mt-2 text-xs text-slate-700 dark:text-slate-300">
-					Dropping {dropped.length} field{dropped.length === 1 ? '' : 's'} removes the
-					underlying SQLite column{dropped.length === 1 ? '' : 's'} and every value stored
-					there. The PATCH is sent with <code>force=true</code>.
+					Dropping {dropped.length} field{dropped.length === 1 ? '' : 's'} removes the underlying SQLite
+					column{dropped.length === 1 ? '' : 's'} and every value stored there. The PATCH is sent with
+					<code>force=true</code>.
 				</p>
 			{/if}
 		</div>
@@ -506,9 +489,7 @@
 										/>
 									{/if}
 								</td>
-								<td
-									class="px-4 py-2.5 font-mono text-xs text-slate-500 dark:text-slate-400"
-								>
+								<td class="px-4 py-2.5 font-mono text-xs text-slate-500 dark:text-slate-400">
 									{describe(f)}
 								</td>
 								<td class="px-4 py-2.5 text-right text-xs whitespace-nowrap">
@@ -545,10 +526,9 @@
 			</table>
 		</div>
 		<p class="mt-2 text-xs text-slate-500 dark:text-slate-400">
-			Schema edits accumulate as a draft. Add, drop, restore, and flip flags freely — no SQL
-			runs until you click <strong>Apply</strong>. Drops are force-deletes and remove the
-			underlying column data; the server requires <code>force=true</code> when the diff
-			contains any drop.
+			Schema edits accumulate as a draft. Add, drop, restore, and flip flags freely — no SQL runs
+			until you click <strong>Apply</strong>. Drops are force-deletes and remove the underlying
+			column data; the server requires <code>force=true</code> when the diff contains any drop.
 		</p>
 	</section>
 {/if}

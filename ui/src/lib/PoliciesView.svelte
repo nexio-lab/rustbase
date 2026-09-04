@@ -143,8 +143,7 @@
 		</h1>
 		<p class="mt-1 text-sm text-slate-500">
 			Hierarchical knobs. Master sets the outer bound; workspaces tighten within master; apps
-			tighten within their workspace. Cascade auto-clamps existing children when a parent
-			narrows.
+			tighten within their workspace. Cascade auto-clamps existing children when a parent narrows.
 		</p>
 	</div>
 	<button class="btn-primary" onclick={openNew}>+ New policy</button>
@@ -210,7 +209,9 @@
 				<h2 class="text-lg font-semibold text-slate-900">
 					{editing.isNew ? 'New policy' : `Edit ${editing.field}`}
 				</h2>
-				<button onclick={close} aria-label="Close" class="text-slate-400 hover:text-slate-600">✕</button>
+				<button onclick={close} aria-label="Close" class="text-slate-400 hover:text-slate-600"
+					>✕</button
+				>
 			</div>
 
 			{#if editError}

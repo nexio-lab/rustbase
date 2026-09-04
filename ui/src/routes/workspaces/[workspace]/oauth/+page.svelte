@@ -1,11 +1,11 @@
 <script lang="ts">
 	import Skeleton from '$lib/Skeleton.svelte';
-	import { goto } from "$lib/nav";
+	import { goto } from '$lib/nav';
 	import { page } from '$app/state';
 	import { api, ApiError, type OAuthProvider } from '$lib/api';
 	import Breadcrumbs from '$lib/Breadcrumbs.svelte';
 
-	const workspace = $derived(page.params.workspace);
+	const workspace = $derived(page.params.workspace!);
 
 	let providers = $state<OAuthProvider[]>([]);
 	let loading = $state(true);
@@ -51,9 +51,9 @@
 	<div>
 		<h1 class="text-2xl font-semibold tracking-tight text-slate-900">OAuth providers</h1>
 		<p class="mt-1 text-sm text-slate-500">
-			Upstream identity providers for this workspace. Providers apply to every app in the
-			workspace (workspace-shared identity). The client secret is encrypted at rest under the
-			server's KEK; admin reads never echo it back.
+			Upstream identity providers for this workspace. Providers apply to every app in the workspace
+			(workspace-shared identity). The client secret is encrypted at rest under the server's KEK;
+			admin reads never echo it back.
 		</p>
 	</div>
 	<button class="btn-primary" onclick={openNew}>+ New provider</button>

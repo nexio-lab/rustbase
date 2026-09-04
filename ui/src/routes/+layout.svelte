@@ -85,9 +85,7 @@
 				{#if auth.isMaster}
 					<a class="nav-link" href="/system">System</a>
 				{/if}
-				<a class="nav-link" href={DOCS_URL} target="_blank" rel="noopener noreferrer">
-					Docs ↗
-				</a>
+				<a class="nav-link" href={DOCS_URL} target="_blank" rel="noopener noreferrer"> Docs ↗ </a>
 				{#if auth.admin}
 					<span class="ml-3 text-xs text-slate-500 dark:text-slate-400">
 						{auth.admin.username}

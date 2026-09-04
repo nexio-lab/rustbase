@@ -100,7 +100,8 @@
 				id="state"
 				class="input"
 				value={spec.state}
-				onchange={(e) => toggleStateChange((e.target as HTMLSelectElement).value as 'open' | 'locked')}
+				onchange={(e) =>
+					toggleStateChange((e.target as HTMLSelectElement).value as 'open' | 'locked')}
 				{disabled}
 			>
 				<option value="open">open — children may flip freely</option>
@@ -148,8 +149,8 @@
 		</div>
 	{:else}
 		<p class="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-			<strong>Free</strong> imposes no shape constraints. Used when a parent wants to record a
-			default but not lock anything down for children.
+			<strong>Free</strong> imposes no shape constraints. Used when a parent wants to record a default
+			but not lock anything down for children.
 		</p>
 	{/if}
 </div>

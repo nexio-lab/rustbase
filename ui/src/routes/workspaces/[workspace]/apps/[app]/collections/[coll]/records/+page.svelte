@@ -11,9 +11,9 @@
 	} from '$lib/api';
 	import Breadcrumbs from '$lib/Breadcrumbs.svelte';
 
-	const workspace = $derived(page.params.workspace);
-	const app = $derived(page.params.app);
-	const coll = $derived(page.params.coll);
+	const workspace = $derived(page.params.workspace!);
+	const app = $derived(page.params.app!);
+	const coll = $derived(page.params.coll!);
 
 	// Collection metadata (for the schema we render the editor against).
 	let collection = $state<Collection | null>(null);
@@ -49,12 +49,8 @@
 	let bulkBusy = $state(false);
 	let bulkError: string | null = $state(null);
 
-	const allOnPageSelected = $derived(
-		items.length > 0 && items.every((r) => selected.has(r.id))
-	);
-	const someOnPageSelected = $derived(
-		!allOnPageSelected && items.some((r) => selected.has(r.id))
-	);
+	const allOnPageSelected = $derived(items.length > 0 && items.every((r) => selected.has(r.id)));
+	const someOnPageSelected = $derived(!allOnPageSelected && items.some((r) => selected.has(r.id)));
 
 	function toggleRow(id: string, on: boolean) {
 		const next = new Set(selected);
@@ -304,9 +300,7 @@
 		total = Math.max(0, total - ids.length);
 		const results = await Promise.allSettled(
 			ids.map((id) =>
-				api.delete(
-					`/api/workspaces/${workspace}/apps/${app}/collections/${coll}/records/${id}`
-				)
+				api.delete(`/api/workspaces/${workspace}/apps/${app}/collections/${coll}/records/${id}`)
 			)
 		);
 		const failed: string[] = [];
@@ -349,7 +343,6 @@
 	]}
 />
 
-
 <div class="mb-4 flex items-end justify-between">
 	<div>
 		<h1 class="text-2xl font-semibold tracking-tight text-slate-900">
@@ -357,7 +350,8 @@
 		</h1>
 		<p class="mt-1 text-sm text-slate-500">
 			{total} record{total === 1 ? '' : 's'}{#if appliedFilter}
-				· filtered by <code class="rounded bg-slate-100 px-1.5 py-0.5 text-xs">{appliedFilter}</code>
+				· filtered by <code class="rounded bg-slate-100 px-1.5 py-0.5 text-xs">{appliedFilter}</code
+				>
 			{/if}
 		</p>
 	</div>
@@ -402,9 +396,7 @@
 			>
 				{bulkBusy ? 'Deleting…' : `Delete ${selected.size}`}
 			</button>
-			<button class="btn-secondary" onclick={clearSelection} disabled={bulkBusy}>
-				Clear
-			</button>
+			<button class="btn-secondary" onclick={clearSelection} disabled={bulkBusy}> Clear </button>
 		</div>
 	</div>
 {/if}
@@ -467,9 +459,8 @@
 							{new Date(row.updated_at).toLocaleString()}
 						</td>
 						<td class="px-4 py-2 text-right text-xs whitespace-nowrap">
-							<button
-								class="text-slate-600 hover:text-slate-900"
-								onclick={() => openEdit(row)}>Edit</button
+							<button class="text-slate-600 hover:text-slate-900" onclick={() => openEdit(row)}
+								>Edit</button
 							>
 							<span class="mx-1 text-slate-300">·</span>
 							<button class="text-red-600 hover:text-red-800" onclick={() => deleteRow(row)}>
@@ -486,11 +477,7 @@
 	<div class="mt-3 flex items-center justify-between text-sm text-slate-600">
 		<span>Page {curPage} of {totalPages}</span>
 		<div class="flex gap-2">
-			<button
-				class="btn-secondary"
-				onclick={() => gotoPage(curPage - 1)}
-				disabled={curPage <= 1}
-			>
+			<button class="btn-secondary" onclick={() => gotoPage(curPage - 1)} disabled={curPage <= 1}>
 				← Prev
 			</button>
 			<button
@@ -596,12 +583,7 @@
 			{/if}
 
 			<div class="mt-6 flex justify-end gap-2">
-				<button
-					type="button"
-					class="btn-secondary"
-					onclick={closeEditor}
-					disabled={editorBusy}
-				>
+				<button type="button" class="btn-secondary" onclick={closeEditor} disabled={editorBusy}>
 					Cancel
 				</button>
 				<button

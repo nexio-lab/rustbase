@@ -3,7 +3,7 @@
 	import Breadcrumbs from '$lib/Breadcrumbs.svelte';
 	import PoliciesView from '$lib/PoliciesView.svelte';
 
-	const workspace = $derived(page.params.workspace);
+	const workspace = $derived(page.params.workspace!);
 </script>
 
 <Breadcrumbs
@@ -14,4 +14,7 @@
 	]}
 />
 
-<PoliciesView apiBase={`/api/workspaces/${workspace}/policies`} scopeLabel={`workspace ${workspace}`} />
+<PoliciesView
+	apiBase={`/api/workspaces/${workspace}/policies`}
+	scopeLabel={`workspace ${workspace}`}
+/>

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Skeleton from '$lib/Skeleton.svelte';
-	import { goto } from "$lib/nav";
+	import { goto } from '$lib/nav';
 	import { page } from '$app/state';
 	import {
 		api,
@@ -11,8 +11,8 @@
 	} from '$lib/api';
 	import Breadcrumbs from '$lib/Breadcrumbs.svelte';
 
-	const workspace = $derived(page.params.workspace);
-	const slug = $derived(page.params.provider);
+	const workspace = $derived(page.params.workspace!);
+	const slug = $derived(page.params.provider!);
 	const isNew = $derived(slug === 'new');
 
 	let loading = $state(true);
@@ -155,7 +155,12 @@
 
 	async function remove() {
 		if (isNew) return;
-		if (!confirm(`Delete OAuth provider "${slug}"?\n\nExisting users linked to this provider keep their login records, but no new sign-ins will work until you add the provider back.`)) return;
+		if (
+			!confirm(
+				`Delete OAuth provider "${slug}"?\n\nExisting users linked to this provider keep their login records, but no new sign-ins will work until you add the provider back.`
+			)
+		)
+			return;
 		busy = true;
 		formError = null;
 		try {
@@ -255,9 +260,7 @@
 
 		<div>
 			<label class="field-label" for="client_secret">
-				Client secret {isNew
-					? '(required)'
-					: '(leave blank to keep existing)'}
+				Client secret {isNew ? '(required)' : '(leave blank to keep existing)'}
 			</label>
 			<input
 				id="client_secret"
@@ -329,7 +332,9 @@
 					required
 					disabled={busy}
 				/>
-				<p class="mt-1 text-xs text-slate-500">Most providers: <code>/sub</code> (OIDC) or <code>/id</code> (GitHub).</p>
+				<p class="mt-1 text-xs text-slate-500">
+					Most providers: <code>/sub</code> (OIDC) or <code>/id</code> (GitHub).
+				</p>
 			</div>
 			<div>
 				<label class="field-label" for="email_field">User-info email field</label>

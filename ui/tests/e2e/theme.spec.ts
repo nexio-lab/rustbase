@@ -18,9 +18,7 @@ import { expect, test } from '@playwright/test';
  */
 
 test.describe.serial('theme + a11y', () => {
-	test('explicit dark choice persists in localStorage and across navigation', async ({
-		page
-	}) => {
+	test('explicit dark choice persists in localStorage and across navigation', async ({ page }) => {
 		await page.goto('/_/login');
 		// Force a dark choice via localStorage and reload so the
 		// runes pick it up; same path the ThemeToggle button takes.

@@ -5,8 +5,8 @@
 	import { auth } from '$lib/auth.svelte';
 	import Breadcrumbs from '$lib/Breadcrumbs.svelte';
 
-	const workspace = $derived(page.params.workspace);
-	const app = $derived(page.params.app);
+	const workspace = $derived(page.params.workspace!);
+	const app = $derived(page.params.app!);
 	const apiBase = $derived(`/api/workspaces/${workspace}/apps/${app}/files`);
 
 	let files = $state<FileMeta[]>([]);
@@ -186,7 +186,6 @@
 		{ label: 'Files' }
 	]}
 />
-
 
 <div class="mb-4 flex items-end justify-between">
 	<div>

@@ -1,18 +1,12 @@
 <script lang="ts">
 	import Skeleton from '$lib/Skeleton.svelte';
-	import { goto } from "$lib/nav";
+	import { goto } from '$lib/nav';
 	import { page } from '$app/state';
-	import {
-		api,
-		ApiError,
-		type Collection,
-		type CollectionKind,
-		type Schema
-	} from '$lib/api';
+	import { api, ApiError, type Collection, type CollectionKind, type Schema } from '$lib/api';
 	import Breadcrumbs from '$lib/Breadcrumbs.svelte';
 
-	const workspace = $derived(page.params.workspace);
-	const app = $derived(page.params.app);
+	const workspace = $derived(page.params.workspace!);
+	const app = $derived(page.params.app!);
 
 	let collections = $state<Collection[]>([]);
 	let loading = $state(true);
@@ -104,7 +98,6 @@
 	]}
 />
 
-
 <div class="mb-6 flex items-end justify-between">
 	<div>
 		<h1 class="text-2xl font-semibold tracking-tight text-slate-900">
@@ -138,18 +131,12 @@
 				disabled={submitting}
 			/>
 			<p class="mt-1 text-xs text-slate-500">
-				lowercase letters, digits, underscores. Names starting with <code>_</code> are
-				reserved.
+				lowercase letters, digits, underscores. Names starting with <code>_</code> are reserved.
 			</p>
 		</div>
 		<div>
 			<label class="field-label" for="kind">Kind</label>
-			<select
-				id="kind"
-				class="input"
-				bind:value={newKind}
-				disabled={submitting}
-			>
+			<select id="kind" class="input" bind:value={newKind} disabled={submitting}>
 				<option value="base">base — plain records</option>
 				<option value="auth">auth — users (auto email + password fields)</option>
 				<option value="view" disabled>view — SQL-backed (read-only, coming soon)</option>

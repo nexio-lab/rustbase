@@ -1,11 +1,11 @@
 <script lang="ts">
 	import Skeleton from '$lib/Skeleton.svelte';
-	import { goto } from "$lib/nav";
+	import { goto } from '$lib/nav';
 	import { page } from '$app/state';
 	import { api, ApiError, type App } from '$lib/api';
 	import Breadcrumbs from '$lib/Breadcrumbs.svelte';
 
-	const workspace = $derived(page.params.workspace);
+	const workspace = $derived(page.params.workspace!);
 
 	let apps = $state<App[]>([]);
 	let loading = $state(true);
@@ -73,14 +73,14 @@
 
 <Breadcrumbs items={[{ label: 'Workspaces', href: '/workspaces' }, { label: workspace }]} />
 
-
 <div class="mb-6 flex items-end justify-between">
 	<div>
 		<h1 class="text-2xl font-semibold tracking-tight text-slate-900">
 			Workspace <span class="font-mono">{workspace}</span>
 		</h1>
 		<p class="mt-1 text-sm text-slate-500">
-			Apps are the data products inside this workspace. Each app owns its own collections, records, files, and hooks.
+			Apps are the data products inside this workspace. Each app owns its own collections, records,
+			files, and hooks.
 		</p>
 	</div>
 	{#if !creating}

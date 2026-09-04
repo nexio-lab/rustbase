@@ -3,7 +3,7 @@
 	import AuditView from '$lib/AuditView.svelte';
 	import Breadcrumbs from '$lib/Breadcrumbs.svelte';
 
-	const workspace = $derived(page.params.workspace);
+	const workspace = $derived(page.params.workspace!);
 </script>
 
 <Breadcrumbs

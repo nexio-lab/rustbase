@@ -1,12 +1,12 @@
 <script lang="ts">
 	import Skeleton from '$lib/Skeleton.svelte';
-	import { goto } from "$lib/nav";
+	import { goto } from '$lib/nav';
 	import { page } from '$app/state';
 	import { api, ApiError, type AdminUserDetail } from '$lib/api';
 	import Breadcrumbs from '$lib/Breadcrumbs.svelte';
 
-	const workspace = $derived(page.params.workspace);
-	const id = $derived(page.params.id);
+	const workspace = $derived(page.params.workspace!);
+	const id = $derived(page.params.id!);
 
 	let user = $state<AdminUserDetail | null>(null);
 	let loading = $state(true);
@@ -45,7 +45,12 @@
 	}
 
 	async function resetTotp() {
-		if (!confirm('Remove TOTP enrolment for this user?\n\nThey will be able to log in without the second factor until they re-enroll.')) return;
+		if (
+			!confirm(
+				'Remove TOTP enrolment for this user?\n\nThey will be able to log in without the second factor until they re-enroll.'
+			)
+		)
+			return;
 		busy = true;
 		try {
 			await api.delete(`/api/workspaces/${workspace}/users/${id}/totp`);
@@ -95,7 +100,11 @@
 			<h1 class="text-2xl font-semibold tracking-tight text-slate-900">{user.email}</h1>
 			<p class="mt-1 font-mono text-xs text-slate-500">{user.id}</p>
 		</div>
-		<button class="btn-secondary border-red-300 text-red-700 hover:bg-red-50" onclick={deleteUser} disabled={busy}>
+		<button
+			class="btn-secondary border-red-300 text-red-700 hover:bg-red-50"
+			onclick={deleteUser}
+			disabled={busy}
+		>
 			Delete user
 		</button>
 	</div>
@@ -107,10 +116,19 @@
 			<dt class="text-slate-500">Email verified</dt>
 			<dd>
 				{#if user.verified}
-					<span class="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">verified</span>
+					<span class="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800"
+						>verified</span
+					>
 				{:else}
-					<span class="mr-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">unverified</span>
-					<button class="text-xs text-orange-600 hover:text-orange-700" onclick={verify} disabled={busy}>
+					<span
+						class="mr-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
+						>unverified</span
+					>
+					<button
+						class="text-xs text-orange-600 hover:text-orange-700"
+						onclick={verify}
+						disabled={busy}
+					>
 						Force-verify
 					</button>
 				{/if}
@@ -139,9 +157,14 @@
 				<dt class="text-slate-500">Status</dt>
 				<dd>
 					{#if user.totp.enabled}
-						<span class="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">enabled</span>
+						<span
+							class="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800"
+							>enabled</span
+						>
 					{:else}
-						<span class="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">pending</span>
+						<span class="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
+							>pending</span
+						>
 					{/if}
 				</dd>
 				<dt class="text-slate-500">Enrolled</dt>
@@ -152,8 +175,8 @@
 				</dd>
 			</dl>
 			<p class="mt-3 text-xs text-slate-500">
-				Resetting TOTP removes the secret without touching the password. The user's next
-				password login skips the second factor until they re-enroll.
+				Resetting TOTP removes the secret without touching the password. The user's next password
+				login skips the second factor until they re-enroll.
 			</p>
 		{:else}
 			<p class="text-sm text-slate-500">No TOTP enrolment.</p>

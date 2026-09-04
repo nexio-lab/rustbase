@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { goto } from "$lib/nav";
+	import { goto } from '$lib/nav';
 	import { auth } from '$lib/auth.svelte';
 
 	// Root redirect. The layout-level guard already pushes

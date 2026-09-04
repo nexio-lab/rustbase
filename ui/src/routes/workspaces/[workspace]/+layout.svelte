@@ -2,7 +2,7 @@
 	import { page } from '$app/state';
 	import Tabs from '$lib/Tabs.svelte';
 
-	const workspace = $derived(page.params.workspace);
+	const workspace = $derived(page.params.workspace!);
 	const base = $derived(`/workspaces/${workspace}`);
 
 	// Don't render workspace-level tabs while the user is inside a

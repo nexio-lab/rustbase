@@ -1,11 +1,11 @@
 <script lang="ts">
 	import Skeleton from '$lib/Skeleton.svelte';
-	import { goto } from "$lib/nav";
+	import { goto } from '$lib/nav';
 	import { page } from '$app/state';
 	import { api, ApiError, type AdminUser, type AdminUserListResponse } from '$lib/api';
 	import Breadcrumbs from '$lib/Breadcrumbs.svelte';
 
-	const workspace = $derived(page.params.workspace);
+	const workspace = $derived(page.params.workspace!);
 
 	let items = $state<AdminUser[]>([]);
 	let total = $state(0);
@@ -107,8 +107,7 @@
 	<div class="card text-center text-slate-500">
 		<p>No users{appliedQ ? ' match this search' : ' yet'}.</p>
 		<p class="mt-1 text-xs">
-			Users register themselves via <code>/auth/users/register</code>, or sign up via OTP /
-			OAuth.
+			Users register themselves via <code>/auth/users/register</code>, or sign up via OTP / OAuth.
 		</p>
 	</div>
 {:else}
@@ -160,10 +159,8 @@
 	<div class="mt-3 flex items-center justify-between text-sm text-slate-600">
 		<span>Page {curPage} of {totalPages}</span>
 		<div class="flex gap-2">
-			<button
-				class="btn-secondary"
-				onclick={() => gotoPage(curPage - 1)}
-				disabled={curPage <= 1}>← Prev</button
+			<button class="btn-secondary" onclick={() => gotoPage(curPage - 1)} disabled={curPage <= 1}
+				>← Prev</button
 			>
 			<button
 				class="btn-secondary"
