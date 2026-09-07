@@ -7,7 +7,51 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-(nothing yet)
+### Fixed
+
+- **The Docker image builds again — it had not since the OpenAPI spec
+  was embedded.** `rustbase-server` pulls `docs/reference/openapi.yaml`
+  in with `include_str!`, but the build context excluded it twice
+  over: the `Dockerfile` never copied `docs/`, and `.dockerignore`
+  dropped it from the context anyway. Neither shows up in a local
+  `cargo build`, where the whole repository is present, so the failure
+  only ever appeared inside `docker build` — and `v0.2.0` shipped with
+  no image at all.
+
+- **The published image starts as its own unprivileged user.**
+  `VOLUME /home/rustbase/data` was materialised by Docker as root
+  while the process runs as uid 10001, so the server exited on
+  `unable to open database file` the first time anyone ran the image
+  plainly. The directory is now created and owned before the volume is
+  declared. Verified by running the built image with no flags:
+  `/healthz`, `/openapi.yaml` and the dashboard all answer 200.
+
+- **The release SBOM is actually produced, and its absence is now an
+  error.** The step copied `rustbaas.cdx.json` — the workspace's name
+  before the rename to `rustbase` — and fell back to `ls *.cdx.json`,
+  which matches nothing because `cargo cyclonedx --all` writes one
+  document next to each crate's `Cargo.toml` and none at the root. The
+  step therefore *succeeded* having written no file, and the release
+  went out without an SBOM. It now takes `rustbase-server`'s document,
+  the dependency graph of the binary the release actually ships, and
+  fails loudly when none was written.
+
+- **The JS SDK test suite no longer depends on the Node version.** Its
+  `FakeWebSocket` built a real `CloseEvent`, a global that only exists
+  from Node 23 on. The suite passed on a developer machine running
+  Node 24 and failed on the CI runner. The listener under test reads
+  `code` and `reason` and nothing else, so a plain object carries what
+  the contract needs.
+
+### Changed
+
+- **Dependencies are compiled optimised under `cargo test`.** Argon2 is
+  deliberately slow, and an unoptimised build made it slower still, so
+  every login test paid a full unoptimised hash — most of the suite's
+  wall clock. Measured on `rustbase-api`: **294s → 16s**. Workspace
+  crates stay unoptimised, so debug info and compile times for the code
+  under test are unchanged; the first build after this change is longer
+  while the dependencies are rebuilt.
 
 ## [0.2.0] — 2026-09-04
 
