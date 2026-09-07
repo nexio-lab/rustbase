@@ -7,6 +7,10 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+(nothing yet)
+
+## [0.2.1] — 2026-09-07
+
 ### Fixed
 
 - **The Docker image builds again — it had not since the OpenAPI spec
