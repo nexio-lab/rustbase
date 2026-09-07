@@ -137,9 +137,10 @@ jobs:
         # graph and downstream tooling expects exactly one file.
         run: |
           cargo cyclonedx --format json --all
-          # Move workspace-root aggregate to a stable name.
-          cp rustbaas.cdx.json rustbase-${GITHUB_REF_NAME}-sbom.cdx.json 2>/dev/null \
-            || cp $(ls *.cdx.json | head -1) "rustbase-${GITHUB_REF_NAME}-sbom.cdx.json"
+          mkdir -p sbom
+          find . -name '*.cdx.json' -not -path './target/*' -not -path './sbom/*' \
+            -exec mv {} sbom/ \;
+          ls sbom/
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
