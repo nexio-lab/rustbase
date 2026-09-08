@@ -131,16 +131,23 @@ jobs:
         run: cargo install --locked cargo-cyclonedx
 
       - name: Generate SBOM
-        # CycloneDX 1.5 JSON, one document per crate in the
-        # workspace plus a top-level aggregate. We ship only the
-        # aggregate as a release asset — it captures the same
-        # graph and downstream tooling expects exactly one file.
+        # CycloneDX 1.5 JSON. `--all` emits one document per crate;
+        # we ship the binary's own, which is the graph describing
+        # what the release actually contains.
         run: |
           cargo cyclonedx --format json --all
-          mkdir -p sbom
-          find . -name '*.cdx.json' -not -path './target/*' -not -path './sbom/*' \
-            -exec mv {} sbom/ \;
-          ls sbom/
+          # `--all` writes one document next to each crate's Cargo.toml
+          # and none at the workspace root. The release ships a single
+          # artefact, the `rustbase` binary, so its own graph is the one
+          # that describes what went out.
+          src="$(find . -name 'rustbase-server.cdx.json' -not -path './target/*' | head -1)"
+          if [ -z "$src" ]; then
+            echo "::error::cargo-cyclonedx produced no SBOM for rustbase-server"
+            find . -name '*.cdx.json' -not -path './target/*' || true
+            exit 1
+          fi
+          cp "$src" "rustbase-${GITHUB_REF_NAME}-sbom.cdx.json"
+          ls -l "rustbase-${GITHUB_REF_NAME}-sbom.cdx.json"
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
@@ -243,7 +250,11 @@ jobs:
         # a patch release is the expected response.
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+          # `meta.outputs.version` is the tag docker/metadata-action
+          # actually pushed. `github.ref_name` is not: semver tagging
+          # strips the leading v, so it named an image that never
+          # existed and the scan failed on every release.
+          image-ref: ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}
           severity: HIGH,CRITICAL
           scanners: vuln
           format: sarif
